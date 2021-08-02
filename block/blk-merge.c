@@ -373,6 +373,8 @@ void __blk_queue_split(struct bio **bio, unsigned int *nr_segs)
 #endif /* MY_ABC_HERE */
 		submit_bio_noacct(*bio);
 		*bio = split;
+
+		blk_throtl_charge_bio_split(*bio);
 	}
 }
 
