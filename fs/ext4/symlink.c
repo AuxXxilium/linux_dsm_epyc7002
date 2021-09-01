@@ -55,6 +55,15 @@ static const char *ext4_encrypted_get_link(struct dentry *dentry,
 	return paddr;
 }
 
+static int ext4_encrypted_symlink_getattr(const struct path *path,
+					  struct kstat *stat, u32 request_mask,
+					  unsigned int query_flags)
+{
+	ext4_getattr(path, stat, request_mask, query_flags);
+
+	return fscrypt_symlink_getattr(path, stat);
+}
+
 const struct inode_operations ext4_encrypted_symlink_inode_operations = {
 #ifdef MY_ABC_HERE
 	.syno_getattr	= ext4_syno_getattr,
@@ -68,7 +77,7 @@ const struct inode_operations ext4_encrypted_symlink_inode_operations = {
 #endif /* MY_ABC_HERE */
 	.get_link	= ext4_encrypted_get_link,
 	.setattr	= ext4_setattr,
-	.getattr	= ext4_getattr,
+	.getattr	= ext4_encrypted_symlink_getattr,
 	.listxattr	= ext4_listxattr,
 #ifdef MY_ABC_HERE
 	.syno_get_crtime = ext4_syno_get_crtime,
