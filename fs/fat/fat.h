@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _FAT_H
 #define _FAT_H
@@ -127,6 +130,9 @@ struct msdos_inode_info {
 	struct hlist_node i_dir_hash;	/* hash by i_logstart */
 	struct rw_semaphore truncate_lock; /* protect bmap against truncate */
 	struct inode vfs_inode;
+#ifdef MY_ABC_HERE
+	struct timespec64 i_btime;	/* File birth (creation) time */
+#endif /* MY_ABC_HERE */
 };
 
 struct fat_slot_info {
@@ -401,6 +407,12 @@ extern int fat_setattr(struct dentry *dentry, struct iattr *attr);
 extern void fat_truncate_blocks(struct inode *inode, loff_t offset);
 extern int fat_getattr(const struct path *path, struct kstat *stat,
 		       u32 request_mask, unsigned int flags);
+#ifdef MY_ABC_HERE
+extern int fat_syno_getattr(struct dentry *dentry, struct kstat *kst,
+                            unsigned int syno_flags);
+extern int fat_syno_get_crtime(struct inode *inode, struct timespec64 *crtime);
+extern int fat_syno_set_crtime(struct inode *inode, struct timespec64 *crtime);
+#endif /* MY_ABC_HERE */
 extern int fat_file_fsync(struct file *file, loff_t start, loff_t end,
 			  int datasync);
 

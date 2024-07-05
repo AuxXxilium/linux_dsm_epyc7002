@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (c) 2011-2014, Intel Corporation.
@@ -291,6 +294,22 @@ struct nvme_ctrl {
 	unsigned int shutdown_timeout;
 	unsigned int kato;
 	bool subsystem;
+#ifdef MY_ABC_HERE
+	unsigned long idle; /* nvme device idle time in jiffies */
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	unsigned syno_force_timeout;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#define BLOCK_INFO_SIZE        512     /* Largest string for a nvme device block information */
+	char syno_block_info[BLOCK_INFO_SIZE];
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	struct list_head syno_remap_reqs;
+	spinlock_t syno_remap_reqs_lock;
+	u8 syno_elpe;
+#endif /* MY_ABC_HERE */
+
 	unsigned long quirks;
 	struct nvme_id_power_state psd[32];
 	struct nvme_effects_log *effects;
@@ -570,6 +589,7 @@ static inline bool nvme_is_aen_req(u16 qid, __u16 command_id)
 }
 
 void nvme_complete_rq(struct request *req);
+blk_status_t nvme_host_path_error(struct request *req);
 bool nvme_cancel_request(struct request *req, void *data, bool reserved);
 void nvme_cancel_tagset(struct nvme_ctrl *ctrl);
 void nvme_cancel_admin_tagset(struct nvme_ctrl *ctrl);
@@ -610,6 +630,21 @@ struct request *nvme_alloc_request(struct request_queue *q,
 void nvme_cleanup_cmd(struct request *req);
 blk_status_t nvme_setup_cmd(struct nvme_ns *ns, struct request *req,
 		struct nvme_command *cmd);
+blk_status_t nvme_fail_nonready_command(struct nvme_ctrl *ctrl,
+		struct request *req);
+bool __nvme_check_ready(struct nvme_ctrl *ctrl, struct request *rq,
+		bool queue_live);
+
+static inline bool nvme_check_ready(struct nvme_ctrl *ctrl, struct request *rq,
+		bool queue_live)
+{
+	if (likely(ctrl->state == NVME_CTRL_LIVE))
+		return true;
+	if (ctrl->ops->flags & NVME_F_FABRICS &&
+	    ctrl->state == NVME_CTRL_DELETING)
+		return true;
+	return __nvme_check_ready(ctrl, rq, queue_live);
+}
 int nvme_submit_sync_cmd(struct request_queue *q, struct nvme_command *cmd,
 		void *buf, unsigned bufflen);
 int __nvme_submit_sync_cmd(struct request_queue *q, struct nvme_command *cmd,
@@ -619,6 +654,13 @@ int __nvme_submit_sync_cmd(struct request_queue *q, struct nvme_command *cmd,
 int nvme_set_features(struct nvme_ctrl *dev, unsigned int fid,
 		      unsigned int dword11, void *buffer, size_t buflen,
 		      u32 *result);
+#ifdef MY_ABC_HERE
+int syno_nvme_get_error_log_page(struct nvme_ctrl *dev,
+				 struct syno_nvme_error_log_page **err_log, int *err_entries);
+int syno_nvme_lba_write_pattern(struct nvme_ns *ns, u64 lba);
+void syno_nvme_put_ns(struct nvme_ns *ns);
+struct nvme_ns *syno_nvme_find_get_ns(struct nvme_ctrl *ctrl, unsigned int nsid);
+#endif /* MY_ABC_HERE */
 int nvme_get_features(struct nvme_ctrl *dev, unsigned int fid,
 		      unsigned int dword11, void *buffer, size_t buflen,
 		      u32 *result);

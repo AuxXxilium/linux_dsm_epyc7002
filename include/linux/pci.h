@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  *	pci.h
@@ -41,6 +44,9 @@
 #include <uapi/linux/pci.h>
 
 #include <linux/pci_ids.h>
+#ifdef MY_DEF_HERE
+#include <linux/synolib.h>
+#endif /* MY_DEF_HERE */
 
 #define PCI_STATUS_ERROR_BITS (PCI_STATUS_DETECTED_PARITY  | \
 			       PCI_STATUS_SIG_SYSTEM_ERROR | \
@@ -500,6 +506,10 @@ struct pci_dev {
 	char		*driver_override; /* Driver name to force a match */
 
 	unsigned long	priv_flags;	/* Private flags for the PCI driver */
+#ifdef MY_DEF_HERE
+	struct list_head syno_device_list;
+	unsigned int	syno_eunit_layer;
+#endif /* MY_DEF_HERE */
 };
 
 static inline struct pci_dev *pci_physfn(struct pci_dev *dev)

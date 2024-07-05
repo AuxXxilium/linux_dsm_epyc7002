@@ -25,3 +25,8 @@ obj-$(CONFIG_USB_ULPI)			+= phy-ulpi.o
 obj-$(CONFIG_USB_ULPI_VIEWPORT)		+= phy-ulpi-viewport.o
 obj-$(CONFIG_KEYSTONE_USB_PHY)		+= phy-keystone.o
 obj-$(CONFIG_JZ4770_PHY)		+= phy-jz4770.o
+ifeq ($(CONFIG_SYNO_LSP_RTD1619B), y)
+obj-$(CONFIG_RTK_USB2PHY)		+= phy-rtk-usb2.o
+obj-$(CONFIG_RTK_USB3PHY)		+= phy-rtk-usb3.o
+obj-$(CONFIG_RTK_USB_RLE0599_PHY)	+= phy-rtk-rle0599.o
+endif # CONFIG_SYNO_LSP_RTD1619B

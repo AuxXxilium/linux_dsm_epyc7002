@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * f_fs.c -- user mode file system API for USB composite function controllers
@@ -3363,7 +3366,14 @@ static int ffs_func_setup(struct usb_function *f,
 	__ffs_event_add(ffs, FUNCTIONFS_SETUP);
 	spin_unlock_irqrestore(&ffs->ev.waitq.lock, flags);
 
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_USB_PATCH_ON_RTK
+	/* Fix adnroid adb push big file fail */
+	return 0;
+#else
+#endif /* MY_DEF_HERE */
 	return creq->wLength == 0 ? USB_GADGET_DELAYED_STATUS : 0;
+#endif /* MY_DEF_HERE */
 }
 
 static bool ffs_func_req_match(struct usb_function *f,

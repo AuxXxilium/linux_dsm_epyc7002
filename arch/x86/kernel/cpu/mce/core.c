@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Machine check handler.
@@ -100,6 +103,11 @@ struct mca_config mca_cfg __read_mostly = {
 static DEFINE_PER_CPU(struct mce, mces_seen);
 static unsigned long mce_need_notify;
 static int cpu_missing;
+
+#ifdef MY_ABC_HERE
+int (*funcSYNOECCNotification)(unsigned int type, unsigned int syndrome, u64 memAddr) = NULL;
+EXPORT_SYMBOL(funcSYNOECCNotification);
+#endif /* MY_ABC_HERE */
 
 /*
  * MCA banks polled by the period polling timer for corrected events.
@@ -741,6 +749,9 @@ bool machine_check_poll(enum mcp_flags flags, mce_banks_t *b)
 	bool error_seen = false;
 	struct mce m;
 	int i;
+#ifdef MY_ABC_HERE
+	u64 mstatus, eccsyndrome;
+#endif /* MY_ABC_HERE */
 
 	this_cpu_inc(mce_poll_count);
 
@@ -808,6 +819,17 @@ log_it:
 			goto clear_it;
 
 		mce_read_aux(&m, i);
+
+#ifdef MY_ABC_HERE
+		mstatus = ((m.status & SYNO_MCI_STATUS_ECC) >> SYNO_MCI_STATUS_UECC_SHIFT);
+		eccsyndrome = ((m.status & SYNO_MCI_STATUS_ECC_SYNDROME) >> SYNO_MCI_STATUS_ECC_SYNDROME_SHIFT);
+		if (funcSYNOECCNotification &&
+			((m.status & SYNO_MCI_STATUS_ECC))) {
+			funcSYNOECCNotification(((unsigned int *)(void *)&mstatus)[0],
+					((unsigned int *)(void *)&eccsyndrome)[0], m.addr);
+		}
+#endif /* MY_ABC_HERE */
+
 		m.severity = mce_severity(&m, NULL, mca_cfg.tolerant, NULL, false);
 		/*
 		 * Don't get the IP here because it's unlikely to

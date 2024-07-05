@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Filesystem superblock creation and reconfiguration context.
  *
@@ -110,6 +113,14 @@ struct fs_context {
 	bool			need_free:1;	/* Need to call ops->free() */
 	bool			global:1;	/* Goes into &init_user_ns */
 	bool			oldapi:1;	/* Coming from mount(2) */
+#ifdef MY_ABC_HERE
+	/*
+	 * relatime_period can be changed by mount option "relatime_period=%u".
+	 * Because most file systems do not accept unrecognized mount options,
+	 * this option is parsed by underlying file systems instead of vfs layer.
+	 */
+	long relatime_period;
+#endif /* MY_ABC_HERE */
 };
 
 struct fs_context_operations {

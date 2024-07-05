@@ -1,0 +1,5 @@
+#!/bin/bash
+# Copyright (c) 2000-2022 Synology Inc. All rights reserved.
+
+install -Dm644 "include/synobios.h" "$DebDevDir/$SynoIncludeDir/synobios/synobios.h"
+install -Dm644 "include/syno_ttyS.h" "$DebDevDir/$SynoIncludeDir/synobios/syno_ttyS.h"

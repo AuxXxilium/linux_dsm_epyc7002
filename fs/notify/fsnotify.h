@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __FS_NOTIFY_FSNOTIFY_H_
 #define __FS_NOTIFY_FSNOTIFY_H_
@@ -20,6 +23,14 @@ static inline struct mount *fsnotify_conn_mount(
 {
 	return container_of(conn->obj, struct mount, mnt_fsnotify_marks);
 }
+
+#ifdef MY_ABC_HERE
+static inline struct mount *fsnotify_conn_syno_mount(
+				struct fsnotify_mark_connector *conn)
+{
+	return container_of(conn->obj, struct mount, mnt_fsnotify_syno_marks);
+}
+#endif /* MY_ABC_HERE */
 
 static inline struct super_block *fsnotify_conn_sb(
 				struct fsnotify_mark_connector *conn)
@@ -48,6 +59,9 @@ static inline void fsnotify_clear_marks_by_inode(struct inode *inode)
 static inline void fsnotify_clear_marks_by_mount(struct vfsmount *mnt)
 {
 	fsnotify_destroy_marks(&real_mount(mnt)->mnt_fsnotify_marks);
+#ifdef MY_ABC_HERE
+	fsnotify_destroy_marks(&real_mount(mnt)->mnt_fsnotify_syno_marks);
+#endif /* MY_ABC_HERE */
 }
 /* run the list of all marks associated with sb and destroy them */
 static inline void fsnotify_clear_marks_by_sb(struct super_block *sb)

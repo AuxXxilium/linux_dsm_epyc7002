@@ -116,3 +116,12 @@ config USB_AUTOSUSPEND_DELAY
 	  The default value Linux has always had is 2 seconds.  Change
 	  this value if you want a different delay and cannot modify
 	  the command line or module parameter.
+if SYNO_LSP_RTD1619B
+
+config USB_RTK_HCD_TEST_MODE
+	bool "RTK Host CTS test mode"
+	default n
+	help
+	  Enable RTK USB Host CTS testing mode.
+
+endif # SYNO_LSP_RTD1619B

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __SHMEM_FS_H
 #define __SHMEM_FS_H
@@ -22,6 +25,9 @@ struct shmem_inode_info {
 	struct list_head	swaplist;	/* chain of maybes on swap */
 	struct shared_policy	policy;		/* NUMA memory alloc policy */
 	struct simple_xattrs	xattrs;		/* list of xattrs */
+#ifdef MY_ABC_HERE
+	struct timespec64	crtime;		/* File creation time */
+#endif /* MY_ABC_HERE */
 	atomic_t		stop_eviction;	/* hold when working on inode */
 	struct inode		vfs_inode;
 };

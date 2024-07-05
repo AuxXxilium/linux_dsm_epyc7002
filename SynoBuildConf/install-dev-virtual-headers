@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Copyright (c) 2000-2020 Synology Inc. All rights reserved.
+
+mkdir -p "${DebDevBuild:?undefined}/DEBIAN/"
+
+for _inc in ${ToolChainInclude32:=} ${ToolChainInclude64:=} ${StaticInclude32:=} ${StaticInclude64:=}; do
+    for _kinc in $(find "usr/include/"* -maxdepth 0 -type d -print | cut -d'/' -f3); do
+        mkdir -p "$DebDevBuild/$_inc/$_kinc"
+        cp -a "usr/include/$_kinc/"* "$DebDevBuild/$_inc/$_kinc"
+    done
+done
+

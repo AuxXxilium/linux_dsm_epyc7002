@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2001 Jens Axboe <axboe@kernel.dk>
@@ -689,6 +692,16 @@ void __bio_clone_fast(struct bio *bio, struct bio *bio_src)
 	bio->bi_write_hint = bio_src->bi_write_hint;
 	bio->bi_iter = bio_src->bi_iter;
 	bio->bi_io_vec = bio_src->bi_io_vec;
+#ifdef MY_ABC_HERE
+	if (unlikely(bio_flagged(bio_src, BIO_CORRECTION_RETRY)))
+		bio_set_flag(bio, BIO_CORRECTION_RETRY);
+	if (unlikely(bio_flagged(bio_src, BIO_CORRECTION_ABORT)))
+		bio_set_flag(bio, BIO_CORRECTION_ABORT);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	if (unlikely(bio_flagged(bio_src, BIO_SYNO_FULL_STRIPE_MERGE)))
+		bio_set_flag(bio, BIO_SYNO_FULL_STRIPE_MERGE);
+#endif /* MY_ABC_HERE */
 
 	bio_clone_blkg_association(bio, bio_src);
 	blkcg_bio_issue_init(bio);
@@ -1425,6 +1438,14 @@ again:
 	if (bio->bi_disk)
 		rq_qos_done_bio(bio->bi_disk->queue, bio);
 
+#ifdef MY_ABC_HERE
+	if (bio->bi_disk && bio_flagged(bio, BIO_TRACE_COMPLETION)) {
+		trace_block_bio_complete(bio->bi_disk->queue, bio);
+		bio_clear_flag(bio, BIO_TRACE_COMPLETION);
+	}
+#else
+#endif /* MY_ABC_HERE */
+
 	/*
 	 * Need to have a real endio function for chained bios, otherwise
 	 * various corner cases will break (like stacking block devices that
@@ -1437,11 +1458,13 @@ again:
 		bio = __bio_chain_endio(bio);
 		goto again;
 	}
-
+#ifdef MY_ABC_HERE
+#else
 	if (bio->bi_disk && bio_flagged(bio, BIO_TRACE_COMPLETION)) {
 		trace_block_bio_complete(bio->bi_disk->queue, bio);
 		bio_clear_flag(bio, BIO_TRACE_COMPLETION);
 	}
+#endif /* MY_ABC_HERE */
 
 	blk_throtl_bio_endio(bio);
 	/* release cgroup info */

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright © 1999-2010 David Woodhouse <dwmw2@infradead.org>
@@ -24,6 +27,10 @@
 #include <linux/mtd/map.h>
 
 #include <linux/uaccess.h>
+#ifdef MY_DEF_HERE
+#include <linux/syscalls.h>
+#include <linux/semaphore.h>
+#endif /* MY_DEF_HERE */
 
 #include "mtdcore.h"
 
@@ -51,6 +58,9 @@ static int mtdchar_open(struct inode *inode, struct file *file)
 	int ret = 0;
 	struct mtd_info *mtd;
 	struct mtd_file_info *mfi;
+#ifdef MY_DEF_HERE
+	int syno_print_mtd_access_log = 1;
+#endif /* MY_DEF_HERE */
 
 	pr_debug("MTD_open\n");
 
@@ -60,6 +70,22 @@ static int mtdchar_open(struct inode *inode, struct file *file)
 
 	mutex_lock(&mtd_mutex);
 	mtd = get_mtd_device(NULL, devnum);
+
+#ifdef MY_DEF_HERE
+#ifdef MY_DEF_HERE
+	if (!strcmp("vendor", mtd->name)) {
+		syno_print_mtd_access_log = 0;
+	}
+#endif /* MY_DEF_HERE */
+#ifdef MY_DEF_HERE
+	if (!strcmp("RedBoot Config", mtd->name)) {
+		syno_print_mtd_access_log = 0;
+	}
+#endif /* MY_DEF_HERE */
+	if (syno_print_mtd_access_log) {
+		printk(KERN_ERR"open mtd (%s), process=%s\n", mtd->name, current->comm);
+	}
+#endif /* MY_DEF_HERE */
 
 	if (IS_ERR(mtd)) {
 		ret = PTR_ERR(mtd);
@@ -100,8 +126,27 @@ static int mtdchar_close(struct inode *inode, struct file *file)
 {
 	struct mtd_file_info *mfi = file->private_data;
 	struct mtd_info *mtd = mfi->mtd;
+#ifdef MY_DEF_HERE
+	int syno_print_mtd_access_log = 1;
+#endif /* MY_DEF_HERE */
 
 	pr_debug("MTD_close\n");
+
+#ifdef MY_DEF_HERE
+#ifdef MY_DEF_HERE
+	if (!strcmp("vendor", mtd->name)) {
+		syno_print_mtd_access_log = 0;
+	}
+#endif /* MY_DEF_HERE */
+#ifdef MY_DEF_HERE
+	if (!strcmp("RedBoot Config", mtd->name)) {
+		syno_print_mtd_access_log = 0;
+	}
+#endif /* MY_DEF_HERE */
+	if (syno_print_mtd_access_log) {
+		printk(KERN_ERR"close mtd (%s), process=%s\n", mtd->name, current->comm);
+	}
+#endif /* MY_DEF_HERE */
 
 	/* Only sync if opened RW */
 	if ((file->f_mode & FMODE_WRITE))
@@ -222,19 +267,103 @@ static ssize_t mtdchar_read(struct file *file, char __user *buf, size_t count,
 	return total_retlen;
 } /* mtdchar_read */
 
+#ifdef MY_DEF_HERE
+static int syno_write_buf_size = 0x1000;
+
+char *kbuf;
+int write_kbuf_len;
+struct semaphore write_kbuf_sem;
+
+static int do_syno_mtd_alloc(bool blMalloc)
+{
+	int retval = 0;
+
+	down(&write_kbuf_sem);
+	if (blMalloc) {
+		if (write_kbuf_len)
+			goto End;
+
+		write_kbuf_len = syno_write_buf_size;
+		kbuf = kmalloc(write_kbuf_len, GFP_KERNEL);
+		if (!kbuf) {
+			printk(KERN_NOTICE "%s:%d(%s) malloc fail write_kbuf_len=[%d], kbuf=[%p]\n", __FILE__, __LINE__, __func__, write_kbuf_len, kbuf);
+			write_kbuf_len = 0x0;
+			retval = -ENOMEM;
+		}
+	} else {
+		if (!write_kbuf_len)
+			goto End;
+		write_kbuf_len = 0x0;
+		kfree(kbuf);
+		kbuf = NULL;
+	}
+End:
+	up(&write_kbuf_sem);
+	return retval;
+}
+
+/**
+ * This function accuire or release buffer for mtd driver to write flash.
+ * The updater should call SYNOMTDAlloc() before doing system upgrade,
+ * and this buffer should not be released before upgrade finished.
+ * Otherwise, if the buffer is malloc-ed and released within a dd write,
+ * the kernel may malloc failed somehow.
+ *
+ * @author cnliu
+ * @param blMalloc
+ *     A boolean variable to indicate malloc or release.
+ *     true: To malloc buffer for mtd driver to write before doing mtd_write().
+ *     false: After mtd_write(), we need to free buffer for mtd driver.
+ *
+ * @return
+ *     Upon successful malloc, SYNOMTDAlloc() return 0.
+ *     Otherwise return -ENOMEM.
+ *
+ * @example
+ *     if (SYNOMTDAlloc(true) == 0) {
+ *         system("dd if=zImage of=/dev/mtd1 bs=128k");
+ *         SYNOMTDAlloc(false);
+ *     }
+ *
+ * @see init_mtdchar
+ * @see mtd_write
+ * @see write_kbuf_sem
+ * @see lnxsdk/main/updater.c
+ */
+SYSCALL_DEFINE1(syno_mtd_alloc, bool, blMalloc)
+{
+	return do_syno_mtd_alloc(blMalloc);
+} /* sys_syno_mtd_alloc */
+
+#endif /* MY_DEF_HERE */
+
 static ssize_t mtdchar_write(struct file *file, const char __user *buf, size_t count,
 			loff_t *ppos)
 {
 	struct mtd_file_info *mfi = file->private_data;
 	struct mtd_info *mtd = mfi->mtd;
+#ifdef MY_DEF_HERE
+	// do nothing
+#else /* MY_DEF_HERE */
 	size_t size = count;
 	char *kbuf;
+#endif /* MY_DEF_HERE */
 	size_t retlen;
 	size_t total_retlen=0;
 	int ret=0;
 	int len;
 
 	pr_debug("MTD_write\n");
+#ifdef MY_DEF_HERE
+	if (syno_write_buf_size < mtd->writesize) {
+		printk(KERN_ERR "mtd kmalloc size small than mtd driver minimal write size !!\n");
+		WARN_ON(1);
+		syno_write_buf_size = mtd->writesize;
+		if (write_kbuf_len)
+			do_syno_mtd_alloc(false);
+		printk(KERN_ERR "mtd kmalloc size replace with mtd driver minimal write size !!\n");
+	}
+#endif /* MY_DEF_HERE */
 
 	if (*ppos >= mtd->size)
 		return -ENOSPC;
@@ -245,15 +374,35 @@ static ssize_t mtdchar_write(struct file *file, const char __user *buf, size_t c
 	if (!count)
 		return 0;
 
+#ifdef MY_DEF_HERE
+	if (!write_kbuf_len) {
+		ret = do_syno_mtd_alloc(true);
+		if (ret != 0)
+			return ret;
+	}
+	down(&write_kbuf_sem);
+#else /* MY_DEF_HERE */
 	kbuf = mtd_kmalloc_up_to(mtd, &size);
 	if (!kbuf)
 		return -ENOMEM;
+#endif /* MY_DEF_HERE */
 
 	while (count) {
+#ifdef MY_DEF_HERE
+		if (count > syno_write_buf_size)
+			len = syno_write_buf_size;
+		else
+			len = count;
+#else /* MY_DEF_HERE */
 		len = min_t(size_t, count, size);
+#endif /* MY_DEF_HERE */
 
 		if (copy_from_user(kbuf, buf, len)) {
+#ifdef MY_DEF_HERE
+			up(&write_kbuf_sem);
+#else /* MY_DEF_HERE */
 			kfree(kbuf);
+#endif /* MY_DEF_HERE */
 			return -EFAULT;
 		}
 
@@ -300,12 +449,20 @@ static ssize_t mtdchar_write(struct file *file, const char __user *buf, size_t c
 			buf += retlen;
 		}
 		else {
+#ifdef MY_DEF_HERE
+			up(&write_kbuf_sem);
+#else /* MY_DEF_HERE */
 			kfree(kbuf);
+#endif /* MY_DEF_HERE */
 			return ret;
 		}
 	}
 
+#ifdef MY_DEF_HERE
+	up(&write_kbuf_sem);
+#else /* MY_DEF_HERE */
 	kfree(kbuf);
+#endif /* MY_DEF_HERE */
 	return total_retlen;
 } /* mtdchar_write */
 
@@ -662,6 +819,10 @@ static int mtdchar_ioctl(struct file *file, u_int cmd, u_long arg)
 	case MTDFILEMODE:
 	case BLKPG:
 	case BLKRRPART:
+#ifdef MY_DEF_HERE
+	case MEMMODIFYPARTINFO:
+	case MEMMODIFYFISINFO:
+#endif /* MY_DEF_HERE */
 		break;
 
 	/* "dangerous" commands */
@@ -951,6 +1112,41 @@ static int mtdchar_ioctl(struct file *file, u_int cmd, u_long arg)
 		break;
 	}
 
+#ifdef  MY_DEF_HERE
+	case MEMMODIFYPARTINFO:
+	{
+		struct erase_info_user einfo32;
+
+		if (copy_from_user(&einfo32, argp, sizeof(struct erase_info_user)))
+			return -EFAULT;
+
+		ret = SYNOMTDModifyPartInfo(mtd, einfo32.start, einfo32.length);
+
+		break;
+	}
+
+	case MEMMODIFYFISINFO:
+	{
+		struct SYNO_MTD_FIS_INFO SynoMtdFisInfo;
+
+		if (strcmp(mtd->name, "FIS directory") && strcmp(mtd->name, "FIS_directory")) { // cannot apply on other flash partitions
+			return -EOPNOTSUPP;
+		}
+
+		if (copy_from_user(&SynoMtdFisInfo, (struct SYNO_MTD_FIS_INFO *)arg, sizeof(struct SYNO_MTD_FIS_INFO))) {
+			return -EFAULT;
+		}
+
+		if (!SynoMtdFisInfo.name[0]) { // sanity check
+			return -EFAULT;
+		}
+
+		ret = SYNOMTDModifyFisInfo(mtd, SynoMtdFisInfo);
+
+		break;
+	}
+#endif /* MY_DEF_HERE */
+
 	/* This ioctl is being deprecated - it truncates the ECC layout */
 	case ECCGETLAYOUT:
 	{
@@ -1221,6 +1417,11 @@ int __init init_mtdchar(void)
 		       MTD_CHAR_MAJOR);
 		return ret;
 	}
+
+#ifdef MY_DEF_HERE
+	/* Allocate buffer and init spinlock */
+	sema_init(&write_kbuf_sem, 1);
+#endif /* MY_DEF_HERE */
 
 	return ret;
 }

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Provide a pstore intermediate backend, organized into kernel memory
@@ -377,6 +380,11 @@ static int psz_kmsg_recover_meta(struct psz_context *cxt)
 	struct psz_kmsg_header *hdr;
 	struct timespec64 time = { };
 	unsigned long i;
+#if defined(MY_DEF_HERE)
+	loff_t erase_off = 0x0;
+	unsigned int used_zone = 0;
+	unsigned int temp_counter = 0;
+#endif /* MY_DEF_HERE */
 	/*
 	 * Recover may on panic, we can't allocate any memory by kmalloc.
 	 * So, we use local array instead.
@@ -405,6 +413,9 @@ static int psz_kmsg_recover_meta(struct psz_context *cxt)
 
 		if (buf->sig != zone->buffer->sig) {
 			pr_debug("no valid data in kmsg dump zone %lu\n", i);
+#if defined(MY_DEF_HERE)
+			info->erase(info->kmsg_size, zone->off);
+#endif /* MY_DEF_HERE */
 			continue;
 		}
 
@@ -423,6 +434,17 @@ static int psz_kmsg_recover_meta(struct psz_context *cxt)
 			continue;
 		}
 
+#if defined(MY_DEF_HERE)
+		if (i == 0)
+			temp_counter = hdr->counter;
+		else {
+			if (hdr->counter <= temp_counter) {
+				temp_counter = hdr->counter;
+				erase_off = zone->off;
+			}
+		}
+
+#endif /* MY_DEF_HERE */
 		/*
 		 * we get the newest zone, and the next one must be the oldest
 		 * or unused zone, because we do write one by one like a circle.
@@ -452,6 +474,15 @@ static int psz_kmsg_recover_meta(struct psz_context *cxt)
 		pr_debug("found nice zone: %s: id %lu, off %lld, size %zu, datalen %d\n",
 				zone->name, i, zone->off,
 				zone->buffer_size, atomic_read(&buf->datalen));
+#if defined(MY_DEF_HERE)
+		used_zone++;
+	}
+
+	if (used_zone == cxt->kmsg_max_cnt) {
+		pr_debug("No more zone to use.!!!!!! release zone off:[%llx]\n",
+			 erase_off);
+		info->erase(info->kmsg_size, erase_off);
+#endif /* MY_DEF_HERE */
 	}
 
 	return 0;
@@ -738,6 +769,22 @@ static void psz_write_kmsg_hdr(struct pstore_zone *zone,
 		hdr->counter = 0;
 }
 
+#if defined(MY_DEF_HERE)
+static void psz_revert_kmsg_hdr_count(struct pstore_zone *zone,
+		struct pstore_record *record)
+{
+	struct psz_context *cxt = record->psi->data;
+	struct psz_buffer *buffer = zone->buffer;
+	struct psz_kmsg_header *hdr =
+		(struct psz_kmsg_header *)buffer->data;
+
+	hdr->reason = record->reason;
+	if (hdr->reason == KMSG_DUMP_OOPS)
+		cxt->oops_counter--;
+	else if (hdr->reason == KMSG_DUMP_PANIC)
+		cxt->panic_counter--;
+}
+#endif /* MY_DEF_HERE */
 /*
  * In case zone is broken, which may occur to MTD device, we try each zones,
  * start at cxt->kmsg_write_cnt.
@@ -766,7 +813,11 @@ static inline int notrace psz_kmsg_write_record(struct psz_context *cxt,
 			zone->buffer = zone->oldbuf;
 			return -ENOMEM;
 		}
+#if defined(MY_DEF_HERE)
+		zone->buffer->sig = PSZ_SIG;
+#else /* MY_DEF_HERE */
 		zone->buffer->sig = zone->oldbuf->sig;
+#endif /* MY_DEF_HERE */
 
 		pr_debug("write %s to zone id %d\n", zone->name, zonenum);
 		psz_write_kmsg_hdr(zone, record);
@@ -782,6 +833,9 @@ static inline int notrace psz_kmsg_write_record(struct psz_context *cxt,
 			return ret;
 		}
 
+#if defined(MY_DEF_HERE)
+		psz_revert_kmsg_hdr_count(zone, record);
+#endif /* MY_DEF_HERE */
 		pr_debug("zone %u may be broken, try next dmesg zone\n",
 				zonenum);
 		kfree(zone->buffer);
@@ -970,6 +1024,15 @@ static ssize_t psz_kmsg_read(struct pstore_zone *zone,
 	size -= sizeof(struct psz_kmsg_header);
 
 	if (!record->compressed) {
+#ifdef MY_DEF_HERE
+		/* in syno_pstore_collector, it expects first line of pstroe context
+		 * with format "%s Part%d, btime %ld"
+		 * Therefore, we skip to "%s: Total %d times\n" in pstore.
+		 */
+		record->buf = kmalloc(size, GFP_KERNEL);
+		if (!record->buf)
+			return -ENOMEM;
+#else /* MY_DEF_HERE */
 		char *buf = kasprintf(GFP_KERNEL, "%s: Total %d times\n",
 				      kmsg_dump_reason_str(record->reason),
 				      record->count);
@@ -979,6 +1042,7 @@ static ssize_t psz_kmsg_read(struct pstore_zone *zone,
 			kfree(buf);
 			return -ENOMEM;
 		}
+#endif /* MY_DEF_HERE */
 	} else {
 		record->buf = kmalloc(size, GFP_KERNEL);
 		if (!record->buf)

@@ -11,6 +11,9 @@ source "drivers/soc/imx/Kconfig"
 source "drivers/soc/ixp4xx/Kconfig"
 source "drivers/soc/mediatek/Kconfig"
 source "drivers/soc/qcom/Kconfig"
+if SYNO_LSP_RTD1619B
+source "drivers/soc/realtek/Kconfig"
+endif # SYNO_LSP_RTD1619B
 source "drivers/soc/renesas/Kconfig"
 source "drivers/soc/rockchip/Kconfig"
 source "drivers/soc/samsung/Kconfig"

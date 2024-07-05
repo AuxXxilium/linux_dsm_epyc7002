@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2013 Fusion IO.  All rights reserved.
@@ -45,6 +48,9 @@ static void insert_extent(struct btrfs_root *root, u64 start, u64 len,
 	btrfs_set_file_extent_compression(leaf, fi, compression);
 	btrfs_set_file_extent_encryption(leaf, fi, 0);
 	btrfs_set_file_extent_other_encoding(leaf, fi, 0);
+#ifdef MY_ABC_HERE
+	btrfs_set_file_extent_syno_flag(leaf, fi, 0);
+#endif /* MY_ABC_HERE */
 }
 
 static void insert_inode_item_key(struct btrfs_root *root)

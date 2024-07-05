@@ -14,6 +14,11 @@
 #include <linux/namei.h>
 #include <linux/init_syscalls.h>
 
+#ifdef CONFIG_SYNO_RAMDISK_INTEGRITY_CHECK
+#include <crypto/hydrogen.h>
+bool ramdisk_check_failed;
+#endif /* CONFIG_SYNO_RAMDISK_INTEGRITY_CHECK */
+
 static ssize_t __init xwrite(struct file *file, const char *p, size_t count,
 		loff_t *pos)
 {
@@ -499,6 +504,14 @@ static char * __init unpack_to_rootfs(char *buf, unsigned long len)
 			error("invalid magic at start of compressed archive");
 		if (state != Reset)
 			error("junk at the end of compressed archive");
+
+#ifdef CONFIG_SYNO_RAMDISK_INTEGRITY_CHECK
+		if (my_inptr == 0) {
+			printk(KERN_INFO "decompress cpio completed and skip redundant lzma\n");
+			break;
+		}
+#endif /* CONFIG_SYNO_RAMDISK_INTEGRITY_CHECK */
+
 		this_header = saved_offset + my_inptr;
 		buf += my_inptr;
 		len -= my_inptr;
@@ -604,10 +617,32 @@ static void __init populate_initrd_image(char *err)
 
 static int __init populate_rootfs(void)
 {
+#ifdef CONFIG_SYNO_RAMDISK_INTEGRITY_CHECK
+	const char *ctx = "synology";
+	size_t rd_len = initrd_end - initrd_start - hydro_sign_BYTES;
+	uint8_t sig[hydro_sign_BYTES];
+
+	uint8_t pk[] = {
+		__RAMDISK_SIGN_PUBLIC_KEY__
+	};
+#endif /* CONFIG_SYNO_RAMDISK_INTEGRITY_CHECK */
+
 	/* Load the built in initramfs */
 	char *err = unpack_to_rootfs(__initramfs_start, __initramfs_size);
 	if (err)
 		panic("%s", err); /* Failed to decompress INTERNAL initramfs */
+
+#ifdef CONFIG_SYNO_RAMDISK_INTEGRITY_CHECK
+	memcpy(sig, (const void *) (initrd_start + rd_len), hydro_sign_BYTES);
+
+	if (hydro_sign_verify(sig, (const void *) initrd_start, rd_len, ctx, pk)) {
+		ramdisk_check_failed = true;
+		printk(KERN_ERR "ramdisk corrupt");
+	} else {
+		ramdisk_check_failed = false;
+		initrd_end -= hydro_sign_BYTES;
+	}
+#endif /* CONFIG_SYNO_RAMDISK_INTEGRITY_CHECK */
 
 	if (!initrd_start || IS_ENABLED(CONFIG_INITRAMFS_FORCE))
 		goto done;

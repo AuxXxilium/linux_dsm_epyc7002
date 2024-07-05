@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* Provide a way to create a superblock configuration context within the kernel
  * that allows a superblock to be set up prior to mounting.
@@ -79,6 +82,33 @@ static int vfs_parse_sb_flag(struct fs_context *fc, const char *key)
 	return -ENOPARAM;
 }
 
+#ifdef MY_ABC_HERE
+enum {
+	SB_RELATIME_PERIOD = 1,
+};
+
+static const struct constant_table syno_sb_mnt_opts[] = {
+	{ "relatime_period", SB_RELATIME_PERIOD },
+	{ },
+};
+
+static int vfs_parse_syno_sb_mnt_opts(struct fs_context *fc, struct fs_parameter *param)
+{
+	unsigned int token;
+
+	token = lookup_constant(syno_sb_mnt_opts, param->key, 0);
+	if (token == SB_RELATIME_PERIOD) {
+		if (param->type != fs_value_is_string)
+			return invalf(fc, "VFS: Non-string source");
+		if (kstrtoul(param->string, 10, &fc->relatime_period) || fc->relatime_period > 365 * 10)
+			return invalf(fc, "VFS: Invalid value");
+		return 0;
+	}
+
+	return -ENOPARAM;
+}
+#endif /* MY_ABC_HERE */
+
 /**
  * vfs_parse_fs_param - Add a single parameter to a superblock config
  * @fc: The filesystem context to modify
@@ -105,6 +135,12 @@ int vfs_parse_fs_param(struct fs_context *fc, struct fs_parameter *param)
 	ret = vfs_parse_sb_flag(fc, param->key);
 	if (ret != -ENOPARAM)
 		return ret;
+
+#ifdef MY_ABC_HERE
+	ret = vfs_parse_syno_sb_mnt_opts(fc, param);
+	if (ret != -ENOPARAM)
+		return ret;
+#endif /* MY_ABC_HERE */
 
 	ret = security_fs_context_parse_param(fc, param);
 	if (ret != -ENOPARAM)
@@ -242,6 +278,9 @@ static struct fs_context *alloc_fs_context(struct file_system_type *fs_type,
 	fc->cred	= get_current_cred();
 	fc->net_ns	= get_net(current->nsproxy->net_ns);
 	fc->log.prefix	= fs_type->name;
+#ifdef MY_ABC_HERE
+	fc->relatime_period = 0;
+#endif /* MY_ABC_HERE */
 
 	mutex_init(&fc->uapi_mutex);
 
@@ -530,7 +569,7 @@ static int legacy_parse_param(struct fs_context *fc, struct fs_parameter *param)
 			      param->key);
 	}
 
-	if (len > PAGE_SIZE - 2 - size)
+	if (size + len + 2 > PAGE_SIZE)
 		return invalf(fc, "VFS: Legacy: Cumulative options too large");
 	if (strchr(param->key, ',') ||
 	    (param->type == fs_value_is_string &&
@@ -638,9 +677,61 @@ static int legacy_init_fs_context(struct fs_context *fc)
 	return 0;
 }
 
+#ifdef MY_ABC_HERE
+static void option_erase(char *str) {
+	char *next = strchr(str, ',');
+
+	if (next) {
+		next++;
+		while (*next) {
+			*str = *next;
+			str++;
+			next++;
+		}
+	}
+	while (*str) {
+		*str = '\0';
+		str++;
+	}
+}
+
+/*
+ * This function is used to parse VFS layer options. These options should be removed
+ * from data since the underlying file systems cannot recognize them and may cause error.
+ */
+static int syno_sb_eat_mnt_opts(struct fs_context *fc, void *data) {
+	const struct constant_table *p;
+	char *str;
+	int ret = 0;
+
+	if (!data)
+		return 0;
+
+	for (p = syno_sb_mnt_opts; p->name; p++) {
+		while (NULL != (str = strstr(data, p->name))) {
+			char *value = strchr(str, '=') + 1;
+			char *found = strchr(str, ',');
+			size_t v_len = (found == NULL) ? strlen(value) : found - value;
+			ret = vfs_parse_fs_string(fc, p->name, value, v_len);
+			if (ret < 0)
+				return ret;
+			option_erase(str);
+		}
+	}
+	return 0;
+}
+#endif /* MY_ABC_HERE */
+
 int parse_monolithic_mount_data(struct fs_context *fc, void *data)
 {
 	int (*monolithic_mount_data)(struct fs_context *, void *);
+#ifdef MY_ABC_HERE
+	int ret = 0;
+
+	ret = syno_sb_eat_mnt_opts(fc, data);
+	if (ret)
+		return ret;
+#endif /* MY_ABC_HERE */
 
 	monolithic_mount_data = fc->ops->parse_monolithic;
 	if (!monolithic_mount_data)

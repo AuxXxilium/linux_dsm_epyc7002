@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Process version 3 NFSACL requests.
@@ -275,11 +278,17 @@ static const struct svc_procedure nfsd_acl_procedures3[3] = {
 };
 
 static unsigned int nfsd_acl_count3[ARRAY_SIZE(nfsd_acl_procedures3)];
+#ifdef MY_ABC_HERE
+static struct svc_lat nfsd_acl_latency3[ARRAY_SIZE(nfsd_acl_procedures3)];
+#endif /* MY_ABC_HERE */
 const struct svc_version nfsd_acl_version3 = {
 	.vs_vers	= 3,
 	.vs_nproc	= 3,
 	.vs_proc	= nfsd_acl_procedures3,
 	.vs_count	= nfsd_acl_count3,
+#ifdef MY_ABC_HERE
+	.vs_latency	= nfsd_acl_latency3,
+#endif /* MY_ABC_HERE */
 	.vs_dispatch	= nfsd_dispatch,
 	.vs_xdrsize	= NFS3_SVC_XDRSIZE,
 };

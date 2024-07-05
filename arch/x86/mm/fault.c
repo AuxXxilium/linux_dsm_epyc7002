@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  *  Copyright (C) 1995  Linus Torvalds
@@ -762,7 +765,11 @@ static inline void
 show_signal_msg(struct pt_regs *regs, unsigned long error_code,
 		unsigned long address, struct task_struct *tsk)
 {
+#ifdef MY_ABC_HERE
+	const char *loglvl = task_pid_nr(tsk) > 1 ? KERN_WARNING : KERN_EMERG;
+#else
 	const char *loglvl = task_pid_nr(tsk) > 1 ? KERN_INFO : KERN_EMERG;
+#endif /* MY_ABC_HERE */
 
 	if (!unhandled_signal(tsk, SIGSEGV))
 		return;

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  *   Copyright (C) 2020, Microsoft Corporation.
@@ -14,6 +17,9 @@
 
 enum smb_version {
 	Smb_1 = 1,
+#ifdef MY_ABC_HERE
+	Smb_Syno,
+#endif /* MY_ABC_HERE */
 	Smb_20,
 	Smb_21,
 	Smb_30,

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) Qu Wenruo 2017.  All rights reserved.
@@ -1046,6 +1049,8 @@ static int check_inode_item(struct extent_buffer *leaf,
 			btrfs_inode_nlink(leaf, iitem));
 		return -EUCLEAN;
 	}
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 	if (btrfs_inode_flags(leaf, iitem) & ~BTRFS_INODE_FLAG_MASK) {
 		inode_item_err(leaf, slot,
 			       "unknown flags detected: 0x%llx",
@@ -1053,6 +1058,7 @@ static int check_inode_item(struct extent_buffer *leaf,
 			       ~BTRFS_INODE_FLAG_MASK);
 		return -EUCLEAN;
 	}
+#endif /* MY_ABC_HERE */
 	return 0;
 }
 
@@ -1061,8 +1067,11 @@ static int check_root_item(struct extent_buffer *leaf, struct btrfs_key *key,
 {
 	struct btrfs_fs_info *fs_info = leaf->fs_info;
 	struct btrfs_root_item ri = { 0 };
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 	const u64 valid_root_flags = BTRFS_ROOT_SUBVOL_RDONLY |
 				     BTRFS_ROOT_SUBVOL_DEAD;
+#endif /* MY_ABC_HERE */
 	int ret;
 
 	ret = check_root_key(leaf, key, slot);
@@ -1132,6 +1141,8 @@ static int check_root_item(struct extent_buffer *leaf, struct btrfs_key *key,
 		return -EUCLEAN;
 	}
 
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 	/* Flags check */
 	if (btrfs_root_flags(&ri) & ~valid_root_flags) {
 		generic_err(leaf, slot,
@@ -1139,6 +1150,7 @@ static int check_root_item(struct extent_buffer *leaf, struct btrfs_key *key,
 			    btrfs_root_flags(&ri), valid_root_flags);
 		return -EUCLEAN;
 	}
+#endif /* MY_ABC_HERE*/
 	return 0;
 }
 

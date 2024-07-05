@@ -12,6 +12,10 @@
 #include <linux/ceph/mon_client.h>
 #include <linux/ceph/auth.h>
 #include <linux/ceph/debugfs.h>
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+#include <linux/crush/mapper.h>
+#include <linux/crush/hash.h>
+#endif
 
 #ifdef CONFIG_DEBUG_FS
 
@@ -388,11 +392,80 @@ static int client_options_show(struct seq_file *s, void *p)
 	return 0;
 }
 
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+static int pool_pg_show(struct seq_file *s, void *p)
+{
+	int i = 0;
+	struct ceph_client *client = s->private;
+	struct ceph_osd_client *osdc = &client->osdc;
+	struct ceph_osdmap *map = osdc->osdmap;
+	struct rb_node *n;
+
+	down_read(&osdc->lock);
+	for (n = rb_first(&map->pg_pools); n; n = rb_next(n)) {
+		struct ceph_pg_pool_info *pi =
+			rb_entry(n, struct ceph_pg_pool_info, node);
+		u32 pool_ps;
+		int ruleno;
+
+		// dup code from ceph_pg_to_up_acting_osds
+		pool_ps = (pi->flags & CEPH_POOL_FLAG_HASHPSPOOL) ?
+					crush_hash32(CRUSH_HASH_DEFAULT, pi->placement_seed):
+					pi->placement_seed;
+
+		ruleno = crush_find_rule(map->crush, pi->crush_ruleset, pi->type,
+								 pi->size);
+		if (ruleno < 0) {
+			pr_err("no crush rule: pool %lld ruleset %d type %d size %d\n",
+				pi->id, pi->crush_ruleset, pi->type, pi->size);
+			continue;
+		}
+
+		seq_printf(s, "%s, ps %d\n", pi->name, pi->placement_seed);
+		for (i = 0; i < pi->pg_num; i++) {
+			int j = 0;
+			int x = 0;
+			int len = 0;
+			int result[CEPH_PG_MAX_SIZE];
+
+			// dup code from raw_pg_to_pps
+			x = crush_hash32_2(CRUSH_HASH_DEFAULT, i, pi->id);
+			len = do_crush(map, ruleno, x, result, pi->size,
+						   map->osd_weight, map->max_osd, pi->id, pool_ps);
+			if (len < 0) {
+				pr_err("error %d from crush rule %d: pool %lld ruleset %d type %d size %d\n",
+					   len, ruleno, pi->id, pi->crush_ruleset, pi->type,
+					   pi->size);
+				break;
+			}
+
+			seq_printf(s, "\t pg %3d = [", i);
+			for (j = 0; j < len; j++) {
+				if (j != 0)
+					seq_printf(s, ",");
+
+				if (result[j] == CRUSH_ITEM_NONE)
+					seq_printf(s, "NONE");
+				else
+					seq_printf(s, "%d", result[j]);
+			}
+			seq_printf(s, "]\n");
+		}
+	}
+
+	up_read(&osdc->lock);
+	return 0;
+}
+#endif
+
 DEFINE_SHOW_ATTRIBUTE(monmap);
 DEFINE_SHOW_ATTRIBUTE(osdmap);
 DEFINE_SHOW_ATTRIBUTE(monc);
 DEFINE_SHOW_ATTRIBUTE(osdc);
 DEFINE_SHOW_ATTRIBUTE(client_options);
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+DEFINE_SHOW_ATTRIBUTE(pool_pg);
+#endif
 
 void __init ceph_debugfs_init(void)
 {
@@ -444,11 +517,21 @@ void ceph_debugfs_client_init(struct ceph_client *client)
 					client->debugfs_dir,
 					client,
 					&client_options_fops);
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+	client->debugfs_pool_pg = debugfs_create_file("pool_pg",
+					0400,
+					client->debugfs_dir,
+					client,
+					&pool_pg_fops);
+#endif
 }
 
 void ceph_debugfs_client_cleanup(struct ceph_client *client)
 {
 	dout("ceph_debugfs_client_cleanup %p\n", client);
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+	debugfs_remove(client->debugfs_pool_pg);
+#endif
 	debugfs_remove(client->debugfs_options);
 	debugfs_remove(client->debugfs_osdmap);
 	debugfs_remove(client->debugfs_monmap);

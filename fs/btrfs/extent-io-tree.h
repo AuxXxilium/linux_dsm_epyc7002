@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 
 #ifndef BTRFS_EXTENT_IO_TREE_H
@@ -21,10 +24,27 @@ struct io_failure_record;
 #define EXTENT_NORESERVE	(1U << 11)
 #define EXTENT_QGROUP_RESERVED	(1U << 12)
 #define EXTENT_CLEAR_DATA_RESV	(1U << 13)
+/*
+ * Must be cleared only during ordered extent completion or on error paths if we
+ * did not manage to submit bios and create the ordered extents for the range.
+ * Should not be cleared during page release and page invalidation (if there is
+ * an ordered extent in flight), that is left for the ordered extent completion.
+ */
 #define EXTENT_DELALLOC_NEW	(1U << 14)
+/*
+ * When an ordered extent successfully completes for a region marked as a new
+ * delalloc range, use this flag when clearing a new delalloc range to indicate
+ * that the VFS' inode number of bytes should be incremented and the inode's new
+ * delalloc bytes decremented, in an atomic way to prevent races with stat(2).
+ */
+#define EXTENT_ADD_INODE_BYTES  (1U << 15)
 #define EXTENT_DO_ACCOUNTING    (EXTENT_CLEAR_META_RESV | \
 				 EXTENT_CLEAR_DATA_RESV)
-#define EXTENT_CTLBITS		(EXTENT_DO_ACCOUNTING)
+#define EXTENT_CTLBITS		(EXTENT_DO_ACCOUNTING | \
+				 EXTENT_ADD_INODE_BYTES)
+#ifdef MY_ABC_HERE
+#define EXTENT_UNUSED_HINT      (1U << 30)
+#endif /* MY_ABC_HERE */
 
 /*
  * Redefined bits above which are used only in the device allocation tree,
@@ -34,6 +54,9 @@ struct io_failure_record;
  */
 #define CHUNK_ALLOCATED				EXTENT_DIRTY
 #define CHUNK_TRIMMED				EXTENT_DEFRAG
+#ifdef MY_ABC_HERE
+#define CHUNK_UNUSED_HINT 			EXTENT_UNUSED_HINT
+#endif /* MY_ABC_HERE */
 #define CHUNK_STATE_MASK			(CHUNK_ALLOCATED |		\
 						 CHUNK_TRIMMED)
 
@@ -196,7 +219,7 @@ static inline int set_extent_delalloc(struct extent_io_tree *tree, u64 start,
 				      struct extent_state **cached_state)
 {
 	return set_extent_bit(tree, start, end,
-			      EXTENT_DELALLOC | EXTENT_UPTODATE | extra_bits,
+			      EXTENT_DELALLOC | extra_bits,
 			      NULL, cached_state, GFP_NOFS);
 }
 
@@ -204,7 +227,7 @@ static inline int set_extent_defrag(struct extent_io_tree *tree, u64 start,
 		u64 end, struct extent_state **cached_state)
 {
 	return set_extent_bit(tree, start, end,
-			      EXTENT_DELALLOC | EXTENT_UPTODATE | EXTENT_DEFRAG,
+			      EXTENT_DELALLOC | EXTENT_DEFRAG,
 			      NULL, cached_state, GFP_NOFS);
 }
 
@@ -247,6 +270,10 @@ int free_io_failure(struct extent_io_tree *failure_tree,
 int clean_io_failure(struct btrfs_fs_info *fs_info,
 		     struct extent_io_tree *failure_tree,
 		     struct extent_io_tree *io_tree, u64 start,
-		     struct page *page, u64 ino, unsigned int pg_offset);
+		     struct page *page, u64 ino, unsigned int pg_offset
+#ifdef MY_ABC_HERE
+		     , bool should_put_locked
+#endif /* MY_ABC_HERE */
+		     );
 
 #endif /* BTRFS_EXTENT_IO_TREE_H */

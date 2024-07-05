@@ -247,6 +247,15 @@ config RESET_ZYNQ
 	help
 	  This enables the reset controller driver for Xilinx Zynq SoCs.
 
+if SYNO_LSP_RTD1619B
+config RESET_RTK_M2TMX
+	bool "Realtek M2TMX Reset Driver"
+	depends on OF && MFD_SYSCON
+	default n
+	help
+	  This enable Realtek M2TMX Reset Driver
+
+endif # SYNO_LSP_RTD1619B
 source "drivers/reset/sti/Kconfig"
 source "drivers/reset/hisilicon/Kconfig"
 source "drivers/reset/tegra/Kconfig"

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Process version 2 NFS requests.
@@ -10,6 +13,14 @@
 #include "cache.h"
 #include "xdr.h"
 #include "vfs.h"
+
+#ifdef MY_ABC_HERE
+#include <linux/syno_acl.h>
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#include "syno_io_stat.h"
+#endif /* MY_ABC_HERE */
 
 #define NFSDDBG_FACILITY		NFSDDBG_PROC
 
@@ -89,6 +100,16 @@ nfsd_proc_setattr(struct svc_rqst *rqstp)
 
 		if (delta < 0)
 			delta = -delta;
+#ifdef MY_ABC_HERE
+		if (delta < MAX_TOUCH_TIME_ERROR) {
+			if (IS_SYNOACL(fhp->fh_dentry) &&
+			    synoacl_op_setattr_prepare(fhp->fh_dentry, iap) != 0) {
+				iap->ia_valid &= ~BOTH_TIME_SET;
+			} else if (setattr_prepare(fhp->fh_dentry, iap) != 0) {
+				iap->ia_valid &= ~BOTH_TIME_SET;
+			}
+		}
+#else /* MY_ABC_HERE */
 		if (delta < MAX_TOUCH_TIME_ERROR &&
 		    setattr_prepare(fhp->fh_dentry, iap) != 0) {
 			/*
@@ -98,6 +119,7 @@ nfsd_proc_setattr(struct svc_rqst *rqstp)
 			 */
 			iap->ia_valid &= ~BOTH_TIME_SET;
 		}
+#endif /* MY_ABC_HERE */
 	}
 
 	resp->status = nfsd_setattr(rqstp, fhp, iap, 0, (time64_t)0);
@@ -605,6 +627,204 @@ nfsd_proc_statfs(struct svc_rqst *rqstp)
 	return rpc_success;
 }
 
+#ifdef MY_ABC_HERE
+/*
+ * Enable NFS VAAI plugin to reserve space.
+ * Only support pre-allocate blocks for now.
+ */
+static __be32
+nfsd_proc_fallocate(struct svc_rqst *rqstp)
+{
+	struct nfsd_writeargs *argp = rqstp->rq_argp;
+	struct nfsd_attrstat  *resp = rqstp->rq_resp;
+	__be32  be_cnt;
+	unsigned long cnt;
+	unsigned int nvecs;
+	loff_t offset = argp->offset;
+
+	/*
+	 * offset was divided by NFS2_MAXZEROEDSIZE in synonfs-vaai-plugin,
+	 * so we need to multiple NFS2_MAXZEROEDSIZE here to get offset in
+	 * bytes.
+	 */
+	offset *= NFS2_MAXZEROEDSIZE;
+
+	nvecs = svc_fill_write_vector(rqstp, rqstp->rq_arg.pages,
+				      &argp->first, argp->len);
+	if (!nvecs) {
+		dprintk("nfsd: ERROR WRITEZERO: no data in rq_arg\n");
+		resp->status = nfserr_io;
+		goto out;
+	}
+	memcpy(&be_cnt, rqstp->rq_vec[0].iov_base, sizeof(be_cnt));
+
+	cnt = ntohl(be_cnt);
+
+	if (cnt > NFS2_MAXZEROEDSIZE) {
+		dprintk("nfsd: ERROR WRITEZERO    zeroed byte %lu too large\n", cnt);
+		cnt = NFS2_MAXZEROEDSIZE;
+	}
+
+	dprintk("nfsd: WRITEZERO    %s %lu zero bytes at %llu\n",
+			SVCFH_fmt(&argp->fh), cnt, offset);
+
+	resp->status = nfsd_fallocate(rqstp, fh_copy(&resp->fh, &argp->fh),
+							   offset, &cnt);
+
+	dprintk("nfsd: WRITEZERO block count:%llu, status:%u\n",
+			resp->stat.blocks, resp->status);
+
+	if (resp->status == nfs_ok)
+		resp->status = fh_getattr(&resp->fh, &resp->stat);
+	else if (resp->status == nfserr_jukebox)
+		return rpc_drop_reply;
+out:
+	return rpc_success;
+}
+
+static __be32
+nfsd_proc_xlookup(struct svc_rqst *rqstp)
+{
+	struct nfsd_diropargs *argp = rqstp->rq_argp;
+	struct nfsd_diropres *resp = rqstp->rq_resp;
+	dprintk("nfsd: XLOOKUP   %s %.*s\n",
+			SVCFH_fmt(&argp->fh), argp->len, argp->name);
+
+	fh_init(&resp->fh, NFS_FHSIZE);
+	resp->status = nfsd_lookup(rqstp, &argp->fh, argp->name, argp->len,
+							 &resp->fh);
+	fh_put(&argp->fh);
+	if (resp->status != nfs_ok)
+		goto out;
+
+	resp->status = fh_getattr(&resp->fh, &resp->stat);
+	if (resp->status != nfs_ok)
+		goto out;
+
+	dprintk("nfsd: XLOOKUP  file block count %lld\n", resp->stat.blocks);
+
+	/*
+	 * File size and block size might overflow 32bit data types
+	 * therefore use unused inode no. slot extends the size representation range
+	 * TODO:
+	 */
+
+	resp->stat.ino = resp->stat.size >> 32;
+	resp->stat.size &= (NFS2_4G - 1);
+	resp->stat.ino |= (resp->stat.blocks >> 32) << 16;
+	resp->stat.blocks &= (NFS2_4G - 1);
+
+	/*
+	 * We keep the filesystem in-memory magic in nlink in order to let plug-in identify the filesystem
+	 */
+	if (resp->fh.fh_dentry && resp->fh.fh_dentry->d_inode)
+		resp->stat.nlink = resp->fh.fh_dentry->d_inode->i_sb->s_magic;
+	else
+		resp->stat.nlink = 0;
+
+out:
+	if (!(resp->fh.fh_dentry))
+		printk(KERN_WARNING "nfsd: XLOOKUP   resp->fh.fh_dentery is null\n");
+	else if (!(resp->fh.fh_dentry->d_inode))
+		printk(KERN_WARNING "nfsd: XLOOKUP   resp->fh.fh_dentry->d_inode is null\n");
+	return rpc_success;
+}
+
+static __be32
+nfsd_proc_synocopy(struct svc_rqst *rqstp)
+{
+	struct nfsd_writeargs *argp = rqstp->rq_argp;
+	struct nfsd_attrstat *resp = rqstp->rq_resp;
+	__be32 be_cnt;
+	unsigned long cnt;
+	loff_t offset = argp->offset;
+	int fn_offset;
+	bool skip_zero;
+	char zero_buf[sizeof(__be32)] = {0};
+	unsigned int nvecs;
+
+	/*
+	 * offset was divided by NFS2_SYNOCOPYSIZE in synonfs-vaai-plugin,
+	 * so we need to multiple NFS2_SYNOCOPYSIZE here to get offset in
+	 * bytes.
+	 */
+	offset *= NFS2_SYNOCOPYSIZE;
+
+
+	nvecs = svc_fill_write_vector(rqstp, rqstp->rq_arg.pages,
+				      &argp->first, argp->len);
+	if (!nvecs) {
+		dprintk("nfsd: ERROR WRITEZERO: no data in rq_arg\n");
+		resp->status = nfserr_io;
+		goto out;
+	}
+	memcpy(&be_cnt, rqstp->rq_vec[0].iov_base, sizeof(__be32));
+
+	cnt = ntohl(be_cnt);
+
+	if (cnt > NFS2_SYNOCOPYSIZE) {
+		dprintk("nfsd: ERROR SYNOCOPY    copyed byte %lu too large\n", cnt);
+		cnt = NFS2_SYNOCOPYSIZE;
+	}
+
+	skip_zero = (0 != memcmp(rqstp->rq_vec[0].iov_base + sizeof(__be32), zero_buf, sizeof(__be32)));
+
+	fn_offset = sizeof(__be32) + sizeof(__be32);
+
+	dprintk("nfsd: SYNOCOPY    from %s %lu bytes at %llu\n",
+			(char *)(rqstp->rq_vec[0].iov_base + fn_offset),
+			cnt, offset);
+
+	resp->status = nfsd_synocopy((const char *)(rqstp->rq_vec[0].iov_base + fn_offset), rqstp, fh_copy(&resp->fh, &argp->fh),
+							   offset, &cnt, skip_zero);
+
+	if (resp->status == nfs_ok)
+		resp->status = fh_getattr(&resp->fh, &resp->stat);
+	else if (resp->status == nfserr_jukebox)
+		return rpc_drop_reply;
+out:
+	return rpc_success;
+}
+
+static __be32
+nfsd_proc_synosupport(struct svc_rqst *rqstp)
+{
+	return rpc_success;
+}
+
+#ifdef MY_ABC_HERE
+static __be32
+nfsd_proc_synoclone(struct svc_rqst *rqstp)
+{
+	struct nfsd_writeargs *argp = rqstp->rq_argp;
+	struct nfsd_attrstat *resp = rqstp->rq_resp;
+	int offset;
+	unsigned int nvecs;
+
+	nvecs = svc_fill_write_vector(rqstp, rqstp->rq_arg.pages,
+				      &argp->first, argp->len);
+	if (!nvecs) {
+		dprintk("nfsd: ERROR WRITEZERO: no data in rq_arg\n");
+		resp->status = nfserr_io;
+		goto out;
+	}
+	offset = sizeof(__be32) + sizeof(__be32);
+
+	dprintk("nfsd: SYNOCLONE    from %s \n",
+			(char *)(rqstp->rq_vec[0].iov_base + offset));
+
+	resp->status = nfsd_synoclone((const char *)(rqstp->rq_vec[0].iov_base + offset), rqstp, fh_copy(&resp->fh, &argp->fh));
+
+	if (resp->status == nfs_ok)
+		resp->status = fh_getattr(&resp->fh, &resp->stat);
+	else if (resp->status == nfserr_jukebox)
+		return rpc_drop_reply;
+out:
+	return rpc_success;
+}
+#endif /* MY_ABC_HERE */
+#endif /* MY_ABC_HERE */
+
 /*
  * NFSv2 Server procedures.
  * Only the results of non-idempotent operations are cached.
@@ -615,7 +835,15 @@ struct nfsd_void { int dummy; };
 #define FH 8		/* filehandle */
 #define	AT 18		/* attributes */
 
+#ifdef MY_ABC_HERE
+#ifdef MY_ABC_HERE
+static const struct svc_procedure nfsd_procedures2[33] = {
+#else /* MY_ABC_HERE */
+static const struct svc_procedure nfsd_procedures2[32] = {
+#endif /* MY_ABC_HERE */
+#else /* MY_ABC_HERE */
 static const struct svc_procedure nfsd_procedures2[18] = {
+#endif /* MY_ABC_HERE */
 	[NFSPROC_NULL] = {
 		.pc_func = nfsd_proc_null,
 		.pc_decode = nfssvc_decode_void,
@@ -784,17 +1012,121 @@ static const struct svc_procedure nfsd_procedures2[18] = {
 		.pc_cachetype = RC_NOCACHE,
 		.pc_xdrressize = ST+5,
 	},
+#ifdef MY_ABC_HERE
+		{}, /* for future extension */
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		{},
+		[NFSPROC_SYNO_WRITEZERO] = {
+		.pc_func = nfsd_proc_fallocate,
+		.pc_decode = nfssvc_decode_writeargs,
+		.pc_encode = nfssvc_encode_attrstat,
+		.pc_release = nfssvc_release_attrstat,
+		.pc_argsize = sizeof(struct nfsd_writeargs),
+		.pc_ressize = sizeof(struct nfsd_attrstat),
+		.pc_cachetype = RC_REPLBUFF,
+		.pc_xdrressize = ST+AT,
+		},
+		[NFSPROC_SYNO_XLOOKUP] = {
+		.pc_func = nfsd_proc_xlookup,
+		.pc_decode = nfssvc_decode_diropargs,
+		.pc_encode = nfssvc_encode_diropres,
+		.pc_release = nfssvc_release_diropres,
+		.pc_argsize = sizeof(struct nfsd_diropargs),
+		.pc_ressize = sizeof(struct nfsd_diropres),
+		.pc_cachetype = RC_NOCACHE,
+		.pc_xdrressize = ST+FH+AT,
+		},
+		[NFSPROC_SYNO_COPY] = {
+		.pc_func = nfsd_proc_synocopy,
+		.pc_decode = nfssvc_decode_writeargs,
+		.pc_encode = nfssvc_encode_attrstat,
+		.pc_release = nfssvc_release_attrstat,
+		.pc_argsize = sizeof(struct nfsd_writeargs),
+		.pc_ressize = sizeof(struct nfsd_attrstat),
+		.pc_cachetype = RC_REPLBUFF,
+		.pc_xdrressize = ST+AT,
+		},
+		[NFSPROC_SYNO_SUPPORT] = {
+		.pc_func = nfsd_proc_synosupport,
+		.pc_decode = nfssvc_decode_void,
+		.pc_encode = nfssvc_encode_void,
+		.pc_argsize = sizeof(struct nfsd_void),
+		.pc_ressize = sizeof(struct nfsd_void),
+		.pc_cachetype = RC_NOCACHE,
+		.pc_xdrressize = ST,
+		},
+#ifdef MY_ABC_HERE
+		[NFSPROC_SYNO_CLONE] = {
+		.pc_func = nfsd_proc_synoclone,
+		.pc_decode = nfssvc_decode_writeargs,
+		.pc_encode = nfssvc_encode_attrstat,
+		.pc_release = nfssvc_release_attrstat,
+		.pc_argsize = sizeof(struct nfsd_writeargs),
+		.pc_ressize = sizeof(struct nfsd_attrstat),
+		.pc_cachetype = RC_REPLBUFF,
+		.pc_xdrressize = ST+AT,
+		},
+#endif /* MY_ABC_HERE */
+#endif /* MY_ABC_HERE */
 };
 
+#ifdef MY_ABC_HERE
+static void nfsd_store_latency(u64 rpc_lat, u64 vfs_lat, u32 op)
+{
+	enum syno_nfsd_io_stat_type type;
+	if (op != NFSPROC_READ && op != NFSPROC_WRITE)
+		return;
+	type = (op == NFSPROC_READ) ? SYNO_NFSD_IO_READ : SYNO_NFSD_IO_WRITE;
+	syno_nfsd_store_latency_into_histogram(SYNO_NFSD_USEC_TO_SEC(rpc_lat),
+						SYNO_NFSD_USEC_TO_SEC(vfs_lat),
+						SYNO_NFSD_VERSION_2, type);
+}
+
+static void nfsd_store_error(struct svc_rqst *rqstp)
+{
+	const struct syno_nfsd_dummy_status *st;
+	// rq_resp's size is from `rq_server->sv_xdrsize`, so we check on it.
+	if (!rqstp || !rqstp->rq_resp ||
+	    !rqstp->rq_server || rqstp->rq_server->sv_xdrsize < sizeof(struct syno_nfsd_dummy_status))
+		return;
+	st = (const struct syno_nfsd_dummy_status *) rqstp->rq_resp;
+	syno_nfsd_store_error(be32_to_cpu(st->status), SYNO_NFSD_VERSION_2);
+}
+#endif /* MY_ABC_HERE */
 
 static unsigned int nfsd_count2[ARRAY_SIZE(nfsd_procedures2)];
+#ifdef MY_ABC_HERE
+static struct svc_lat nfsd_latency2[ARRAY_SIZE(nfsd_procedures2)];
+#endif /* MY_ABC_HERE */
 const struct svc_version nfsd_version2 = {
 	.vs_vers	= 2,
+#ifdef MY_ABC_HERE
+#ifdef MY_ABC_HERE
+	.vs_nproc   = 33,
+#else /* MY_ABC_HERE */
+	.vs_nproc   = 32,
+#endif /* MY_ABC_HERE */
+#else /* MY_ABC_HERE */
 	.vs_nproc	= 18,
+#endif /* MY_ABC_HERE */
 	.vs_proc	= nfsd_procedures2,
 	.vs_count	= nfsd_count2,
+#ifdef MY_ABC_HERE
+	.vs_latency	= nfsd_latency2,
+#endif /* MY_ABC_HERE */
 	.vs_dispatch	= nfsd_dispatch,
 	.vs_xdrsize	= NFS2_SVC_XDRSIZE,
+#ifdef MY_ABC_HERE
+	.vs_store_latency_to_histogram 	= nfsd_store_latency,
+	.vs_store_resp_error 		= nfsd_store_error,
+#endif /* MY_ABC_HERE */
 };
 
 /*

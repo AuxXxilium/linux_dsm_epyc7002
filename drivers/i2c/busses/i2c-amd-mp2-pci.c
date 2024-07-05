@@ -213,7 +213,9 @@ static irqreturn_t amd_mp2_irq_isr(int irq, void *dev)
 	unsigned int bus_id;
 	void __iomem *reg;
 	enum irqreturn ret = IRQ_NONE;
+	u32 retried = 0;
 
+retry:
 	for (bus_id = 0; bus_id < 2; bus_id++) {
 		i2c_common = privdata->busses[bus_id];
 		if (!i2c_common)
@@ -235,6 +237,10 @@ static irqreturn_t amd_mp2_irq_isr(int irq, void *dev)
 	if (ret != IRQ_HANDLED) {
 		val = readl(privdata->mmio + AMD_P2C_MSG_INTEN);
 		if (val != 0) {
+			if (0 == retried) {
+				retried = 1;
+				goto retry;
+			}
 			writel(0, privdata->mmio + AMD_P2C_MSG_INTEN);
 			dev_warn(ndev_dev(privdata),
 				 "received irq without message\n");

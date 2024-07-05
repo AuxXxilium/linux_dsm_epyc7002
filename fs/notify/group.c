@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Copyright (C) 2008 Red Hat, Inc., Eric Paris <eparis@redhat.com>
@@ -128,6 +131,9 @@ struct fsnotify_group *fsnotify_alloc_group(const struct fsnotify_ops *ops)
 	atomic_set(&group->user_waits, 0);
 
 	spin_lock_init(&group->notification_lock);
+#ifdef MY_ABC_HERE
+	mutex_init(&group->notification_mutex);
+#endif /* MY_ABC_HERE */
 	INIT_LIST_HEAD(&group->notification_list);
 	init_waitqueue_head(&group->notification_waitq);
 	group->max_events = UINT_MAX;

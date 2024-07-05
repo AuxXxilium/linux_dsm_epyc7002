@@ -49,6 +49,7 @@ obj-$(CONFIG_BINFMT_FLAT)	+= binfmt_flat.o
 
 obj-$(CONFIG_FS_MBCACHE)	+= mbcache.o
 obj-$(CONFIG_FS_POSIX_ACL)	+= posix_acl.o
+obj-$(CONFIG_SYNO_FS_WINACL)	+= syno_acl.o syno_acl_api.o
 obj-$(CONFIG_NFS_COMMON)	+= nfs_common/
 obj-$(CONFIG_COREDUMP)		+= coredump.o
 obj-$(CONFIG_SYSCTL)		+= drop_caches.o
@@ -112,6 +113,7 @@ obj-$(CONFIG_AUTOFS_FS)		+= autofs/
 obj-$(CONFIG_ADFS_FS)		+= adfs/
 obj-$(CONFIG_FUSE_FS)		+= fuse/
 obj-$(CONFIG_OVERLAY_FS)	+= overlayfs/
+obj-$(CONFIG_AUFS_FS)		+= aufs/
 obj-$(CONFIG_ORANGEFS_FS)       += orangefs/
 obj-$(CONFIG_UDF_FS)		+= udf/
 obj-$(CONFIG_SUN_OPENPROMFS)	+= openpromfs/

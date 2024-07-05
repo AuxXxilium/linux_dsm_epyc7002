@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Synopsys DesignWare I2C adapter driver (master only).
@@ -20,6 +23,9 @@
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/reset.h>
+#ifdef MY_ABC_HERE
+#include <linux/synobios.h>
+#endif /* MY_ABC_HERE */
 
 #include "i2c-designware-core.h"
 
@@ -69,6 +75,25 @@ static int i2c_dw_set_timings_master(struct dw_i2c_dev *dev)
 					4700,	/* tLOW = 4.7 us */
 					scl_falling_time,
 					0);	/* No offset */
+
+#ifdef MY_ABC_HERE
+		/* FIXME: Don't use these model customize code
+		 *        They should be customized in dts or acpi
+		 */
+		if (!syno_is_hw_version(HW_DS1621p) && !syno_is_hw_version(HW_DS1821p)) {
+			dev->ss_hcnt =
+				i2c_dw_scl_hcnt(ic_clk,
+						5000,	/* tHD;STA = tHIGH = 5.0 us */
+						sda_falling_time,
+						0,	/* 0: DW default, 1: Ideal */
+						0);	/* No offset */
+			dev->ss_lcnt =
+				i2c_dw_scl_lcnt(ic_clk,
+						5000,	/* tLOW = 5.0 us */
+						scl_falling_time,
+						0);	/* No offset */
+		}
+#endif /* MY_ABC_HERE */
 	}
 	dev_dbg(dev->dev, "Standard Mode HCNT:LCNT = %d:%d\n",
 		dev->ss_hcnt, dev->ss_lcnt);

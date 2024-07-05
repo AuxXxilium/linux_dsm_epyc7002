@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Functions related to generic helpers functions
@@ -149,6 +152,89 @@ int blkdev_issue_discard(struct block_device *bdev, sector_t sector,
 	return ret;
 }
 EXPORT_SYMBOL(blkdev_issue_discard);
+
+#ifdef MY_ABC_HERE
+static int __blkdev_hint_unused(struct block_device *bdev,
+		sector_t sector, sector_t nr_sects, gfp_t gfp_mask,
+		struct bio **biop)
+{
+	struct bio *bio = *biop;
+	unsigned int max_unused_hint_sectors;
+	struct request_queue *q = bdev_get_queue(bdev);
+	sector_t bs_mask = 0;
+	sector_t aligned_sector = 0;
+
+	if (!q)
+		return -ENXIO;
+
+	if (!blk_queue_unused_hint(q))
+		return -EOPNOTSUPP;
+
+	bs_mask = (bdev_logical_block_size(bdev) >> 9) - 1;
+
+	aligned_sector = (sector + bs_mask) & ~bs_mask;
+	if (sector != aligned_sector) {
+		if (nr_sects > aligned_sector - sector)
+			nr_sects -= aligned_sector - sector;
+		else
+			nr_sects = 0;
+		sector = aligned_sector;
+	}
+	/* Ensure that max_unused_hint_sectors doesn't overflow bi_size */
+	max_unused_hint_sectors = bio_allowed_max_sectors(q) & ~bs_mask;
+
+	while (nr_sects) {
+		bio = blk_next_bio(bio, 0, gfp_mask);
+		bio->bi_iter.bi_sector = sector;
+		bio_set_dev(bio, bdev);
+		bio_set_op_attrs(bio, REQ_OP_UNUSED_HINT, 0);
+
+		if (nr_sects > max_unused_hint_sectors) {
+			bio->bi_iter.bi_size = max_unused_hint_sectors << 9;
+			nr_sects -= max_unused_hint_sectors;
+			sector += max_unused_hint_sectors;
+		} else {
+			bio->bi_iter.bi_size = nr_sects << 9;
+			nr_sects = 0;
+		}
+		cond_resched();
+	}
+
+	*biop = bio;
+	return 0;
+}
+
+/**
+ * blkdev_hint_unused - queue a unused hint
+ * @bdev:	blockdev to issue unused hint for
+ * @sector:	start sector
+ * @nr_sects:	number of sectors to hint unused
+ * @gfp_mask:	memory allocation flags (for bio_alloc)
+ *
+ * Description:
+ *    Issue a unused hint for the sectors in question.
+ */
+int blkdev_hint_unused(struct block_device *bdev, sector_t sector,
+		sector_t nr_sects, gfp_t gfp_mask)
+{
+	struct bio *bio = NULL;
+	struct blk_plug plug;
+	int ret;
+
+	blk_start_plug(&plug);
+	ret = __blkdev_hint_unused(bdev, sector, nr_sects, gfp_mask, &bio);
+	if (!ret && bio) {
+		ret = submit_bio_wait(bio);
+		if (ret == -EOPNOTSUPP)
+			ret = 0;
+		bio_put(bio);
+	}
+	blk_finish_plug(&plug);
+
+	return ret;
+}
+EXPORT_SYMBOL(blkdev_hint_unused);
+#endif /* MY_ABC_HERE */
 
 /**
  * __blkdev_issue_write_same - generate number of bios with same page

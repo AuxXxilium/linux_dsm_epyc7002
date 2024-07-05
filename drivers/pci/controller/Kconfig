@@ -305,6 +305,27 @@ config PCIE_HISI_ERR
 	  Say Y here if you want error handling support
 	  for the PCIe controller's errors on HiSilicon HIP SoCs
 
+if SYNO_LSP_RTD1619B
+config PCIE_RTD
+	bool "Realtek PCIe host controller"
+	select PHY_RTD_PCIE
+	select PCI_MSI_ARCH_FALLBACKS
+	help
+	  Realtek PCIe host controller support.
+
+config RTD16XXB_PCIE1_ACP
+	bool "Realtek PCIe host controller ACP support"
+	depends on PCIE_RTD
+	help
+	  Enable Realtek RTD16XXB PCIE1 ACP.
+
+config PCIE_RTD_TRANS
+	bool "Realtek PCIe tanslation"
+	depends on PCIE_RTD
+	help
+	  Realtek PCIe MMIO translation support.
+
+endif # SYNO_LSP_RTD1619B
 source "drivers/pci/controller/dwc/Kconfig"
 source "drivers/pci/controller/mobiveil/Kconfig"
 source "drivers/pci/controller/cadence/Kconfig"

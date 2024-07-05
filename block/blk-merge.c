@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Functions related to segment and merge handling
@@ -102,6 +105,26 @@ static struct bio *blk_bio_discard_split(struct request_queue *q,
 
 	return bio_split(bio, split_sectors, GFP_NOIO, bs);
 }
+
+#ifdef MY_ABC_HERE
+static struct bio *blk_bio_unused_hint_split(struct request_queue *q,
+					 struct bio *bio,
+					 struct bio_set *bs,
+					 unsigned *nsegs)
+{
+	unsigned int max_unused_hint_sectors;
+	sector_t bs_mask = (queue_logical_block_size(q) >> 9) - 1;
+
+	*nsegs = 1;
+
+	max_unused_hint_sectors = bio_allowed_max_sectors(q) & ~bs_mask;
+
+	if (bio_sectors(bio) <= max_unused_hint_sectors)
+		return NULL;
+
+	return bio_split(bio, max_unused_hint_sectors, GFP_NOIO, bs);
+}
+#endif /* MY_ABC_HERE */
 
 static struct bio *blk_bio_write_zeroes_split(struct request_queue *q,
 		struct bio *bio, struct bio_set *bs, unsigned *nsegs)
@@ -305,6 +328,12 @@ void __blk_queue_split(struct bio **bio, unsigned int *nr_segs)
 	case REQ_OP_SECURE_ERASE:
 		split = blk_bio_discard_split(q, *bio, &q->bio_split, nr_segs);
 		break;
+#ifdef MY_ABC_HERE
+	case REQ_OP_UNUSED_HINT:
+		split = blk_bio_unused_hint_split(q, *bio, &q->bio_split,
+				nr_segs);
+		break;
+#endif /* MY_ABC_HERE */
 	case REQ_OP_WRITE_ZEROES:
 		split = blk_bio_write_zeroes_split(q, *bio, &q->bio_split,
 				nr_segs);
@@ -339,6 +368,9 @@ void __blk_queue_split(struct bio **bio, unsigned int *nr_segs)
 
 		bio_chain(split, *bio);
 		trace_block_split(q, split, (*bio)->bi_iter.bi_sector);
+#ifdef MY_ABC_HERE
+		bio_set_flag(*bio, BIO_SYNO_DELAYED);
+#endif /* MY_ABC_HERE */
 		submit_bio_noacct(*bio);
 		*bio = split;
 	}
@@ -375,6 +407,9 @@ unsigned int blk_recalc_rq_segments(struct request *rq)
 	switch (bio_op(rq->bio)) {
 	case REQ_OP_DISCARD:
 	case REQ_OP_SECURE_ERASE:
+#ifdef MY_ABC_HERE
+	case REQ_OP_UNUSED_HINT:
+#endif /* MY_ABC_HERE */
 		if (queue_max_discard_segments(rq->q) > 1) {
 			struct bio *bio = rq->bio;
 

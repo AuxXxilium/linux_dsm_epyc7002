@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  *  libata.h - helper library for ATA
@@ -14,6 +17,16 @@
 
 #define DRV_NAME	"libata"
 #define DRV_VERSION	"3.00"	/* must be exactly four chars */
+
+#ifdef MY_ABC_HERE
+struct ata_blacklist_entry {
+	const char *model_num;
+	const char *model_rev;
+	unsigned long horkage;
+};
+
+extern struct ata_blacklist_entry ata_device_blacklist [];
+#endif /* MY_ABC_HERE */
 
 /* libata-core.c */
 enum {
@@ -141,6 +154,9 @@ extern void ata_scsi_set_sense_information(struct ata_device *dev,
 					   const struct ata_taskfile *tf);
 extern void ata_scsi_media_change_notify(struct ata_device *dev);
 extern void ata_scsi_hotplug(struct work_struct *work);
+#ifdef MY_ABC_HERE
+extern void ata_syno_pmp_hotplug(struct work_struct *work);
+#endif /* MY_ABC_HERE */
 extern void ata_schedule_scsi_eh(struct Scsi_Host *shost);
 extern void ata_scsi_dev_rescan(struct work_struct *work);
 extern int ata_bus_probe(struct ata_port *ap);
@@ -183,6 +199,9 @@ extern int ata_ering_map(struct ata_ering *ering,
 extern unsigned int atapi_eh_tur(struct ata_device *dev, u8 *r_sense_key);
 extern unsigned int atapi_eh_request_sense(struct ata_device *dev,
 					   u8 *sense_buf, u8 dfl_sense_key);
+#ifdef MY_ABC_HERE
+extern void sata_pmp_detach(struct ata_device *dev);
+#endif /* MY_ABC_HERE */
 
 /* libata-pmp.c */
 #ifdef CONFIG_SATA_PMP
@@ -254,5 +273,76 @@ static inline void zpodd_enable_run_wake(struct ata_device *dev) {}
 static inline void zpodd_disable_run_wake(struct ata_device *dev) {}
 static inline void zpodd_post_poweron(struct ata_device *dev) {}
 #endif /* CONFIG_SATA_ZPODD */
+
+#ifdef MY_ABC_HERE
+int syno_gpio_with_scmd(struct ata_port *ap, struct scsi_device *sdev, SYNO_PM_PKG *pPkg, u8 rw);
+int syno_i2c_with_scmd(struct ata_port *ap, struct scsi_device *sdev, SYNO_PM_I2C_PKG *pPkg, u8 rw);
+int syno_jmb_575_led_ctl_with_scmd(struct ata_port *ap, struct scsi_device *sdev, u8 *pLedMask, u8 rw);
+unsigned int syno_sata_pmp_read_i2c(struct ata_port *ap, SYNO_PM_I2C_PKG *pPM_pkg);
+unsigned int syno_sata_pmp_write_i2c(struct ata_port *ap, SYNO_PM_I2C_PKG *pPM_pkg);
+unsigned int syno_jmb575_polling_data(struct ata_port *ap, char *buf, unsigned int sectors);
+#define SYNO_JMB575_GET_INFO_FEATURE 0xE5
+int syno_pmp_get_ebox_node_by_unique_id(u8 synoUniqueID, u8 isRP, struct device_node **pEBoxNode);
+int syno_pmp_i2c_addr_get(struct device_node *pNode, unsigned int *addr);
+typedef struct _tag_SYNO_JMB575_I2C_DEV_INFO {
+	unsigned int addr;
+	unsigned int offset;
+	unsigned int mask;
+} SYNO_JMB575_I2C_DEV_INFO;
+typedef enum __tag_SYNO_JMB575_VENDOR_COMMAND {
+	SYNO_JMB575_COMMAND_UNKNOWN = 0x00,
+	SYNO_JMB575_GET_UNIQUE_ID = 0x01,
+	SYNO_JMB575_GET_EMID = 0x02,
+	SYNO_JMB575_DISK_LED_MASK = 0x03,
+	SYNO_JMB575_GET_FW_INFO = 0x04,
+} SYNO_JMB575_VENDOR_COMMAND;
+int syno_sata_jmb575_custom_cmd(struct ata_port *ap, SYNO_JMB575_VENDOR_COMMAND cmd, int *var);
+int syno_sata_jmb575_disk_led_set_with_scmnd(struct ata_link *link, u8 ledIdx, u8 blLightOn);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+void syno_smbus_hdd_powerctl_init(void);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#ifdef MY_ABC_HERE
+/*
+ * Event for user space
+ *
+ * FIXME: SYNO_SATA_DEEPSLEEP need to depended on SYNO_PORT_MAPPING_V2
+ *        for just one function "SendDsleepWakeEvent", so add a ugly
+ *        nested config to fix the kconfig dependency.
+ */
+extern void SendDsleepWakeEvent(struct work_struct *work);
+#else /* MY_ABC_HERE */
+static inline void SendDsleepWakeEvent(struct work_struct *work)
+{
+	return;
+}
+#endif /* MY_ABC_HERE */
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+extern struct Scsi_Host* ata_scsi_is_eunit_deepsleep(struct Scsi_Host *host);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+extern void SendSataErrEvent(struct work_struct *work);
+extern void SendDiskRetryEvent(struct work_struct *work);
+extern void SendDiskTimeoutEvent(struct work_struct *work);
+extern void SendDiskSoftResetFailEvent(struct work_struct *work);
+extern void SendDiskHardResetFailEvent(struct work_struct *work);
+extern void SendPortDisEvent(struct work_struct *work);
+extern void SendPwrResetEvent(struct work_struct *work);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+extern void SendPortRetryFailedEvent(struct work_struct *work);
+extern void SendLinkDownEvent(struct work_struct *work);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+extern void SendDiskPowerShortBreakEvent(struct work_struct *work);
+#endif /* MY_ABC_HERE */
 
 #endif /* __LIBATA_H__ */

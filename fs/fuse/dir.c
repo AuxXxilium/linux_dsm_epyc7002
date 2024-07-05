@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
   FUSE: Filesystem in Userspace
   Copyright (C) 2001-2008  Miklos Szeredi <miklos@szeredi.hu>
@@ -17,6 +20,10 @@
 #include <linux/xattr.h>
 #include <linux/iversion.h>
 #include <linux/posix_acl.h>
+#ifdef MY_ABC_HERE
+#include "../ntfs/time.h"
+#include "../ntfs/endian.h"
+#endif /* MY_ABC_HERE*/
 
 static void fuse_advise_use_readdirplus(struct inode *dir)
 {
@@ -1843,6 +1850,331 @@ static int fuse_getattr(const struct path *path, struct kstat *stat,
 	return fuse_update_get_attr(inode, NULL, stat, request_mask, flags);
 }
 
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE) || \
+    defined(MY_ABC_HERE)
+#define SZ_FS_NTFS "ntfs"
+#define IS_NTFS_FS(inode) (inode->i_sb->s_subtype && !strcmp(SZ_FS_NTFS, inode->i_sb->s_subtype))
+#endif /* MY_ABC_HERE || MY_ABC_HERE ||
+          MY_ABC_HERE*/
+#ifdef MY_ABC_HERE
+#define XATTR_NTFS_CREATE_TIME "ntfs_crtime"
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static int __fuse_syno_get_archive_bit(struct dentry *dentry,
+		unsigned int *archive_bit)
+{
+	struct inode *inode = dentry->d_inode;
+
+	if (IS_NTFS_FS(inode)) {
+		ssize_t size = 0;
+		unsigned int tmp_archive_bit;
+
+		size = fuse_getxattr(inode, XATTR_SYNO_ARCHIVE_BIT,
+				&tmp_archive_bit, sizeof(tmp_archive_bit));
+
+		if (size != sizeof(tmp_archive_bit))
+			return (size < 0) ? size : -EINVAL;
+
+		/*
+		 * Use default value: ALL_SYNO_ARCHIVE if
+		 * inode->i_archive_bit is not cached yet.
+		 *
+		 * For those archive bits not supported by ntfs
+		 * are only kept in in-memory inode.
+		 */
+		*archive_bit = (ALL_SYNO_ARCHIVE & (~ALL_SMB)) | \
+				(tmp_archive_bit & ALL_SMB);
+
+		return 0;
+	}
+
+	return -EOPNOTSUPP;
+}
+
+static int fuse_syno_get_archive_bit(struct dentry *dentry,
+		unsigned int *archive_bit, int may_not_block)
+{
+	int ret;
+	unsigned int tmp_archive_bit;
+	struct inode *inode = dentry->d_inode;
+	struct fuse_inode *fi = get_fuse_inode(inode);
+
+	if (test_bit(FUSE_I_SYNO_ARCHIVE_BIT_CACHED, &fi->state)) {
+		*archive_bit = inode->i_archive_bit;
+
+		return 0;
+	}
+
+	if (may_not_block)
+		return -ECHILD;
+
+	ret = __fuse_syno_get_archive_bit(dentry, &tmp_archive_bit);
+	if (ret)
+		return ret;
+
+	inode->i_archive_bit = tmp_archive_bit;
+	set_bit(FUSE_I_SYNO_ARCHIVE_BIT_CACHED, &fi->state);
+
+	*archive_bit = tmp_archive_bit;
+
+	return ret;
+}
+
+static int __fuse_syno_set_archive_bit(struct dentry *dentry,
+		unsigned int archive_bit)
+{
+	struct inode *inode = dentry->d_inode;
+
+	if (IS_NTFS_FS(inode)) {
+		// Only supported smb bits(ALL_SMB) would be written into disk.
+		return fuse_setxattr(inode, XATTR_SYNO_ARCHIVE_BIT,
+				&archive_bit, sizeof(archive_bit), 0);
+	}
+
+	return -EOPNOTSUPP;
+}
+
+static int fuse_syno_set_archive_bit(struct dentry *dentry,
+		unsigned int archive_bit)
+{
+	int ret;
+	struct inode *inode = dentry->d_inode;
+	struct fuse_inode *fi = get_fuse_inode(inode);
+
+	/*
+	 * If you want to update to server side inode (userspace daemon):
+	 * (1) Make sure that server will update this to on-disk inode structure.
+	 * (2) Make sure that IS_NOCMTIME(inode) is NOT set --
+	 *     otherwise mark_inode_dirty_sync will update wrong cmtime to server.
+	 *     Please refer to fuse_update_ctime.
+	 */
+	ret = __fuse_syno_set_archive_bit(dentry, archive_bit);
+	if (ret)
+		return ret;
+
+	inode->i_archive_bit = archive_bit;
+	set_bit(FUSE_I_SYNO_ARCHIVE_BIT_CACHED, &fi->state);
+
+	return 0;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static int __fuse_syno_get_inode_archive_version(
+		struct dentry *dentry, u32 *archive_version)
+{
+	return -EOPNOTSUPP;
+}
+
+static int fuse_syno_get_inode_archive_version(
+		struct dentry *dentry, u32 *archive_version)
+{
+	int ret;
+	u32 tmp_archive_version;
+	struct inode *inode = d_inode(dentry);
+	struct fuse_inode *fi = get_fuse_inode(inode);
+
+	if (test_bit(FUSE_I_SYNO_ARCHIVE_VERSION_CACHED, &fi->state)) {
+		*archive_version = inode->i_archive_version;
+
+		return 0;
+	}
+
+	ret = __fuse_syno_get_inode_archive_version(dentry,
+			&tmp_archive_version);
+	if (ret)
+		return ret;
+
+	inode->i_archive_version = tmp_archive_version;
+	set_bit(FUSE_I_SYNO_ARCHIVE_VERSION_CACHED, &fi->state);
+
+	*archive_version = tmp_archive_version;
+
+	return 0;
+}
+
+static int __fuse_syno_set_inode_archive_version(struct dentry *dentry,
+		unsigned int archive_version)
+{
+	return -EOPNOTSUPP;
+}
+
+static int fuse_syno_set_inode_archive_version(struct dentry *dentry,
+		unsigned int archive_version)
+{
+	int ret;
+	struct inode *inode = dentry->d_inode;
+	struct fuse_inode *fi = get_fuse_inode(inode);
+
+	/*
+	 * If you want to update to server side inode (userspace daemon):
+	 * (1) Make sure that server will update this to on-disk inode structure.
+	 * (2) Make sure that IS_NOCMTIME(inode) is NOT set --
+	 *     otherwise mark_inode_dirty_sync will update wrong cmtime to server.
+	 *     Please refer to fuse_update_ctime.
+	 */
+	ret = __fuse_syno_set_inode_archive_version(dentry, archive_version);
+	if (ret)
+		return ret;
+
+	inode->i_archive_version = archive_version;
+	set_bit(FUSE_I_SYNO_ARCHIVE_VERSION_CACHED, &fi->state);
+
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static int __fuse_syno_get_create_time(struct inode *inode,
+		struct timespec64 *create_time)
+{
+	if (IS_NTFS_FS(inode)) {
+		ssize_t size;
+		s64 time_s = 0;
+
+		size = fuse_getxattr(inode,
+				XATTR_SYSTEM_PREFIX XATTR_NTFS_CREATE_TIME,
+				&time_s, sizeof(time_s));
+		if (size != sizeof(time_s))
+			return (size < 0) ? size : -EINVAL;
+
+		*create_time = ntfs2utc(cpu_to_sle64(time_s));
+
+		return 0;
+	}
+
+	return -EOPNOTSUPP;
+}
+
+static int fuse_syno_get_create_time(struct inode *inode,
+		struct timespec64 *create_time)
+{
+	int ret;
+	struct timespec64 tmp_create_time;
+	struct fuse_inode *fi = get_fuse_inode(inode);
+
+	if (test_bit(FUSE_I_SYNO_CREATE_TIME_CACHED, &fi->state)) {
+		*create_time = fi->i_crtime;
+
+		return 0;
+	}
+
+	ret = __fuse_syno_get_create_time(inode, &tmp_create_time);
+	if (ret)
+		return ret;
+
+	fi->i_crtime = tmp_create_time;
+	set_bit(FUSE_I_SYNO_CREATE_TIME_CACHED, &fi->state);
+
+	*create_time = tmp_create_time;
+
+	return 0;
+}
+
+static int __fuse_syno_set_create_time(struct inode *inode,
+		struct timespec64 *create_time)
+{
+	if (IS_NTFS_FS(inode)) {
+		s64 time_s = sle64_to_cpu(utc2ntfs(*create_time));
+
+		return fuse_setxattr(inode,
+				XATTR_SYSTEM_PREFIX XATTR_NTFS_CREATE_TIME,
+				&time_s, sizeof(time_s), 0);
+	}
+
+	return -EOPNOTSUPP;
+}
+
+static int fuse_syno_set_create_time(struct inode *inode,
+		struct timespec64 *create_time)
+{
+	int ret;
+	struct fuse_inode *fi = get_fuse_inode(inode);
+
+	/*
+	 * If you want to update to server side inode (userspace daemon):
+	 * (1) Make sure that server will update this to on-disk inode structure.
+	 * (2) Make sure that IS_NOCMTIME(inode) is NOT set --
+	 *     otherwise mark_inode_dirty_sync will update wrong cmtime to server.
+	 *     Please refer to fuse_update_ctime.
+	 */
+	ret = __fuse_syno_set_create_time(inode, create_time);
+	if (ret)
+		return ret;
+
+	fi->i_crtime = *create_time;
+	set_bit(FUSE_I_SYNO_CREATE_TIME_CACHED, &fi->state);
+
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static int fuse_syno_getattr(struct dentry *dentry, struct kstat *kst, unsigned int syno_flags)
+{
+	int ret = 0;
+
+#ifdef MY_ABC_HERE
+	if (syno_flags & SYNOST_ARCHIVE_BIT) {
+		unsigned int tmp_archive_bit;
+		struct inode *inode = dentry->d_inode;
+
+		mutex_lock(&inode->i_archive_bit_mutex);
+		ret = fuse_syno_get_archive_bit(dentry, &tmp_archive_bit, 0);
+		mutex_unlock(&inode->i_archive_bit_mutex);
+		if (ret == -EOPNOTSUPP) {
+			tmp_archive_bit = ALL_SYNO_ARCHIVE;
+			ret = 0;
+		} else if (ret) {
+			return ret;
+		}
+
+		kst->syno_archive_bit = tmp_archive_bit;
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (syno_flags & SYNOST_ARCHIVE_VER) {
+		u32 tmp_archive_version;
+		struct inode *inode = dentry->d_inode;
+
+		mutex_lock(&inode->i_archive_version_mutex);
+		ret = fuse_syno_get_inode_archive_version(dentry,
+				&tmp_archive_version);
+		mutex_unlock(&inode->i_archive_version_mutex);
+		if (ret == -EOPNOTSUPP) {
+			tmp_archive_version = 0;
+			ret = 0;
+		} else if (ret) {
+			return ret;
+		}
+
+		kst->syno_archive_version = tmp_archive_version;
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (syno_flags & SYNOST_CREATE_TIME) {
+		struct timespec64 tmp_create_time;
+		struct inode *inode = dentry->d_inode;
+
+		ret = fuse_syno_get_create_time(inode, &tmp_create_time);
+		if (ret == -EOPNOTSUPP) {
+			memset(&tmp_create_time, 0, sizeof(tmp_create_time));
+			ret = 0;
+		} else if (ret) {
+			return ret;
+		}
+
+		kst->syno_create_time = tmp_create_time;
+	}
+#endif /* MY_ABC_HERE */
+
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
 static const struct inode_operations fuse_dir_inode_operations = {
 	.lookup		= fuse_lookup,
 	.mkdir		= fuse_mkdir,
@@ -1860,6 +2192,21 @@ static const struct inode_operations fuse_dir_inode_operations = {
 	.listxattr	= fuse_listxattr,
 	.get_acl	= fuse_get_acl,
 	.set_acl	= fuse_set_acl,
+#ifdef MY_ABC_HERE
+	.syno_getattr	= fuse_syno_getattr,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_get_archive_bit	= fuse_syno_get_archive_bit,
+	.syno_set_archive_bit	= fuse_syno_set_archive_bit,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_get_archive_version = fuse_syno_get_inode_archive_version,
+	.syno_set_archive_version = fuse_syno_set_inode_archive_version,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+        .syno_get_crtime	= fuse_syno_get_create_time,
+        .syno_set_crtime	= fuse_syno_set_create_time,
+#endif /* MY_ABC_HERE */
 };
 
 static const struct file_operations fuse_dir_operations = {
@@ -1880,6 +2227,21 @@ static const struct inode_operations fuse_common_inode_operations = {
 	.listxattr	= fuse_listxattr,
 	.get_acl	= fuse_get_acl,
 	.set_acl	= fuse_set_acl,
+#ifdef MY_ABC_HERE
+	.syno_getattr	= fuse_syno_getattr,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_get_archive_bit	= fuse_syno_get_archive_bit,
+	.syno_set_archive_bit	= fuse_syno_set_archive_bit,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_get_archive_version = fuse_syno_get_inode_archive_version,
+	.syno_set_archive_version = fuse_syno_set_inode_archive_version,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+        .syno_get_crtime	= fuse_syno_get_create_time,
+        .syno_set_crtime	= fuse_syno_set_create_time,
+#endif /* MY_ABC_HERE */
 };
 
 static const struct inode_operations fuse_symlink_inode_operations = {
@@ -1887,6 +2249,21 @@ static const struct inode_operations fuse_symlink_inode_operations = {
 	.get_link	= fuse_get_link,
 	.getattr	= fuse_getattr,
 	.listxattr	= fuse_listxattr,
+#ifdef MY_ABC_HERE
+	.syno_getattr	= fuse_syno_getattr,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_get_archive_bit	= fuse_syno_get_archive_bit,
+	.syno_set_archive_bit	= fuse_syno_set_archive_bit,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_get_archive_version = fuse_syno_get_inode_archive_version,
+	.syno_set_archive_version = fuse_syno_set_inode_archive_version,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+        .syno_get_crtime	= fuse_syno_get_create_time,
+        .syno_set_crtime	= fuse_syno_set_create_time,
+#endif /* MY_ABC_HERE */
 };
 
 void fuse_init_common(struct inode *inode)

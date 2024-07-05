@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/hfsplus/options.c
@@ -51,8 +54,21 @@ void hfsplus_fill_defaults(struct hfsplus_sb_info *opts)
 	if (!opts)
 		return;
 
+#ifdef MY_ABC_HERE
+/*
+ * HFSPLUS_DEF_CR_TYPE come from linux kernel not
+ * Apple hfs source.  If we set this default value,
+ * any new created file will contain this value in
+ * it's creator/type fields, and it may let system
+ * treat it as xattr unexpectedly.  So we remove this
+ * behavior.
+ */
+	opts->creator = 0;
+	opts->type = 0;
+#elif /* MY_ABC_HERE */
 	opts->creator = HFSPLUS_DEF_CR_TYPE;
 	opts->type = HFSPLUS_DEF_CR_TYPE;
+#endif /* MY_ABC_HERE */
 	opts->umask = current_umask();
 	opts->uid = current_uid();
 	opts->gid = current_gid();
@@ -235,5 +251,9 @@ int hfsplus_show_options(struct seq_file *seq, struct dentry *root)
 		seq_puts(seq, ",nodecompose");
 	if (test_bit(HFSPLUS_SB_NOBARRIER, &sbi->flags))
 		seq_puts(seq, ",nobarrier");
+#ifdef MY_ABC_HERE
+	if (test_bit(HFSPLUS_SB_CASEFOLD, &sbi->flags))
+		seq_puts(seq, ",caseless");
+#endif /* MY_ABC_HERE */
 	return 0;
 }

@@ -1,0 +1,22 @@
+#!/bin/bash
+# Copyright (c) 2000-2016 Synology Inc. All rights reserved.
+
+. ${ScriptsDir}/include/exports
+
+case ${MakeClean} in
+	[Yy][Ee][Ss])
+		make distclean ${MAKE_FLAGS}
+		;;
+esac
+
+case ${CleanOnly} in
+	[Yy][Ee][Ss])
+		return
+		;;
+esac
+
+if checkPlatformFunction SYNO_FEA_ROUTER_COMMON; then
+	echo "#define SYNO_BUILD_YEAR 1"`date +%y` > include/gen.h
+fi
+
+make $MAKE_FLAGS KSRC="$KSRC"

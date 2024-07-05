@@ -1,0 +1,230 @@
+#!/bin/bash
+# Copyright (c) 2000-2016 Synology Inc. All rights reserved.
+
+SDSCustomDir="${SourceDir}/sds-custom"
+
+case "$BUILD_TARGET" in
+	BROMOLOW)
+		subdir="bromolow"
+		platform="bromolow"
+		STRIP=${STRIP64}
+	;;
+	GRANTLEY)
+		subdir="grantley"
+		platform="grantley"
+		STRIP=${STRIP64}
+	;;
+	CEDARVIEW)
+		subdir="cedarview"
+		platform="cedarview"
+		STRIP=${STRIP64}
+	;;
+	AVOTON)
+		subdir="avoton"
+		platform="avoton"
+		STRIP=${STRIP64}
+	;;
+	BRASWELL)
+		subdir="braswell"
+		platform="braswell"
+		STRIP=${STRIP64}
+	;;
+	APOLLOLAKE)
+		subdir="apollolake"
+		platform="apollolake"
+		STRIP=${STRIP64}
+	;;
+	EVANSPORT)
+		subdir="evansport"
+		platform="evansport"
+	;;
+	MARVELL_ARMADAXP)
+		subdir="armada"
+		platform="armadaxp"
+	;;
+	MARVELL_ARMADA370)
+		subdir="armada"
+		platform="armada370"
+	;;
+	MARVELL_ARMADA375)
+		subdir="armada"
+		platform="armada375"
+	;;
+	MINDSPEED_COMCERTO2K)
+		subdir="comcerto2k"
+		platform="comcerto2k"
+	;;
+	ALPINE)
+		subdir="alpine"
+		platform="${PLATFORM_ABBR}"
+	;;
+	STM_MONACO)
+		subdir="monaco"
+		platform="monaco"
+	;;
+	KVMX64)
+		subdir="kvmx64"
+		platform="kvmx64"
+		STRIP=${STRIP64}
+	;;
+	KVMX64SOFS)
+		subdir="kvmx64sofs"
+		platform="kvmx64sofs"
+		STRIP=${STRIP64}
+	;;
+	KVMX64V2)
+		subdir="kvmx64v2"
+		platform="kvmx64v2"
+		STRIP=${STRIP64}
+	;;
+	BROADWELL)
+		subdir="broadwell"
+		platform="broadwell"
+		STRIP=${STRIP64}
+	;;
+	MARVELL_ARMADA38X)
+		subdir="armada38x"
+		platform="armada38x"
+	;;
+	REALTEK_RTD1296)
+		subdir="rtd1296"
+		platform="rtd1296"
+	;;
+	DENVERTON)
+		subdir="denverton"
+		platform="denverton"
+		STRIP=${STRIP64}
+	;;
+	BROADWELLNK)
+		subdir="broadwellnk"
+		platform="broadwellnk"
+		STRIP=${STRIP64}
+	;;
+	PURLEY)
+		subdir="purley"
+		platform="purley"
+		STRIP=${STRIP64}
+	;;
+	COFFEELAKE)
+		subdir="coffeelake"
+		platform="coffeelake"
+		STRIP=${STRIP64}
+	;;
+	BROADWELLNTB)
+		subdir="broadwellntb"
+		platform="broadwellntb"
+		STRIP=${STRIP64}
+	;;
+	NEXTKVMX64)
+		subdir="nextkvmx64"
+		platform="nextkvmx64"
+		STRIP=${STRIP64}
+	;;
+	GEMINILAKE)
+		subdir="geminilake"
+		platform="geminilake"
+		STRIP=${STRIP64}
+	;;
+	REALTEK_RTD1619)
+		subdir="rtd1619"
+		platform="rtd1619"
+	;;
+	SKYLAKED)
+		subdir="skylaked"
+		platform="skylaked"
+		STRIP=${STRIP64}
+	;;
+	V1000)
+		subdir="v1000"
+		platform="v1000"
+		STRIP=${STRIP64}
+	;;
+	V1000SOFS)
+		subdir="v1000sofs"
+		platform="v1000sofs"
+		STRIP=${STRIP64}
+	;;
+	BROADWELLNTBAP)
+		subdir="broadwellntbap"
+		platform="broadwellntbap"
+		STRIP=${STRIP64}
+	;;
+	KVMCLOUD)
+		subdir="kvmcloud"
+		platform="kvmcloud"
+		STRIP=${STRIP64}
+	;;
+	EPYC7002)
+		subdir="epyc7002"
+		platform="epyc7002"
+		STRIP=${STRIP64}
+	;;
+	EPYC7002SOFS)
+		subdir="epyc7002sofs"
+		platform="epyc7002sofs"
+		STRIP=${STRIP64}
+	;;
+	R1000)
+		subdir="r1000"
+		platform="r1000"
+		STRIP=${STRIP64}
+	;;
+	ICELAKED)
+		subdir="icelaked"
+		platform="icelaked"
+		STRIP=${STRIP64}
+	;;
+	REALTEK_RTD1619B)
+		subdir="rtd1619b"
+		platform="rtd1619b"
+	;;
+	BROADWELLNKV2)
+		subdir="broadwellnkv2"
+		platform="broadwellnkv2"
+		STRIP=${STRIP64}
+	;;
+	RYZEN5K)
+		subdir="ryzen5k"
+		platform="ryzen5k"
+		STRIP=${STRIP64}
+	;;
+	GEMINILAKEVS)
+		subdir="geminilakevs"
+		platform="geminilakevs"
+		STRIP=${STRIP64}
+	;;
+	EPYC7003NTB)
+		subdir="epyc7003ntb"
+		platform="epyc7003ntb"
+		STRIP=${STRIP64}
+	;;
+
+esac
+
+ModuleExt="ko"
+
+ThermalCtrlKModule="thermal_ctrl.ko"
+
+# Copy customized kernel module to ${DebDevBuild} directory.
+IPRF="${SDSCustomDir}/*_${platform}_*.iprf"
+for ThisIPRF in $IPRF;
+do
+	ThisModel=`/bin/grep -s ^model ${ThisIPRF} | awk -F \" '{print $2}'`
+	KModule=`${SDSCustomDir}/ServiceKeyCheck.py --get_value ${ThisModel} synobios | awk -F \" '{ print $2 }'`
+	KModule=`find ${subdir} -name $KModule-synobios.${ModuleExt}`
+	if [ -n "$KModule" -a -r "${KModule}" ]; then
+		echo "======================================================="
+		echo "Copy customized kernel module to ${DebDevBuild}. ($ThisModel)"
+		echo "======================================================="
+		mkdir -p ${DebDevBuild}/image/modules/synobios/${ThisModel}/
+		cp -fv ${KModule} ${DebDevBuild}/image/modules/synobios/${ThisModel}/synobios.${ModuleExt}
+		${STRIP_ORI} -d ${DebDevBuild}/image/modules/synobios/${ThisModel}/synobios.${ModuleExt}
+		/usr/syno/bin/sign ${DebDevBuild}/image/modules/synobios/${ThisModel}/synobios.${ModuleExt}
+	fi
+
+	if [ ${ThisModel} == "synology_armada370_eds14" ] && [ -f ${subdir}/${ThermalCtrlKModule} ] ; then
+		cp -fv ${subdir}/${ThermalCtrlKModule} ${DebDevBuild}/image/modules/synobios/${ThisModel}/
+		${STRIP_ORI} -d ${DebDevBuild}/image/modules/synobios/${ThisModel}/${ThermalCtrlKModule}
+	fi
+done
+# end of Copy customized kernel module

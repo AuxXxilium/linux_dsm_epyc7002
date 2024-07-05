@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Parse RedBoot-style Flash Image System (FIS) tables and
@@ -14,6 +17,9 @@
 #include <linux/of.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
+#ifdef MY_DEF_HERE
+#include <linux/sched.h>
+#endif /* MY_DEF_HERE */
 #include <linux/module.h>
 
 struct fis_image_desc {
@@ -318,6 +324,89 @@ module_mtd_part_parser(redboot_parser);
 
 /* mtd parsers will request the module by parser name */
 MODULE_ALIAS("RedBoot");
+
+#ifdef MY_DEF_HERE
+int SYNOMTDModifyFisInfo(struct mtd_info *mtd, struct SYNO_MTD_FIS_INFO SynoMtdFisInfo)
+{
+	struct fis_image_desc *buf;
+	int ret, i;
+	size_t retlen;
+
+	buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
+
+	if (!buf) {
+		return -ENOMEM;
+	}
+
+	/* Read the start of the last erase block */
+	ret = mtd_read(mtd, 0, PAGE_SIZE, &retlen, (void *)buf);
+
+	if (ret)
+		goto out;
+
+	if (retlen != PAGE_SIZE) {
+		ret = -EIO;
+		goto out;
+	}
+
+	for (i = 0; i < PAGE_SIZE / sizeof(struct fis_image_desc); i++) {
+		if (buf[i].name[0] == 0xff) { /* reach the end of FIS directory */
+			ret = -ENOENT; /* not found */
+			break;
+		}
+
+		if (0 == strcmp(buf[i].name, SynoMtdFisInfo.name)) { /* match */
+			int lockret, eraseret;
+			struct erase_info einfo;
+
+			buf[i].flash_base = SynoMtdFisInfo.offset;
+			buf[i].size = SynoMtdFisInfo.size;
+			buf[i].data_length = SynoMtdFisInfo.data_length;
+			lockret = mtd_unlock(mtd, 0, mtd->erasesize);
+			if (lockret) {
+				printk(KERN_NOTICE "Failed to unlock [%s], error [%d]\n", mtd->name, lockret*(-1));
+			}
+
+			/* erase something... */
+			memset (&einfo, 0, sizeof(struct erase_info));
+			einfo.addr = 0;
+			einfo.len = mtd->erasesize;
+			eraseret = mtd_erase(mtd, &einfo);
+			if (eraseret) {
+				ret = eraseret;
+				printk(KERN_NOTICE "Failed to erase [%s], error [%d]\n", mtd->name, eraseret*(-1));
+			} else {
+				/*ret = mtd->write(mtd, sizeof(struct fis_image_desc)*i,
+				sizeof(struct fis_image_desc), &retlen, &buf[i]);*/
+				ret = mtd_write(mtd, 0, PAGE_SIZE, &retlen, (const u_char*)buf);
+				if (ret) {
+					printk(KERN_NOTICE "Failed to write [%s], error [%d]\n", mtd->name, ret*(-1));
+				}
+			}
+			lockret = mtd_lock(mtd, 0, mtd->erasesize);
+			if (lockret) {
+				printk(KERN_NOTICE "Failed to lock [%s], error [%d]\n", mtd->name, lockret*(-1));
+			}
+			if (ret) {
+				goto out;
+			}
+
+			/*if (retlen != sizeof(struct fis_image_desc)) {*/
+			if (retlen != PAGE_SIZE) {
+				ret = -EIO;
+				goto out;
+			}
+			break;
+		}
+	} /* for */
+
+out:
+	kfree(buf);
+	return ret;
+}
+#endif /* MY_DEF_HERE */
+
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("David Woodhouse <dwmw2@infradead.org>");
 MODULE_DESCRIPTION("Parsing code for RedBoot Flash Image System (FIS) tables");

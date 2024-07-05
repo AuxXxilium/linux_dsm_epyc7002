@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * RTC class driver for "CMOS RTC":  PCs, ACPI, etc
@@ -1168,9 +1171,25 @@ static u32 rtc_handler(void *context)
 		spin_unlock_irqrestore(&rtc_lock, flags);
 	}
 
+#ifdef MY_ABC_HERE
+	spin_lock_irqsave(&rtc_lock, flags);
+	// read to clear irq status
+	CMOS_READ(RTC_INTR_FLAGS);
+	rtc_control = CMOS_READ(RTC_CONTROL);
+	spin_unlock_irqrestore(&rtc_lock, flags);
+#endif /* MY_ABC_HERE */
+
 	pm_wakeup_hard_event(dev);
 	acpi_clear_event(ACPI_EVENT_RTC);
+#ifdef MY_ABC_HERE
+	if (rtc_control & RTC_AIE) {
+		acpi_enable_event(ACPI_EVENT_RTC, 0);
+	} else {
+		acpi_disable_event(ACPI_EVENT_RTC, 0);
+	}
+#else /* MY_ABC_HERE */
 	acpi_disable_event(ACPI_EVENT_RTC, 0);
+#endif /* MY_ABC_HERE */
 	return ACPI_INTERRUPT_HANDLED;
 }
 

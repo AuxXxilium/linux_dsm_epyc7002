@@ -200,7 +200,7 @@ config NFS_DEBUG
 config NFS_DISABLE_UDP_SUPPORT
        bool "NFS: Disable NFS UDP protocol support"
        depends on NFS_FS
-       default y
+       default n
        help
 	 Choose Y here to disable the use of NFS over UDP. NFS over UDP
 	 on modern networks (1Gb+) can lead to data corruption caused by

@@ -104,6 +104,7 @@ enum {
 	CEPH_MOUNT_UNMOUNTING,
 	CEPH_MOUNT_UNMOUNTED,
 	CEPH_MOUNT_SHUTDOWN,
+	CEPH_MOUNT_RECOVER,
 };
 
 static inline unsigned long ceph_timeout_jiffies(unsigned long timeout)
@@ -145,6 +146,9 @@ struct ceph_client {
 	struct dentry *debugfs_monmap;
 	struct dentry *debugfs_osdmap;
 	struct dentry *debugfs_options;
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+	struct dentry *debugfs_pool_pg;
+#endif
 #endif
 };
 

@@ -432,11 +432,16 @@ config NET_SOCK_MSG
 	  with the help of BPF programs.
 
 config NET_DEVLINK
-	bool
+	bool "Enable NET DEVLINK for mlnx-ofed-driver"
 	default n
+	help
+	  Open this feature for mlnx-ofed-driver
 
 config PAGE_POOL
-	bool
+	bool "Enable PAGE_POOL for mlnx5_en"
+	default n
+	help
+	  Open this feature for mlnx-ofed-driver
 
 config FAILOVER
 	tristate "Generic failover module"

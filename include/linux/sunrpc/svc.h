@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * linux/include/linux/sunrpc/svc.h
@@ -19,6 +22,9 @@
 #include <linux/sunrpc/svcauth.h>
 #include <linux/wait.h>
 #include <linux/mm.h>
+#ifdef MY_ABC_HERE
+#include <linux/atomic.h>
+#endif /* MY_ABC_HERE */
 
 /* statistics for svc_pool structures */
 struct svc_pool_stats {
@@ -26,6 +32,7 @@ struct svc_pool_stats {
 	unsigned long	sockets_queued;
 	atomic_long_t	threads_woken;
 	atomic_long_t	threads_timedout;
+	unsigned long	congested;
 };
 
 /*
@@ -222,6 +229,29 @@ static inline void svc_putu32(struct kvec *iov, __be32 val)
 	iov->iov_len += sizeof(__be32);
 }
 
+#ifdef MY_ABC_HERE
+struct svc_lat {
+	atomic64_t accu;	// accumulated latency (us)
+	atomic_t max;		// max latency (us)
+};
+
+static inline bool svc_update_lat(struct svc_lat *lat, s64 latency)
+{
+	atomic64_add(latency, &lat->accu);
+
+	if (atomic_read(&lat->max) < latency) {
+		/*
+		 * We do not use a spin_lock here because race conditions only
+		 * possibly happen when max latency is small at beginning, and
+		 * race conditions between small latencies doesn't matter.
+		 */
+		atomic_set(&lat->max, (int)latency);
+		return true;
+	}
+	return false;
+}
+#endif /* MY_ABC_HERE */
+
 /*
  * The context of a single thread, including the request currently being
  * processed.
@@ -301,6 +331,12 @@ struct svc_rqst {
 						 * net namespace
 						 */
 	void **			rq_lease_breaker; /* The v4 client breaking a lease */
+#ifdef MY_ABC_HERE
+	ktime_t			rq_xprt_rdtime;	/* time of data being ready to transport on the socket */
+#ifdef MY_ABC_HERE
+	u64			vfs_latency_us;
+#endif /* MY_ABC_HERE */
+#endif /* MY_ABC_HERE */
 };
 
 #define SVC_NET(rqst) (rqst->rq_xprt ? rqst->rq_xprt->xpt_net : rqst->rq_bc_net)
@@ -427,6 +463,9 @@ struct svc_version {
 	u32			vs_nproc;	/* number of procedures */
 	const struct svc_procedure *vs_proc;	/* per-procedure info */
 	unsigned int		*vs_count;	/* call counts */
+#ifdef MY_ABC_HERE
+	struct svc_lat		*vs_latency;	/* latency record */
+#endif /* MY_ABC_HERE */
 	u32			vs_xdrsize;	/* xdrsize needed for this version */
 
 	/* Don't register with rpcbind */
@@ -443,6 +482,10 @@ struct svc_version {
 	 * vs_dispatch == NULL means use default dispatcher.
 	 */
 	int			(*vs_dispatch)(struct svc_rqst *, __be32 *);
+#ifdef MY_ABC_HERE
+	void 			(*vs_store_latency_to_histogram)(u64, u64, u32);
+	void 			(*vs_store_resp_error)(struct svc_rqst *);
+#endif /* MY_ABC_HERE */
 };
 
 /*

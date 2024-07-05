@@ -1279,6 +1279,14 @@
 #define MDIO_PMA_10GBR_FECCTRL		0x00ab
 #endif
 
+#ifndef MDIO_PMA_RX_EQ_CTRL
+#define MDIO_PMA_RX_EQ_CTRL		0x8009
+#endif
+
+#ifndef MDIO_PMA_RX_CTRL0
+#define MDIO_PMA_RX_CTRL0		0x8050
+#endif
+
 #ifndef MDIO_PMA_RX_CTRL1
 #define MDIO_PMA_RX_CTRL1		0x8051
 #endif
@@ -1327,8 +1335,32 @@
 #define MDIO_VEND2_AN_STAT		0x8002
 #endif
 
+#ifndef MDIO_PMA_RX_EQ_CTRL
+#define MDIO_PMA_RX_EQ_CTRL		0x8009
+#endif
+
+#ifndef MDIO_MMD_DIGITAL_STAT
+#define MDIO_MMD_DIGITAL_STAT		0x8010
+#endif
+
+#ifndef MDIO_PMA_RX_CTRL0
+#define MDIO_PMA_RX_CTRL0		0x8050
+#endif
+
+#ifndef MDIO_PMA_RX_CTRL1
+#define MDIO_PMA_RX_CTRL1		0x8051
+#endif
+
 #ifndef MDIO_VEND2_PMA_CDR_CONTROL
 #define MDIO_VEND2_PMA_CDR_CONTROL	0x8056
+#endif
+
+#ifndef MDIO_VEND2_PMA_MISC_CTRL0
+#define MDIO_VEND2_PMA_MISC_CTRL0	0x8090
+#endif
+
+#ifndef MDIO_VEND2_PMA_MISC_CTRL1
+#define MDIO_VEND2_PMA_MISC_CTRL1	0x8099
 #endif
 
 #ifndef MDIO_CTRL1_SPEED1G
@@ -1385,9 +1417,21 @@
 #define XGBE_PMA_CDR_TRACK_EN_OFF	0x00
 #define XGBE_PMA_CDR_TRACK_EN_ON	0x01
 
+#define XGBE_PMA_PLL_CTRL_MASK		BIT(15)
+#define XGBE_PMA_PLL_CTRL_SET		BIT(15)
+#define XGBE_PMA_PLL_CTRL_CLEAR		0x0000
+
 #define XGBE_PMA_RX_RST_0_MASK		BIT(4)
 #define XGBE_PMA_RX_RST_0_RESET_ON	0x10
 #define XGBE_PMA_RX_RST_0_RESET_OFF	0x00
+
+#define XGBE_PMA_RX_EQ_MGMT_MODE_MASK	BIT(15)
+#define XGBE_PMA_RX_EQ_MGMT_MODE_OFF	BIT(15)
+#define XGBE_PMA_RX_EQ_MGMT_MODE_ON	0x0
+
+#define XGBE_PMA_RX_DT_EN_0_MASK	BIT(8)
+#define XGBE_PMA_RX_DT_EN_0_ON		0x0100
+#define XGBE_PMA_RX_DT_EN_0_OFF		0x0000
 
 /* Bit setting and getting macros
  *  The get macro will extract the current bit field value from within

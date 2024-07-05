@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *	RAW sockets for IPv6
@@ -279,6 +282,19 @@ static int rawv6_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 				 */
 				sk->sk_bound_dev_if = addr->sin6_scope_id;
 			}
+
+#if defined(MY_ABC_HERE)
+			if (__ipv6_addr_is_link_local(addr_type) && !sk->sk_bound_dev_if) {
+				for_each_netdev(sock_net(sk), dev) {
+					unsigned flags = dev_get_flags(dev);
+					if ((flags & IFF_RUNNING) &&
+						!(flags & (IFF_LOOPBACK | IFF_SLAVE))) {
+						sk->sk_bound_dev_if = dev->ifindex;
+						break;
+					}
+				}
+			}
+#endif /* MY_ABC_HERE */
 
 			/* Binding to link-local address requires an interface */
 			if (!sk->sk_bound_dev_if)

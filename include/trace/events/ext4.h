@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM ext4
@@ -660,6 +663,32 @@ TRACE_EVENT(ext4_discard_blocks,
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
 		  __entry->blk, __entry->count)
 );
+
+#ifdef MY_ABC_HERE
+TRACE_EVENT(ext4_unused_hint_blocks,
+	TP_PROTO(struct super_block *sb, unsigned long long blk,
+			unsigned long long count),
+
+	TP_ARGS(sb, blk, count),
+
+	TP_STRUCT__entry(
+		__field(	dev_t,	dev			)
+		__field(	__u64,	blk			)
+		__field(	__u64,	count			)
+
+	),
+
+	TP_fast_assign(
+		__entry->dev	= sb->s_dev;
+		__entry->blk	= blk;
+		__entry->count	= count;
+	),
+
+	TP_printk("dev %d,%d blk %llu count %llu",
+		  MAJOR(__entry->dev), MINOR(__entry->dev),
+		  __entry->blk, __entry->count)
+);
+#endif /* MY_ABC_HERE */
 
 DECLARE_EVENT_CLASS(ext4__mb_new_pa,
 	TP_PROTO(struct ext4_allocation_context *ac,

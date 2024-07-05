@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-2.0
+menu "Synology"
+
+config SYNO_DM_FLASHCACHE
+	tristate "Block level disk caching target"
+	depends on BLK_DEV_DM
+	default n
+
+config SYNO_SYNOBIOS
+	tristate "synobios"
+	default n
+
+endmenu

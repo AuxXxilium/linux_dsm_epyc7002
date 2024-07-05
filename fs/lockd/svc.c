@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * linux/fs/lockd/svc.c
@@ -770,28 +773,46 @@ module_exit(exit_nlm);
  * Define NLM program and procedures
  */
 static unsigned int nlmsvc_version1_count[17];
+#ifdef MY_ABC_HERE
+static struct svc_lat nlmsvc_version1_latency[17];
+#endif /* MY_ABC_HERE */
 static const struct svc_version	nlmsvc_version1 = {
 	.vs_vers	= 1,
 	.vs_nproc	= 17,
 	.vs_proc	= nlmsvc_procedures,
 	.vs_count	= nlmsvc_version1_count,
+#ifdef MY_ABC_HERE
+	.vs_latency	= nlmsvc_version1_latency,
+#endif /* MY_ABC_HERE */
 	.vs_xdrsize	= NLMSVC_XDRSIZE,
 };
 static unsigned int nlmsvc_version3_count[24];
+#ifdef MY_ABC_HERE
+static struct svc_lat nlmsvc_version3_latency[24];
+#endif /* MY_ABC_HERE */
 static const struct svc_version	nlmsvc_version3 = {
 	.vs_vers	= 3,
 	.vs_nproc	= 24,
 	.vs_proc	= nlmsvc_procedures,
 	.vs_count	= nlmsvc_version3_count,
+#ifdef MY_ABC_HERE
+	.vs_latency	= nlmsvc_version3_latency,
+#endif /* MY_ABC_HERE */
 	.vs_xdrsize	= NLMSVC_XDRSIZE,
 };
 #ifdef CONFIG_LOCKD_V4
 static unsigned int nlmsvc_version4_count[24];
+#ifdef MY_ABC_HERE
+static struct svc_lat nlmsvc_version4_latency[24];
+#endif /* MY_ABC_HERE */
 static const struct svc_version	nlmsvc_version4 = {
 	.vs_vers	= 4,
 	.vs_nproc	= 24,
 	.vs_proc	= nlmsvc_procedures4,
 	.vs_count	= nlmsvc_version4_count,
+#ifdef MY_ABC_HERE
+	.vs_latency	= nlmsvc_version4_latency,
+#endif /* MY_ABC_HERE */
 	.vs_xdrsize	= NLMSVC_XDRSIZE,
 };
 #endif

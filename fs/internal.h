@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* fs/ internal definitions
  *
@@ -107,6 +110,12 @@ extern void chroot_fs_refs(const struct path *, const struct path *);
  */
 extern struct file *alloc_empty_file(int, const struct cred *);
 extern struct file *alloc_empty_file_noaccount(int, const struct cred *);
+#ifdef MY_ABC_HERE
+extern void file_sb_list_add(struct file *f);
+extern void file_sb_list_del(struct file *f);
+extern void fs_show_opened_file(struct mount *m, const char *mnt_point_name,
+		char *file_name_buf, int buflen);
+#endif /* MY_ABC_HERE */
 
 /*
  * super.c

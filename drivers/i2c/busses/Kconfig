@@ -934,6 +934,18 @@ config I2C_QUP
 	  This driver can also be built as a module.  If so, the module
 	  will be called i2c-qup.
 
+if SYNO_LSP_RTD1619B
+config I2C_REALTEK
+	tristate "Realtek I2C"
+	depends on I2C
+	help
+	  This driver supports I2C Controller on Realtek SoC
+
+config I2C_RTK_SECURE_ACCESS
+	bool
+	depends on HAVE_ARM_SMCCC
+
+endif # SYNO_LSP_RTD1619B
 config I2C_RIIC
 	tristate "Renesas RIIC adapter"
 	depends on ARCH_RENESAS || COMPILE_TEST

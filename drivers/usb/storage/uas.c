@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * USB Attached SCSI
@@ -29,6 +32,8 @@
 #include "uas-detect.h"
 #include "scsiglue.h"
 
+#ifdef MY_ABC_HERE
+#else
 #define MAX_CMNDS 256
 
 struct uas_dev_info {
@@ -47,6 +52,7 @@ struct uas_dev_info {
 	struct work_struct work;
 	struct work_struct scan_work;      /* for async scanning */
 };
+#endif
 
 enum {
 	SUBMIT_STATUS_URB	= BIT(1),
@@ -912,6 +918,9 @@ static struct scsi_host_template uas_host_template = {
 	.this_id = -1,
 	.skip_settle_delay = 1,
 	.dma_boundary = PAGE_SIZE - 1,
+#ifdef MY_ABC_HERE
+	.syno_port_type = SYNO_PORT_TYPE_USB,
+#endif /* MY_ABC_HERE */
 };
 
 #define UNUSUAL_DEV(id_vendor, id_product, bcdDeviceMin, bcdDeviceMax, \

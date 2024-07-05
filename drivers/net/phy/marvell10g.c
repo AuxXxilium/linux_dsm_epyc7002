@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * Marvell 10G 88x3310 PHY driver
@@ -28,6 +31,9 @@
 #include <linux/marvell_phy.h>
 #include <linux/phy.h>
 #include <linux/sfp.h>
+#if defined(MY_DEF_HERE)
+#include <linux/netdevice.h>
+#endif /* MY_DEF_HERE */
 
 #define MV_PHY_ALASKA_NBT_QUIRK_MASK	0xfffffffe
 #define MV_PHY_ALASKA_NBT_QUIRK_REV	(MARVELL_PHY_ID_88X3310 | 0xa)
@@ -89,6 +95,23 @@ enum {
 	MV_V2_TEMP_CTRL_DISABLE	= 0xc000,
 	MV_V2_TEMP		= 0xf08c,
 	MV_V2_TEMP_UNKNOWN	= 0x9600, /* unknown function */
+
+#if defined(MY_DEF_HERE)
+	/* Vendor2 MMD registers */
+	MV_AN_CTRL1_MG		= 0x0020,
+	MV_V2_MODE_CFG          = 0xf000,
+	MV_V2_LED0_CTRL         = 0xf020,
+	MV_V2_LED1_CTRL         = 0xf021,
+	MV_V2_LED2_CTRL         = 0xf022,
+	MV_V2_LED3_CTRL         = 0xf023,
+	MV_V2_PORT_INT_MASK	= 0xf043,
+	MV_V2_HOST_KR_ENABLE    = 0xf084,
+	MV_V2_MAC_ADDR_LSB	= 0xf06b,
+	MV_V2_MAC_ADDR_ISB	= 0xf06c,
+	MV_V2_MAC_ADDR_HSB	= 0xf06d,
+	MV_V2_WOL_CTRL		= 0xf06e,
+	MV_V2_HOST_KR_TUNE      = 0xf07c,
+#endif /* MY_DEF_HERE */
 };
 
 struct mv3310_priv {
@@ -98,6 +121,112 @@ struct mv3310_priv {
 	struct device *hwmon_dev;
 	char *hwmon_name;
 };
+
+#if defined(MY_DEF_HERE)
+/* Some PHYs within the Alaska family like 88x3310 has problems with the
+ * KR Auto-negotiation. marvell datasheet for 88x3310 section 6.2.11 says that
+ * KR auto-negotitaion can be enabled to adapt to the incoming SERDES by writing
+ * to autoneg registers and the PMA/PMD registers
+ */
+static int mv3310_amd_quirk(struct phy_device *phydev)
+{
+	int reg=0, count=0;
+	int version, subversion;
+
+	version = phy_read_mmd(phydev, MDIO_MMD_PMAPMD, 0xC011);
+	subversion = phy_read_mmd(phydev, MDIO_MMD_PMAPMD, 0xC012);
+	dev_dbg(&phydev->mdio.dev,"%s: Marvell FW Version: %x.%x \n", __func__, version, subversion);
+
+	reg = phy_read_mmd(phydev, MDIO_MMD_PHYXS, MV_V2_HOST_KR_ENABLE);
+	reg |= 0x8000;
+	phy_write_mmd(phydev, MDIO_MMD_PHYXS, MV_V2_HOST_KR_ENABLE, reg);
+
+	reg = phy_read_mmd(phydev, MDIO_MMD_PHYXS, MV_V2_HOST_KR_TUNE);
+	reg = (reg & ~0x8000) | 0x4000;
+	phy_write_mmd(phydev, MDIO_MMD_PHYXS, MV_V2_HOST_KR_TUNE, reg);
+
+	if((reg & BIT(8)) && (reg & BIT(11))) {
+		reg = phy_read_mmd(phydev, MDIO_MMD_AN, MV_PCS_BASE_R);
+
+		/* disable BASE-R */
+		phy_write_mmd(phydev, MDIO_MMD_AN, MV_PCS_BASE_R, reg);
+	} else {
+		reg = phy_read_mmd(phydev, MDIO_MMD_AN, MV_PCS_BASE_R);
+		/* enable BASE-R for KR initiation */
+		reg |= 0x1000;
+		phy_write_mmd(phydev, MDIO_MMD_AN, MV_PCS_BASE_R, reg);
+	}
+
+	/* down the port if no link */
+	reg = phy_read_mmd(phydev, MDIO_MMD_VEND2, MV_V2_MODE_CFG);
+	reg &= 0xFFF7;
+	phy_write_mmd(phydev, MDIO_MMD_VEND2, MV_V2_MODE_CFG, reg);
+
+	/* Do not advertise 2.5Gbe & 5GbE */
+	reg = phy_read_mmd(phydev, MDIO_MMD_AN, MV_AN_CTRL1_MG);
+	reg &= ~0x0180;
+	phy_write_mmd(phydev, MDIO_MMD_AN, MV_AN_CTRL1_MG, reg);
+
+	/* Do not advertise 100M & 10M */
+	reg = phy_read_mmd(phydev, MDIO_MMD_AN, MDIO_AN_ADVERTISE);
+	reg &= ~0x01e0;
+	phy_write_mmd(phydev, MDIO_MMD_AN, MDIO_AN_ADVERTISE, reg);
+
+	/* reset port to effect above change */
+	reg = phy_read_mmd(phydev, MDIO_MMD_VEND2, MV_V2_PORT_CTRL);
+	reg |= 0x8018;
+	phy_write_mmd(phydev, MDIO_MMD_VEND2, MV_V2_PORT_CTRL, reg);
+
+	/* wait till reset complete */
+
+	count = 50;
+	do {
+		msleep(10);
+		reg = phy_read_mmd(phydev, MDIO_MMD_VEND2, MV_V2_PORT_CTRL);
+	} while ((reg & 0x8000) && --count);
+
+	if(reg & 0x8000){
+		dev_err(&phydev->mdio.dev,"%s: Port Reset taking long time\n", __func__);
+		return -ETIMEDOUT;
+	}
+
+	/* Set LED0 Activtiy Status LED */
+	reg = phy_read_mmd(phydev, MDIO_MMD_VEND2, MV_V2_LED0_CTRL);
+	reg &= 0xE000;
+	reg |= 0x128;
+	phy_write_mmd(phydev, MDIO_MMD_VEND2, MV_V2_LED0_CTRL, reg);
+
+	/* Set LED2 1GbE Link LED */
+	reg = phy_read_mmd(phydev, MDIO_MMD_VEND2, MV_V2_LED2_CTRL);
+	reg &= 0xE000;
+	reg |= 0x68;
+	phy_write_mmd(phydev, MDIO_MMD_VEND2, MV_V2_LED2_CTRL, reg);
+
+	/* Set LED3 10GbE Link LED */
+	reg = phy_read_mmd(phydev, MDIO_MMD_VEND2, MV_V2_LED3_CTRL);
+	reg &= 0xE000;
+	reg |= 0x58;
+	phy_write_mmd(phydev, MDIO_MMD_VEND2, MV_V2_LED3_CTRL, reg);
+
+	/* Set PCS, PMA/PMD to normal mode */
+	reg = phy_read_mmd(phydev, MDIO_MMD_PCS, MDIO_CTRL1);
+	reg &= ~0x0800;
+	phy_write_mmd(phydev, MDIO_MMD_PCS, MDIO_CTRL1, reg);
+
+	reg = phy_read_mmd(phydev, MDIO_MMD_PMAPMD, MDIO_CTRL1);
+	reg &= ~0x0800;
+	phy_write_mmd(phydev, MDIO_MMD_PMAPMD, MDIO_CTRL1, reg);
+
+	/* PHY reusme */
+	phydev->drv->resume(phydev);
+
+	reg = phy_read_mmd(phydev, MDIO_MMD_VEND2, MV_V2_PORT_CTRL);
+
+	dev_err(&phydev->mdio.dev,"%s: quirk applied, 0x%x \n", __func__, reg);
+
+	return 0;
+}
+#endif /* MY_DEF_HERE */
 
 #ifdef CONFIG_HWMON
 static umode_t mv3310_hwmon_is_visible(const void *data,
@@ -460,7 +589,11 @@ static int mv3310_config_init(struct phy_device *phydev)
 	int val;
 
 	/* Check that the PHY interface type is compatible */
-	if (phydev->interface != PHY_INTERFACE_MODE_SGMII &&
+	if (
+#if defined(MY_DEF_HERE)
+	    phydev->interface != PHY_INTERFACE_MODE_10GKR &&
+#endif /* MY_DEF_HERE */
+	    phydev->interface != PHY_INTERFACE_MODE_SGMII &&
 	    phydev->interface != PHY_INTERFACE_MODE_2500BASEX &&
 	    phydev->interface != PHY_INTERFACE_MODE_XAUI &&
 	    phydev->interface != PHY_INTERFACE_MODE_RXAUI &&
@@ -473,6 +606,10 @@ static int mv3310_config_init(struct phy_device *phydev)
 	err = mv3310_power_up(phydev);
 	if (err)
 		return err;
+
+#if defined(MY_DEF_HERE)
+	mv3310_amd_quirk(phydev);
+#endif /* MY_DEF_HERE */
 
 	val = phy_read_mmd(phydev, MDIO_MMD_VEND2, MV_V2_PORT_CTRL);
 	if (val < 0)
@@ -765,6 +902,85 @@ static int mv3310_set_tunable(struct phy_device *phydev,
 	}
 }
 
+#if defined(MY_DEF_HERE)
+static int syno_set_wol(struct phy_device *phydev, struct ethtool_wolinfo *wol)
+{
+	int ret, val;
+
+	/* Force PHY not the advertise 10GbE */
+	val = phy_read_mmd(phydev, MDIO_MMD_AN, MV_AN_CTRL1_MG);
+	val &= ~0x1000;
+	ret = phy_write_mmd(phydev, MDIO_MMD_AN, MV_AN_CTRL1_MG, val);
+	if (ret) {
+		dev_err(&phydev->mdio.dev,"%s: failed to config advertise\n", __func__);
+		return ret;
+	}
+
+	/* advertise 100M & 10M */
+	val = phy_read_mmd(phydev, MDIO_MMD_AN, MDIO_AN_ADVERTISE);
+	val |= 0x01e0;
+	ret = phy_write_mmd(phydev, MDIO_MMD_AN, MDIO_AN_ADVERTISE, val);
+	if (ret) {
+		dev_err(&phydev->mdio.dev,"%s: failed to config advertise\n", __func__);
+		return ret;
+	}
+
+	/* Enable PHY WOL interrupt */
+	val = phy_read_mmd(phydev, MDIO_MMD_VEND2, MV_V2_PORT_INT_MASK);
+	val |= 0x0100;
+	ret = phy_write_mmd(phydev, MDIO_MMD_VEND2, MV_V2_PORT_INT_MASK, val);
+	if (ret) {
+		dev_err(&phydev->mdio.dev,"%s: failed to enable wol int\n", __func__);
+		return ret;
+	}
+
+	/* Set MAC address for magic packet detection */
+	ret = phy_write_mmd(phydev, MDIO_MMD_VEND2, MV_V2_MAC_ADDR_HSB,
+			((phydev->attached_dev->dev_addr[5] << 8) |
+			 phydev->attached_dev->dev_addr[4]));
+	if (ret) {
+		dev_err(&phydev->mdio.dev,"%s: failed to set MAC address HSB\n", __func__);
+		return ret;
+	}
+	ret = phy_write_mmd(phydev, MDIO_MMD_VEND2, MV_V2_MAC_ADDR_ISB,
+			((phydev->attached_dev->dev_addr[3] << 8) |
+			 phydev->attached_dev->dev_addr[2]));
+	if (ret) {
+		dev_err(&phydev->mdio.dev,"%s: failed to set MAC address ISB\n", __func__);
+		return ret;
+	}
+	ret = phy_write_mmd(phydev, MDIO_MMD_VEND2, MV_V2_MAC_ADDR_LSB,
+			((phydev->attached_dev->dev_addr[1] << 8) |
+			 phydev->attached_dev->dev_addr[0]));
+	if (ret) {
+		dev_err(&phydev->mdio.dev,"%s: failed to set MAC address LSB\n", __func__);
+		return ret;
+	}
+
+	/* Magic packet detection enabled */
+	val = phy_read_mmd(phydev, MDIO_MMD_VEND2, MV_V2_WOL_CTRL);
+	val |= 0x01;
+	ret = phy_write_mmd(phydev, MDIO_MMD_VEND2, MV_V2_WOL_CTRL, val);
+	if (ret) {
+		dev_err(&phydev->mdio.dev,"%s: failed to enable magic packet detection \n", __func__);
+		return ret;
+	}
+
+	/* Softreset to effect above change */
+	val = phy_read_mmd(phydev, MDIO_MMD_VEND2, MV_V2_PORT_CTRL);
+	val |= 0x8000;
+	ret = phy_write_mmd(phydev, MDIO_MMD_VEND2, MV_V2_PORT_CTRL, val);
+	if (ret) {
+		dev_err(&phydev->mdio.dev,"%s: failed to softreset phy \n", __func__);
+		return ret;
+	}
+	msleep(500);
+
+	return 0;
+}
+#endif /* MY_DEF_HERE */
+
+
 static struct phy_driver mv3310_drivers[] = {
 	{
 		.phy_id		= MARVELL_PHY_ID_88X3310,
@@ -781,6 +997,9 @@ static struct phy_driver mv3310_drivers[] = {
 		.get_tunable	= mv3310_get_tunable,
 		.set_tunable	= mv3310_set_tunable,
 		.remove		= mv3310_remove,
+#if defined(MY_DEF_HERE)
+		.set_wol	= syno_set_wol,
+#endif /* MY_DEF_HERE */
 	},
 	{
 		.phy_id		= MARVELL_PHY_ID_88E2110,

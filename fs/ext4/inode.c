@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/ext4/inode.c
@@ -40,11 +43,19 @@
 #include <linux/bitops.h>
 #include <linux/iomap.h>
 #include <linux/iversion.h>
+#ifdef MY_ABC_HERE
+#include <linux/xattr.h>
+#include <linux/fsnotify.h>
+#endif /* MY_ABC_HERE */
 
 #include "ext4_jbd2.h"
 #include "xattr.h"
 #include "acl.h"
 #include "truncate.h"
+
+#ifdef MY_ABC_HERE
+#include "syno_acl.h"
+#endif /* MY_ABC_HERE */
 
 #include <trace/events/ext4.h>
 
@@ -4751,7 +4762,12 @@ struct inode *__ext4_iget(struct super_block *sb, unsigned long ino,
 	 * we'd normally treat htree data as empty space. But with metadata
 	 * checksumming that corrupts checksums so forbid that.
 	 */
-	if (!ext4_has_feature_dir_index(sb) && ext4_has_metadata_csum(sb) &&
+#ifdef MY_ABC_HERE
+	if (!is_syno_ext(sb) && !ext4_has_feature_dir_index(sb) &&
+#else /* MY_ABC_HERE */
+	if (!ext4_has_feature_dir_index(sb) &&
+#endif /* MY_ABC_HERE */
+	    ext4_has_metadata_csum(sb) &&
 	    ext4_test_inode_flag(inode, EXT4_INODE_INDEX)) {
 		ext4_error_inode(inode, function, line, 0,
 			 "iget: Dir with htree data on filesystem without dir_index feature.");
@@ -4817,6 +4833,34 @@ struct inode *__ext4_iget(struct super_block *sb, unsigned long ino,
 	EXT4_INODE_GET_XTIME(i_atime, inode, raw_inode);
 	EXT4_EINODE_GET_XTIME(i_crtime, ei, raw_inode);
 
+#ifdef MY_ABC_HERE
+	if (ext4_is_ext3_sb(inode->i_sb) && is_syno_ext(inode->i_sb)) {
+		ei->i_crtime.tv_sec = (signed)le32_to_cpu(raw_inode->i_ext3_create_time);
+		ei->i_crtime.tv_nsec = 0;
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (ext4_is_ext3_sb(sb))
+		inode->i_archive_bit = ((u32)le16_to_cpu(raw_inode->ext3_archive_bit_high) << 16 |
+		                             le16_to_cpu(raw_inode->ext3_archive_bit_lo));
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (!ext4_is_ext3_sb(sb))
+		EXT4_INODE_GET_SYNO_ARCHIVE_BIT(inode, raw_inode);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	ei->i_is_swapfile = ext4_inode_is_swapfile(inode, raw_inode);
+
+	if (ei->i_is_swapfile)
+		inode->i_flags |= S_SWAPFILE;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (!is_syno_ext(inode->i_sb))
+#endif /* MY_ABC_HERE */
 	if (likely(!test_opt2(inode->i_sb, HURD_COMPAT))) {
 		u64 ivers = le32_to_cpu(raw_inode->i_disk_version);
 
@@ -4880,6 +4924,9 @@ struct inode *__ext4_iget(struct super_block *sb, unsigned long ino,
 			ext4_set_aops(inode);
 		}
 		inode_nohighmem(inode);
+#ifdef MY_ABC_HERE
+		inode->i_fop = &ext4_symlink_file_operations;
+#endif /* MY_ABC_HERE */
 	} else if (S_ISCHR(inode->i_mode) || S_ISBLK(inode->i_mode) ||
 	      S_ISFIFO(inode->i_mode) || S_ISSOCK(inode->i_mode)) {
 		inode->i_op = &ext4_special_inode_operations;
@@ -5080,6 +5127,27 @@ static int ext4_do_update_inode(handle_t *handle,
 	EXT4_INODE_SET_XTIME(i_mtime, inode, raw_inode);
 	EXT4_INODE_SET_XTIME(i_atime, inode, raw_inode);
 	EXT4_EINODE_SET_XTIME(i_crtime, ei, raw_inode);
+#ifdef MY_ABC_HERE
+	if (ext4_is_ext3_sb(inode->i_sb) && is_syno_ext(inode->i_sb)) {
+		raw_inode->i_ext3_create_time = cpu_to_le32(ei->i_crtime.tv_sec);
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (ext4_is_ext3_sb(inode->i_sb)) {
+		raw_inode->ext3_archive_bit_high = cpu_to_le16(inode->i_archive_bit >> 16);
+		raw_inode->ext3_archive_bit_lo = cpu_to_le16(inode->i_archive_bit);
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (!ext4_is_ext3_sb(inode->i_sb))
+		EXT4_INODE_SET_SYNO_ARCHIVE_BIT(inode, raw_inode);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	ext4_inode_set_swapfile(inode, raw_inode, ei->i_is_swapfile);
+#endif /* MY_ABC_HERE */
 
 	raw_inode->i_dtime = cpu_to_le32(ei->i_dtime);
 	raw_inode->i_flags = cpu_to_le32(ei->i_flags & 0xFFFFFFFF);
@@ -5117,6 +5185,9 @@ static int ext4_do_update_inode(handle_t *handle,
 	if (likely(!test_opt2(inode->i_sb, HURD_COMPAT))) {
 		u64 ivers = ext4_inode_peek_iversion(inode);
 
+#ifdef MY_ABC_HERE
+		if (!is_syno_ext(inode->i_sb))
+#endif /* MY_ABC_HERE */
 		raw_inode->i_disk_version = cpu_to_le32(ivers);
 		if (ei->i_extra_isize) {
 			if (EXT4_FITS_IN_INODE(raw_inode, ei, i_version_hi))
@@ -5333,9 +5404,18 @@ int ext4_setattr(struct dentry *dentry, struct iattr *attr)
 				  ATTR_GID | ATTR_TIMES_SET))))
 		return -EPERM;
 
+#ifdef MY_ABC_HERE
+	// just skip it. inode change check is done in notify_change()
+	if (!IS_EXT4_SYNOACL(inode)) {
+		error = setattr_prepare(dentry, attr);
+		if (error)
+			return error;
+	}
+#else /* MY_ABC_HERE */
 	error = setattr_prepare(dentry, attr);
 	if (error)
 		return error;
+#endif /* MY_ABC_HERE */
 
 	error = fscrypt_prepare_setattr(dentry, attr);
 	if (error)
@@ -5605,6 +5685,162 @@ int ext4_file_getattr(const struct path *path, struct kstat *stat,
 	stat->blocks += delalloc_blocks << (inode->i_sb->s_blocksize_bits - 9);
 	return 0;
 }
+
+#ifdef MY_ABC_HERE
+int ext4_syno_getattr(struct dentry *dentry, struct kstat *kst, unsigned int syno_flags)
+{
+	int err = 0;
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE) || \
+    defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+	struct inode *inode = dentry->d_inode;
+#endif /* MY_ABC_HERE || MY_ABC_HERE ||
+          MY_ABC_HERE || MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (syno_flags & SYNOST_ARCHIVE_BIT) {
+		mutex_lock(&inode->i_archive_bit_mutex);
+		kst->syno_archive_bit = inode->i_archive_bit;
+		mutex_unlock(&inode->i_archive_bit_mutex);
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (syno_flags & SYNOST_ARCHIVE_VER) {
+		mutex_lock(&inode->i_archive_version_mutex);
+		err = ext4_syno_get_inode_archive_version(dentry, &kst->syno_archive_version);
+		mutex_unlock(&inode->i_archive_version_mutex);
+		if (err)
+			goto end;
+	}
+#endif /* MY_ABC_HERE */
+
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+	if (syno_flags & SYNOST_CREATE_TIME) {
+		kst->syno_create_time = EXT4_I(inode)->i_crtime;
+	}
+#endif /* MY_ABC_HERE  || MY_ABC_HERE */
+
+end:
+	return err;
+}
+#endif /* MY_ABC_HERE */
+
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+int ext4_syno_set_archive_bit(struct dentry *dentry, unsigned int archive_bit)
+{
+	int ret, ret2;
+	struct inode *inode = dentry->d_inode;
+	handle_t *handle;
+
+	handle = ext4_journal_start(inode, EXT4_HT_INODE, 2);
+	if (IS_ERR(handle))
+		return PTR_ERR(handle);
+
+	inode->i_archive_bit = archive_bit;
+	inode->i_ctime = current_time(inode);
+
+	ret = ext4_mark_inode_dirty(handle, inode);
+	ret2 = ext4_journal_stop(handle);
+	if (!ret)
+		ret = ret2;
+
+	return ret;
+}
+#endif /* MY_ABC_HERE || MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+int ext4_syno_set_inode_archive_version(struct dentry *dentry, u32 version)
+{
+	struct inode *inode = dentry->d_inode;
+	struct syno_xattr_archive_version value;
+	int ret;
+
+	value.v_magic = cpu_to_le16(0x2552);
+	value.v_struct_version = cpu_to_le16(1);
+	value.v_archive_version = cpu_to_le32(version);
+
+	ret = ext4_xattr_set(inode, EXT4_XATTR_INDEX_SYNO,
+			XATTR_SYNO_ARCHIVE_VERSION_SUFFIX,
+			&value, sizeof(value), 0);
+	if (!ret) {
+		inode->i_archive_version = version;
+		inode->i_flags |= S_ARCHIVE_VERSION_CACHED;
+	}
+
+	return ret;
+}
+
+#ifdef MY_ABC_HERE
+static int ext3_syno_get_inode_archive_version(struct dentry *dentry, u32 *version)
+{
+	int ret;
+	struct inode *inode = dentry->d_inode;
+	struct syno_xattr_archive_version value;
+	u32 archive_version = 0;
+	u32 archive_version_bad = 0;
+
+	/* Stored archive version in wrong place at linux-3.10.x */
+	ret = ext4_xattr_get(inode, EXT3_XATTR_INDEX_SYNO_BAD,
+			XATTR_SYNO_ARCHIVE_VERSION,
+			&value, sizeof(value));
+	if (ret > 0)
+		archive_version_bad = le32_to_cpu(value.v_archive_version);
+
+	ret = ext4_xattr_get(inode, EXT4_XATTR_INDEX_SYNO,
+			XATTR_SYNO_ARCHIVE_VERSION,
+			&value, sizeof(value));
+	if (ret > 0) {
+		archive_version = le32_to_cpu(value.v_archive_version);
+	} else if (-ENODATA == ret) {
+		archive_version = 0;
+	} else {
+		*version = 0;
+		return ret;
+	}
+
+	/* Pick up the greater one */
+	inode->i_archive_version = (archive_version_bad > archive_version) ?
+			archive_version_bad : archive_version;
+	*version = inode->i_archive_version;
+	inode->i_flags |= S_ARCHIVE_VERSION_CACHED;
+
+	return 0;
+}
+#endif /* MY_ABC_HERE */
+
+int ext4_syno_get_inode_archive_version(struct dentry *dentry, u32 *version)
+{
+	struct inode *inode = dentry->d_inode;
+	struct syno_xattr_archive_version value;
+	int ret;
+
+	if (IS_ARCHIVE_VERSION_CACHED(inode)) {
+		*version = inode->i_archive_version;
+		return 0;
+	}
+
+#ifdef MY_ABC_HERE
+	if (ext4_is_ext3_sb(inode->i_sb))
+		return ext3_syno_get_inode_archive_version(dentry, version);
+#endif /* MY_ABC_HERE */
+
+	ret = ext4_xattr_get(inode, EXT4_XATTR_INDEX_SYNO,
+			XATTR_SYNO_ARCHIVE_VERSION_SUFFIX,
+			&value, sizeof(value));
+	if (0 < ret) {
+		inode->i_archive_version = le32_to_cpu(value.v_archive_version);
+	} else if (-ENODATA == ret) {
+		inode->i_archive_version = 0;
+	} else {
+		*version = 0;
+		return ret;
+	}
+	*version = inode->i_archive_version;
+	inode->i_flags |= S_ARCHIVE_VERSION_CACHED;
+
+	return 0;
+}
+#endif /* MY_ABC_HERE */
 
 static int ext4_index_trans_blocks(struct inode *inode, int lblocks,
 				   int pextents)
@@ -6071,6 +6307,9 @@ vm_fault_t ext4_page_mkwrite(struct vm_fault *vmf)
 
 	sb_start_pagefault(inode->i_sb);
 	file_update_time(vma->vm_file);
+#ifdef MY_ABC_HERE
+	fsnotify_modify(vma->vm_file);
+#endif /* MY_ABC_HERE */
 
 	down_read(&EXT4_I(inode)->i_mmap_sem);
 
@@ -6205,3 +6444,198 @@ vm_fault_t ext4_filemap_fault(struct vm_fault *vmf)
 
 	return ret;
 }
+
+#ifdef MY_ABC_HERE
+int ext4_syno_get_crtime(struct inode *inode, struct timespec64 *time)
+{
+	*time = EXT4_I(inode)->i_crtime;
+
+	return 0;
+}
+
+int ext4_syno_set_crtime(struct inode *inode, struct timespec64 *time)
+{
+	handle_t *handle;
+	struct ext4_inode_info *ei = EXT4_I(inode);
+
+	handle = ext4_journal_start(inode, EXT4_HT_INODE, 2);
+	if (IS_ERR(handle))
+		goto out;
+
+	ei->i_crtime = timestamp_truncate(*time, inode);
+	ext4_mark_inode_dirty(handle, inode);
+
+	ext4_journal_stop(handle);
+out:
+	return 0;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+int ext4_fsdev_mapping(struct inode *inode, u64 start, u64 end, u64 *dev_start, u64 *dev_end)
+{
+	int ret;
+	struct super_block *sb = inode->i_sb;
+	u64 offset, length;
+	struct ext4_map_blocks map;
+	u8 blkbits = inode->i_blkbits;
+	ext4_lblk_t last_block;
+
+	if (end < start ||
+		!dev_start || !dev_end ||
+		!IS_SWAPFILE(inode)) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	last_block = i_size_read(inode) >> blkbits;
+	if ((end >> blkbits) >= last_block) {
+		ret = -EOVERFLOW;
+		goto out;
+	}
+
+	offset = start;
+	length = end - start + 1;
+
+	if ((offset >> blkbits) > EXT4_MAX_LOGICAL_BLOCK) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	if (ext4_has_inline_data(inode)) {
+		ext4_msg(sb, KERN_INFO, "fsdev file must not be inline");
+		ret = -EINVAL;
+		goto out;
+	}
+
+	/*
+	 * Calculate the first and last logical block respectively.
+	 */
+	map.m_lblk = offset >> blkbits;
+	map.m_len = min_t(loff_t, (offset + length - 1) >> blkbits,
+			  EXT4_MAX_LOGICAL_BLOCK) - map.m_lblk + 1;
+
+	/*
+	 * Callers may call for offset beyond s_bitmap_maxbytes.
+	 * So handle it here itself instead of querying ext4_map_blocks().
+	 * Since ext4_map_blocks() will warn about it and will return
+	 * -EIO error.
+	 */
+	if (!(ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS))) {
+		struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
+
+		if (offset >= sbi->s_bitmap_maxbytes) {
+			map.m_flags = 0;
+			goto skip_map_block;
+		}
+	}
+
+	ret = ext4_map_blocks(NULL, inode, &map, 0);
+	if (ret < 0)
+		goto out;
+
+skip_map_block:
+	if (!(map.m_flags & (EXT4_MAP_UNWRITTEN | EXT4_MAP_MAPPED))) {
+		ext4_msg(sb, KERN_INFO, "fsdev file must not have holes");
+		ret = -EINVAL;
+		goto out;
+	}
+
+	*dev_start = (u64)map.m_pblk << blkbits;
+	*dev_end = *dev_start + ((u64)map.m_len << blkbits) - 1;
+
+	ret = 0;
+out:
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static int update_inode_swapfile_flag(struct inode *inode, bool is_swapfile)
+{
+	int ret;
+	struct ext4_inode_info *ei = EXT4_I(inode);
+	struct ext4_iloc iloc;
+	handle_t *handle = NULL;
+
+	if (is_swapfile == ei->i_is_swapfile) {
+		ret = 0;
+		goto out;
+	}
+
+	handle = ext4_journal_start(inode, EXT4_HT_INODE, 1);
+	if (IS_ERR(handle)) {
+		ret = PTR_ERR(handle);
+		goto out;
+	}
+	if (IS_SYNC(inode))
+		ext4_handle_sync(handle);
+	ret = ext4_reserve_inode_write(handle, inode, &iloc);
+	if (ret)
+		goto out_journal;
+
+	ei->i_is_swapfile = is_swapfile;
+	inode->i_ctime = current_time(inode);
+	ret = ext4_mark_iloc_dirty(handle, inode, &iloc);
+	if (ret)
+		goto out_journal;
+
+	if (ei->i_is_swapfile)
+		inode->i_flags |= S_SWAPFILE;
+	else
+		inode->i_flags &= ~S_SWAPFILE;
+
+	ret = 0;
+out_journal:
+	ext4_journal_stop(handle);
+out:
+	return ret;
+}
+
+int ext4_rbd_meta_file_activate(struct inode *inode)
+{
+	int ret;
+
+	if (!inode_owner_or_capable(inode))
+		return -EACCES;
+
+	inode_lock(inode);
+	if (IS_SWAPFILE(inode)) {
+		ret = -EBUSY;
+		goto out;
+	}
+	if (!IS_IMMUTABLE(inode)) {
+		printk(KERN_WARNING "rbd meta file must be immutable\n");
+		ret = -EINVAL;
+		goto out;
+	}
+
+	ret = update_inode_swapfile_flag(inode, true);
+	if (ret)
+		goto out;
+
+	ret = 0;
+out:
+	inode_unlock(inode);
+	return ret;
+}
+
+int ext4_rbd_meta_file_deactivate(struct inode *inode)
+{
+	int ret;
+	if (!inode_owner_or_capable(inode))
+		return -EACCES;
+
+	inode_lock(inode);
+
+	ret = update_inode_swapfile_flag(inode, false);
+	if (ret)
+		goto out;
+
+	ret = 0;
+out:
+	inode_unlock(inode);
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+

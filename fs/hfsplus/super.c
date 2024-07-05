@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/fs/hfsplus/super.c
@@ -519,7 +522,11 @@ static int hfsplus_fill_super(struct super_block *sb, void *data, int silent)
 	err = hfs_find_init(sbi->cat_tree, &fd);
 	if (err)
 		goto out_put_root;
+#ifdef MY_ABC_HERE
+	err = hfsplus_cat_build_key(sb, fd.search_key, HFSPLUS_ROOT_CNID, &str, false);
+#else
 	err = hfsplus_cat_build_key(sb, fd.search_key, HFSPLUS_ROOT_CNID, &str);
+#endif /* MY_ABC_HERE */
 	if (unlikely(err < 0))
 		goto out_put_root;
 	if (!hfs_brec_read(&fd, &entry, sizeof(entry))) {

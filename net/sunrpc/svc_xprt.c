@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * linux/net/sunrpc/svc_xprt.c
@@ -422,6 +425,9 @@ void svc_xprt_do_enqueue(struct svc_xprt *xprt)
 	if (test_and_set_bit(XPT_BUSY, &xprt->xpt_flags))
 		return;
 
+#ifdef MY_ABC_HERE
+	xprt->xpt_eqtime = ktime_get();
+#endif /* MY_ABC_HERE */
 	cpu = get_cpu();
 	pool = svc_pool_for_cpu(xprt->xpt_server, cpu);
 
@@ -435,6 +441,10 @@ void svc_xprt_do_enqueue(struct svc_xprt *xprt)
 	/* find a thread for this xprt */
 	rcu_read_lock();
 	list_for_each_entry_rcu(rqstp, &pool->sp_all_threads, rq_all) {
+#ifdef MY_ABC_HERE
+		if (test_bit(SP_CONGESTED, &pool->sp_flags))
+			goto out_unlock;
+#endif /* MY_ABC_HERE */
 		if (test_and_set_bit(RQ_BUSY, &rqstp->rq_flags))
 			continue;
 		atomic_long_inc(&pool->sp_stats.threads_woken);
@@ -443,6 +453,9 @@ void svc_xprt_do_enqueue(struct svc_xprt *xprt)
 		goto out_unlock;
 	}
 	set_bit(SP_CONGESTED, &pool->sp_flags);
+#ifdef MY_ABC_HERE
+	pool->sp_stats.congested++;
+#endif /* MY_ABC_HERE */
 	rqstp = NULL;
 out_unlock:
 	rcu_read_unlock();
@@ -853,6 +866,9 @@ int svc_recv(struct svc_rqst *rqstp, long timeout)
 		goto out;
 	}
 
+#ifdef MY_ABC_HERE
+	rqstp->rq_xprt_rdtime = xprt->xpt_eqtime;
+#endif /* MY_ABC_HERE */
 	len = svc_handle_xprt(rqstp, xprt);
 
 	/* No data, incomplete (TCP) read, or accept() */
@@ -896,6 +912,10 @@ int svc_send(struct svc_rqst *rqstp)
 	struct svc_xprt	*xprt;
 	int		len = -EFAULT;
 	struct xdr_buf	*xb;
+#ifdef MY_ABC_HERE
+	const struct svc_version *vers;
+	s64 latency_us;
+#endif /* MY_ABC_HERE */
 
 	xprt = rqstp->rq_xprt;
 	if (!xprt)
@@ -910,6 +930,25 @@ int svc_send(struct svc_rqst *rqstp)
 	trace_svc_stats_latency(rqstp);
 
 	len = xprt->xpt_ops->xpo_sendto(rqstp);
+#ifdef MY_ABC_HERE
+	if (!rqstp->rq_server->sv_program ||
+	    rqstp->rq_vers >= rqstp->rq_server->sv_program->pg_nvers)
+		goto skip_report;
+
+	vers = rqstp->rq_server->sv_program->pg_vers[rqstp->rq_vers];
+	if (!vers || rqstp->rq_proc >= vers->vs_nproc)
+		goto skip_report;
+
+	latency_us = ktime_to_us(ktime_sub(ktime_get(), rqstp->rq_xprt_rdtime));
+	svc_update_lat(&vers->vs_latency[rqstp->rq_proc], latency_us);
+#ifdef MY_ABC_HERE
+	if (vers->vs_store_latency_to_histogram)
+		vers->vs_store_latency_to_histogram(latency_us, rqstp->vfs_latency_us, rqstp->rq_proc);
+	if (vers->vs_store_resp_error)
+		vers->vs_store_resp_error(rqstp);
+#endif /* MY_ABC_HERE */
+skip_report:
+#endif /* MY_ABC_HERE */
 
 	trace_svc_send(rqstp, len);
 	svc_xprt_release(rqstp);
@@ -1400,16 +1439,28 @@ static int svc_pool_stats_show(struct seq_file *m, void *p)
 	struct svc_pool *pool = p;
 
 	if (p == SEQ_START_TOKEN) {
+#ifdef MY_ABC_HERE
+		seq_puts(m, "# pool packets-arrived sockets-enqueued threads-woken threads-timedout congested-count\n");
+#else /* MY_ABC_HERE */
 		seq_puts(m, "# pool packets-arrived sockets-enqueued threads-woken threads-timedout\n");
+#endif /* MY_ABC_HERE */
 		return 0;
 	}
 
+#ifdef MY_ABC_HERE
+	seq_printf(m, "%u %lu %lu %lu %lu %lu\n",
+#else /* MY_ABC_HERE */
 	seq_printf(m, "%u %lu %lu %lu %lu\n",
+#endif /* MY_ABC_HERE */
 		pool->sp_id,
 		(unsigned long)atomic_long_read(&pool->sp_stats.packets),
 		pool->sp_stats.sockets_queued,
 		(unsigned long)atomic_long_read(&pool->sp_stats.threads_woken),
-		(unsigned long)atomic_long_read(&pool->sp_stats.threads_timedout));
+		(unsigned long)atomic_long_read(&pool->sp_stats.threads_timedout)
+#ifdef MY_ABC_HERE
+		, pool->sp_stats.congested
+#endif /* MY_ABC_HERE */
+		);
 
 	return 0;
 }

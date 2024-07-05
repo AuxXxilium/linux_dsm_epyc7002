@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  *   fs/cifs/smb2proto.h
  *
@@ -134,6 +137,16 @@ extern void smb2_set_related(struct smb_rqst *rqst);
  * SMB2 Worker functions - most of protocol specific implementation details
  * are contained within these calls.
  */
+#ifdef MY_ABC_HERE
+extern void smb2_hdr_assemble(struct smb2_sync_hdr *shdr, __le16 smb2_cmd,
+		const struct cifs_tcon *tcon,
+		struct TCP_Server_Info *server);
+extern int smb311_decode_neg_context(struct smb2_negotiate_rsp *rsp,
+		struct TCP_Server_Info *server,
+		unsigned int len_of_smb);
+extern void assemble_neg_contexts(struct smb2_negotiate_req *req,
+		struct TCP_Server_Info *server, unsigned int *total_len);
+#endif /* MY_ABC_HERE */
 extern int SMB2_negotiate(const unsigned int xid, struct cifs_ses *ses);
 extern int SMB2_sess_setup(const unsigned int xid, struct cifs_ses *ses,
 			   const struct nls_table *nls_cp);

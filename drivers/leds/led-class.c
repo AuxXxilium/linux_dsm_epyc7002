@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * LED Class Core
@@ -248,6 +251,38 @@ struct led_classdev *of_led_get(struct device_node *np, int index)
 	return led_cdev;
 }
 EXPORT_SYMBOL_GPL(of_led_get);
+
+#ifdef MY_DEF_HERE
+/**
+ * of_leddev_get() - request a LED device via the LED framework
+ * @np: device node to get the LED device from
+ *
+ * Returns the LED device parsed from the phandle
+ * property of a device tree node or a negative error-code on failure.
+ */
+struct led_classdev *of_leddev_get(struct device_node *led_node)
+{
+	struct device *led_dev;
+	struct led_classdev *led_cdev;
+
+	if (!led_node)
+		return ERR_PTR(-ENOENT);
+
+	led_dev = class_find_device_by_of_node(leds_class, led_node);
+	of_node_put(led_node);
+
+	if (!led_dev)
+		return ERR_PTR(-EPROBE_DEFER);
+
+	led_cdev = dev_get_drvdata(led_dev);
+
+	if (!try_module_get(led_cdev->dev->parent->driver->owner))
+		return ERR_PTR(-ENODEV);
+
+	return led_cdev;
+}
+EXPORT_SYMBOL_GPL(of_leddev_get);
+#endif /* MY_DEF_HERE */
 
 /**
  * led_put() - release a LED device

@@ -395,6 +395,26 @@ config MTD_NAND_MTK
 	  Enables support for NAND controller on MTK SoCs.
 	  This controller is found on mt27xx, mt81xx, mt65xx SoCs.
 
+if SYNO_LSP_RTD1619B
+config MTD_NAND_RTK
+	tristate "RTK NAND controller"
+	help
+	  Enables support for NAND controller on Realtek SoCs.
+	  This controller is found on rtd12xx, rtd13xx SoCs.
+
+config MTD_NAND_RTK_BBM
+	bool "RTK NAND Flash Bad Block Management"
+	depends on MTD_NAND_RTK
+	help
+          Enables RTK Bad Block Management.
+
+config MTD_NAND_RTK_BBTCRC
+	bool "RTK BBT CRC Check"
+	depends on MTD_NAND_RTK_BBM
+	help
+          Enables RTK CRC check for BBT.
+
+endif # SYNO_LSP_RTD1619B
 config MTD_NAND_MXIC
 	tristate "Macronix raw NAND controller"
 	depends on HAS_IOMEM || COMPILE_TEST

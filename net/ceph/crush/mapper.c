@@ -426,6 +426,95 @@ static int is_out(const struct crush_map *map,
 	return 1;
 }
 
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+/* Simply duplicate code from bucket_perm_choose to help us randomly permute items
+   which is selected from original crush_bucket previously.*/
+static int syno_perm_choose(const int *items, size_t size,
+			    int id, int hash_type,
+			    struct crush_work_bucket *work,
+			    int x, int r, int *idx)
+{
+	unsigned int pr = r % size;
+	unsigned int i, s;
+
+	/* start a new permutation if @x has changed */
+	if (work->perm_x != (__u32)x || work->perm_n == 0) {
+		dprintk("bucket %d new x=%d\n", id, x);
+		work->perm_x = x;
+
+		/* optimize common r=0 case */
+		if (pr == 0) {
+			s = crush_hash32_3(hash_type, x, id, 0) % size;
+			work->perm[0] = s;
+			work->perm_n = 0xffff;   /* magic value, see below */
+			goto out;
+		}
+
+		for (i = 0; i < size; i++)
+			work->perm[i] = i;
+		work->perm_n = 0;
+	} else if (work->perm_n == 0xffff) {
+		/* clean up after the r=0 case above */
+		for (i = 1; i < size; i++)
+			work->perm[i] = i;
+		work->perm[work->perm[0]] = 0;
+		work->perm_n = 1;
+	}
+
+	/* calculate permutation up to pr */
+	for (i = 0; i < work->perm_n; i++)
+		dprintk("syno_perm_choose have %d: %d\n", i, work->perm[i]);
+	while (work->perm_n <= pr) {
+		unsigned int p = work->perm_n;
+		/* no point in swapping the final entry */
+		if (p < size - 1) {
+			i = crush_hash32_3(hash_type, x, id, p) %
+				(size - p);
+			if (i) {
+				unsigned int t = work->perm[p + i];
+				work->perm[p + i] = work->perm[p];
+				work->perm[p] = t;
+			}
+			dprintk("syno_perm_choose swap %d with %d\n", p, p+i);
+		}
+		work->perm_n++;
+	}
+	for (i = 0; i < size; i++)
+		dprintk(" perm_choose  %d: %d\n", i, work->perm[i]);
+
+	s = work->perm[pr];
+out:
+	dprintk("syno_perm_choose %d sz=%d x=%d r=%d (%d) s=%d\n", id,
+		size, x, r, pr, s);
+	if (idx)
+		*idx = s;
+	return items[s];
+}
+
+static void shuffle_by_pg(const struct crush_bucket *in,
+			  struct crush_work_bucket *work,
+			  int x, int *items, int *items_2, int len)
+{
+	int i;
+	int new;
+	int new_idx;
+	int new_items[16];
+	int new_items_2[16];
+
+	dprintk("RANDOM SHFULLE STARTS with bucket [%d]\n", in->id);
+	work->perm_n = 0; // start a new permutation
+	for (i = 0; i < len; i++) {
+		new = syno_perm_choose(items, len, in->id, in->hash, work, x, i, &new_idx);
+		new_items[i] = new;
+		new_items_2[i] = items_2[new_idx];
+		dprintk("new_item[%d] got %d, new_item_2[%d] got %d\n", i, new_items[i], i, new_items_2[i]);
+	}
+
+	memcpy(items, new_items, len*sizeof(int));
+	memcpy(items_2, new_items_2, len*sizeof(int));
+}
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
+
 /**
  * crush_choose_firstn - choose numrep distinct items of given type
  * @map: the crush_map
@@ -462,7 +551,13 @@ static int crush_choose_firstn(const struct crush_map *map,
 			       unsigned int stable,
 			       int *out2,
 			       int parent_r,
-			       const struct crush_choose_arg *choose_args)
+			       const struct crush_choose_arg *choose_args
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+			       ,
+			       int *syno_choose_primary
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
+			       )
+
 {
 	int rep;
 	unsigned int ftotal, flocal;
@@ -503,6 +598,14 @@ static int crush_choose_firstn(const struct crush_map *map,
 					reject = 1;
 					goto reject;
 				}
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+				/* we forcely assign first selected item to achieve data locality */
+				if ((syno_choose_primary && rep == 0) &&
+				    (type == map->buckets[-1-*syno_choose_primary]->type)) {
+					dprintk(" choose primary item [%d]\n ", *syno_choose_primary);
+					item = *syno_choose_primary;
+				} else
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 				if (local_fallback_retries > 0 &&
 				    flocal >= (in->size>>1) &&
 				    flocal > local_fallback_retries)
@@ -573,9 +676,25 @@ static int crush_choose_firstn(const struct crush_map *map,
 							    stable,
 							    NULL,
 							    sub_r,
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+                                                            choose_args, NULL) <= outpos) {
+
+							/* There's no selected osd under syno_choose_primary,
+							 * just abandon it on the next iteration
+							 * Such that the primary osd of this pg could be
+							 * automatically recovered while syno_choose_primary
+							 * has been down.
+							 */
+							if (syno_choose_primary && rep == 0)
+								syno_choose_primary = NULL;
+
+							reject = 1;
+						}
+#else
 							    choose_args) <= outpos)
 							/* didn't get leaf */
 							reject = 1;
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 					} else {
 						/* we already have a leaf! */
 						out2[outpos] = item;
@@ -651,7 +770,13 @@ static void crush_choose_indep(const struct crush_map *map,
 			       int recurse_to_leaf,
 			       int *out2,
 			       int parent_r,
-			       const struct crush_choose_arg *choose_args)
+			       const struct crush_choose_arg *choose_args
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+			       ,
+			       int *syno_choose_primary
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
+                               )
+
 {
 	const struct crush_bucket *in = bucket;
 	int endpos = outpos + left;
@@ -720,7 +845,14 @@ static void crush_choose_indep(const struct crush_map *map,
 					dprintk("   empty bucket\n");
 					break;
 				}
-
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+				/* we forcely assign first selected item to achieve data locality */
+				if ((syno_choose_primary && rep == outpos) &&
+				    (type == map->buckets[-1-*syno_choose_primary]->type)) {
+					dprintk(" choose primary item [%d]\n ", *syno_choose_primary);
+					item = *syno_choose_primary;
+				} else
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 				item = crush_bucket_choose(
 					in, work->work[-1-in->id],
 					x, r,
@@ -781,9 +913,25 @@ static void crush_choose_indep(const struct crush_map *map,
 							out2, rep,
 							recurse_tries, 0,
 							0, NULL, r,
-							choose_args);
+							choose_args
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+							,
+							NULL
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
+							);
+
 						if (out2[rep] == CRUSH_ITEM_NONE) {
 							/* placed nothing; no leaf */
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+							/* There's no selected osd under syno_choose_primary,
+							 * just abandon it on the next iteration
+							 * Such that the primary osd of this pg could be
+							 * automatically recovered while syno_choose_primary
+							 * has been down.
+							 */
+							if (syno_choose_primary && rep == outpos)
+								syno_choose_primary = NULL;
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 							break;
 						}
 					} else {
@@ -832,6 +980,445 @@ static void crush_choose_indep(const struct crush_map *map,
 #endif
 }
 
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+/**
+ * crush_syno_choose_hg: Choose Syno-Crush Host Group
+ *
+ * Most of the logic is the duplicate of crush_choose_indep.
+ */
+static void crush_syno_choose_hg(const struct crush_map *map,
+				 struct crush_work *work,
+				 const struct crush_bucket *bucket,
+				 const __u32 *weight, int weight_max,
+				 int x, int left, int numrep, int type,
+				 int *out, int outpos,
+				 unsigned int tries,
+				 unsigned int recurse_tries,
+				 int recurse_to_leaf,
+				 int *out2,
+				 const struct crush_choose_arg *choose_args,
+				 int x2,
+				 int *syno_choose_primary)
+
+{
+	const struct crush_bucket *in = bucket;
+	int endpos = outpos + left;
+	int rep;
+	unsigned int ftotal;
+	int r;
+	int i;
+	int item = 0;
+	int itemtype;
+	int collide;
+	int hg_size = left;
+	int undef_count = left;
+	int leaf_fail_size = 0;
+	int leaf_fail_buckets[32];
+	int is_locality_rule = !!syno_choose_primary;
+	int handle_stage_3 = 0;
+
+	dprintk("CHOOSE%s INDEP bucket %d x %d outpos %d numrep %d\n", recurse_to_leaf ? "_LEAF" : "",
+		bucket->id, x, outpos, numrep);
+
+	/* initially my result is undefined */
+	for (rep = outpos; rep < endpos; rep++) {
+		out[rep] = CRUSH_ITEM_UNDEF;
+		if (out2)
+			out2[rep] = CRUSH_ITEM_UNDEF;
+	}
+
+	for (ftotal = 0; left > 0 && ftotal < tries; ftotal++) {
+#ifdef DEBUG_INDEP
+		if (out2 && ftotal) {
+			dprintk("%u %d a: ", ftotal, left);
+			for (rep = outpos; rep < endpos; rep++) {
+				dprintk(" %d", out[rep]);
+			}
+			dprintk("\n");
+			dprintk("%u %d b: ", ftotal, left);
+			for (rep = outpos; rep < endpos; rep++) {
+				dprintk(" %d", out2[rep]);
+			}
+			dprintk("\n");
+		}
+#endif
+		for (rep = outpos; rep < endpos; rep++) {
+			/*
+			* The choose process is divide into three stages:
+			*
+			* 1st stage: Choose item for undefined positition
+			* 	If item choosen is collided, leave the  posititon undefined.
+			* 	If item choosen can't get a valid leaf, make this position as leaf failed.
+			*
+			* 2nd stage: Choose item for collided(undefined) positition
+			* 	Handle the collided position fisrt, leave the leaf failed posititon empty.
+			*
+			* 3rd stage: Choose item for leaf failed positition
+			* 	At last, handle the leaf failed posititon to see if we can find a replacement.
+			*/
+			handle_stage_3 = !!(undef_count <= 0);
+			if (!handle_stage_3) {
+				if (out[rep] != CRUSH_ITEM_UNDEF)
+					continue;
+			} else {
+				if (out[rep] != CRUSH_ITEM_LEAF_FAIL)
+					continue;
+			}
+
+			in = bucket;  /* initial bucket */
+			/* choose through intervening buckets */
+			for (;;) {
+				/* note: we base the choice on the position
+				 * even in the nested call.  that means that
+				 * if the first layer chooses the same bucket
+				 * in a different position, we will tend to
+				 * choose a different item in that bucket.
+				 * this will involve more devices in data
+				 * movement and tend to distribute the load.
+				 */
+				r = rep;
+
+				/* be careful */
+				if (in->alg == CRUSH_BUCKET_UNIFORM &&
+				    in->size % numrep == 0)
+					/* r'=r+(n+1)*f_total */
+					r += (numrep+1) * ftotal;
+				else
+					/* r' = r + hg_size * f_total */
+					r += hg_size * ftotal;
+
+				/* bucket choose */
+				if (in->size == 0) {
+					dprintk("   empty bucket\n");
+					break;
+				}
+
+				/* we forcely assign first selected item to achieve data locality */
+				if ((syno_choose_primary && rep == outpos) &&
+				    (type == map->buckets[-1 - *syno_choose_primary]->type)) {
+					if (in->size == 0) {
+						dprintk("   empty bucket\n");
+						break;
+					}
+					dprintk(" choose primary item [%d]\n ", *syno_choose_primary);
+					item = *syno_choose_primary;
+				} else {
+					item = crush_bucket_choose(
+						in, work->work[-1-in->id],
+						x2, r,
+						(choose_args ? &choose_args[-1-in->id] : 0),
+						outpos);
+				}
+
+				if (item >= map->max_devices) {
+					dprintk("   bad item %d\n", item);
+					out[rep] = CRUSH_ITEM_NONE;
+					if (out2)
+						out2[rep] = CRUSH_ITEM_NONE;
+					left--;
+					break;
+				}
+
+				/* desired type? */
+				if (item < 0)
+					itemtype = map->buckets[-1-item]->type;
+				else
+					itemtype = 0;
+				dprintk("  item %d type %d\n", item, itemtype);
+
+				/* keep going? */
+				if (itemtype != type) {
+					if (item >= 0 ||
+					    (-1-item) >= map->max_buckets) {
+						dprintk("   bad item type %d\n", type);
+						out[rep] = CRUSH_ITEM_NONE;
+						if (out2)
+							out2[rep] =
+								CRUSH_ITEM_NONE;
+						left--;
+						break;
+					}
+					in = map->buckets[-1-item];
+					continue;
+				}
+
+				/* collision? */
+				collide = 0;
+				for (i = outpos; i < endpos; i++) {
+					if (out[i] == item) {
+						collide = 1;
+						break;
+					}
+				}
+
+				if (!handle_stage_3) {
+					for (i = 0; i < leaf_fail_size; i++) {
+						/*
+						* If this item is normal, it should be selected already.
+						* However, it's failed now. To avoid this item effect
+						* current position, we treat it as collision.
+						*/
+						if (leaf_fail_buckets[i] == item) {
+							collide = 1;
+							break;
+						}
+					}
+				}
+
+				if (collide)
+					break;
+
+				if (recurse_to_leaf) {
+					if (item < 0) {
+						crush_choose_indep(
+							map,
+							work,
+							map->buckets[-1-item],
+							weight, weight_max,
+							x, 1, numrep, 0,
+							out2, rep,
+							recurse_tries, 0,
+							0, NULL, r, choose_args, NULL);
+
+						if (out2 && out2[rep] == CRUSH_ITEM_NONE) {
+							/* There's no selected osd under syno_choose_primary,
+							 * just abandon it on the next iteration
+							 * Such that the primary osd of this pg could be
+							 * automatically recovered while syno_choose_primary
+							 * has been down.
+							 */
+							if (syno_choose_primary && rep == outpos)
+								syno_choose_primary = NULL;
+
+							if (!handle_stage_3) {
+								/*
+								 * Otherwise, already know this postition has leaf fail
+								 */
+								if (out[rep] != CRUSH_ITEM_LEAF_FAIL)
+									undef_count--;
+								leaf_fail_buckets[leaf_fail_size] = item;
+								leaf_fail_size++;
+								out[rep] = CRUSH_ITEM_LEAF_FAIL;
+							}
+
+							/* placed nothing; no leaf */
+							break;
+						}
+					} else if (out2) {
+						/* we already have a leaf! */
+						out2[rep] = item;
+					}
+				}
+
+				/* out? */
+				if (itemtype == 0 &&
+				    is_out(map, weight, weight_max, item, x))
+					break;
+
+				/* yay! */
+				if (!handle_stage_3) {
+					// If start handling leaf failed positition, the undef_count is 0.
+					undef_count--;
+				}
+
+				out[rep] = item;
+				left--;
+				break;
+			}
+		}
+	}
+
+	for (rep = outpos; rep < endpos; rep++) {
+		if (out[rep] == CRUSH_ITEM_UNDEF || out[rep] == CRUSH_ITEM_LEAF_FAIL) {
+			out[rep] = CRUSH_ITEM_NONE;
+		}
+		if (out2 && (out2[rep] == CRUSH_ITEM_UNDEF || out2[rep] == CRUSH_ITEM_LEAF_FAIL)) {
+			out2[rep] = CRUSH_ITEM_NONE;
+		}
+	}
+#ifndef __KERNEL__
+	if (map->choose_tries && ftotal <= map->choose_total_tries)
+		map->choose_tries[ftotal]++;
+#endif
+	{
+		int *t1 = is_locality_rule ? out+outpos+1 : out+outpos;
+		int *t2 = is_locality_rule ? out2+outpos+1 : out2+outpos;
+		int len = is_locality_rule ? endpos-outpos-1 : endpos-outpos;
+		shuffle_by_pg(in, work->work[-1-in->id], x, t1, t2, len);
+	}
+#ifdef DEBUG_INDEP
+	if (out2) {
+		dprintk("%u %d a: ", ftotal, left);
+		for (rep = outpos; rep < endpos; rep++) {
+			dprintk(" %d", out[rep]);
+		}
+		dprintk("\n");
+		dprintk("%u %d b: ", ftotal, left);
+		for (rep = outpos; rep < endpos; rep++) {
+			dprintk(" %d", out2[rep]);
+		}
+		dprintk("\n");
+	}
+#endif
+}
+
+static int crush_syno_choose_firstn(const struct crush_map *map,
+			       struct crush_work *work,
+			       const struct crush_bucket *bucket,
+			       const __u32 *weight, int weight_max,
+			       int x, int hg_size, int type,
+			       int *out, int outpos,
+			       int out_size,
+			       unsigned int tries,
+			       unsigned int recurse_tries,
+			       int recurse_to_leaf,
+			       int *out2,
+			       const struct crush_choose_arg *choose_args,
+			       int x2,
+			       int *syno_choose_primary)
+{
+	int i = 0;
+	int hg_idx = 0;
+	int size = hg_size < out_size ? out_size : hg_size;
+	int endpos = outpos + out_size;
+	int hg_out[32];
+	int hg_out_2[32];
+
+	/* step 1 : choose items of out_size first */
+	crush_syno_choose_hg(map, work, bucket, weight, weight_max,
+			x, size, out_size,
+			type,
+			hg_out,
+			0, // outpos, start from 0 for hg_out
+			tries, recurse_tries,
+			recurse_to_leaf,
+			hg_out_2,
+			choose_args,
+			x2, syno_choose_primary);
+
+	/*
+	 * Fill out and out2 from hg_out
+	 * As the behavior of firstn, we fill out with non-empty item in hg sequentially.
+	 */
+	for (i = outpos; i < endpos; i++) {
+		while(hg_idx < size && hg_out[hg_idx] == CRUSH_ITEM_NONE) {
+			hg_idx++;
+		}
+		if (hg_idx < size) {
+			out[i] = hg_out[hg_idx];
+			out2[i] = hg_out_2[hg_idx];
+			hg_idx++;
+		} else {
+			break;
+		}
+	}
+	return i - outpos;
+}
+
+static void crush_syno_choose_indep(const struct crush_map *map,
+			          struct crush_work *work,
+			          const struct crush_bucket *bucket,
+			          const __u32 *weight, int weight_max,
+			          int x, int rep_size, int hg_size, int type,
+			          int *out, int outpos,
+			          unsigned int tries,
+			          unsigned int recurse_tries,
+			          int recurse_to_leaf,
+			          int *out2,
+			       	  const struct crush_choose_arg *choose_args,
+			          int x2,
+			          int *syno_choose_primary)
+{
+	int i = 0;
+	int size = hg_size < rep_size ? rep_size : hg_size;
+	int endpos = outpos + rep_size;
+	int hg_idx = 0;
+	int hg_tail = size - 1;
+	int hg_out[32];
+	int hg_out_2[32];
+
+	/* step 1 : choose items of rep_size first */
+	crush_syno_choose_hg(map, work, bucket, weight, weight_max,
+			x, size, rep_size,
+			type,
+			hg_out,
+			0, // outpos, start from 0 for hg_out
+			tries, recurse_tries,
+			recurse_to_leaf,
+			hg_out_2,
+			choose_args,
+			x2, syno_choose_primary);
+
+	while (hg_tail >= rep_size) {
+		if (hg_out[hg_tail] != CRUSH_ITEM_NONE) {
+			break;
+		}
+		hg_tail--;
+	}
+
+	/*
+	 * Fill out and out2 from hg_out
+	 * As the behavior of indep, we replce the empty item from behind and keep
+	 * other posititon unchanged.
+	 */
+	for (i = outpos, hg_idx = 0; i < endpos; i++, hg_idx++) {
+		if ((hg_out[hg_idx] == CRUSH_ITEM_NONE) && hg_tail >= rep_size) {
+			out[i] = hg_out[hg_tail];
+			out2[i] = hg_out_2[hg_tail];
+			hg_tail--;
+			while(hg_tail >= rep_size) {
+				if (hg_out[hg_tail] != CRUSH_ITEM_NONE) {
+					break;
+				}
+				hg_tail--;
+			}
+		} else {
+			out[i] = hg_out[hg_idx];
+			out2[i] = hg_out_2[hg_idx];
+		}
+	}
+}
+
+static int syno_enum(const struct crush_map *map,
+		     const struct crush_bucket *bucket,
+		     const __u32 *weight, int weight_max,
+		     int x, int type,
+		     int *out, int out_size)
+{
+	const struct crush_bucket *in = bucket;
+	int count = out_size;
+	int i;
+	int outpos = 0;
+	int item = 0;
+	int itemtype;
+
+	dprintk("SYNO_ENUM bucket%d size %d count %d x %d \n",
+		bucket->id, in->size, count, x);
+
+	for (i = 0; i < in->size && count > 0; i++) {
+		item = in->items[i];
+		if (item < 0)
+			itemtype = map->buckets[-1-item]->type;
+		else
+			itemtype = 0;
+		dprintk("  item %d type %d\n", item, itemtype);
+		if (itemtype != type)
+			continue;
+		if (itemtype == 0 &&
+		    is_out(map, weight, weight_max, item, x)) {
+			dprintk(" reject item %d type %d for %d\n", item, itemtype, type);
+			continue;
+		}
+		dprintk("SYNO_ENUM got %d\n", item);
+		out[outpos] = item;
+		outpos++;
+		count--;
+	}
+
+	dprintk("SYNO_ENUM returns %d\n", outpos);
+	return outpos;
+}
+#endif /* SYNO_CEPH_CUSTOMIZED_CRUSH */
 
 /*
  * This takes a chunk of memory and sets it up to be a shiny new
@@ -894,7 +1481,12 @@ void crush_init_workspace(const struct crush_map *map, void *v)
 int crush_do_rule(const struct crush_map *map,
 		  int ruleno, int x, int *result, int result_max,
 		  const __u32 *weight, int weight_max,
-		  void *cwin, const struct crush_choose_arg *choose_args)
+		  void *cwin, const struct crush_choose_arg *choose_args
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+		  ,
+		  int pool_ps
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
+		  )
 {
 	int result_len;
 	struct crush_work *cw = cwin;
@@ -927,6 +1519,9 @@ int crush_do_rule(const struct crush_map *map,
 
 	int vary_r = map->chooseleaf_vary_r;
 	int stable = map->chooseleaf_stable;
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+	int *syno_choose_primary = NULL;
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 
 	if ((__u32)ruleno >= map->max_rules) {
 		dprintk(" bad ruleno %d\n", ruleno);
@@ -938,6 +1533,9 @@ int crush_do_rule(const struct crush_map *map,
 
 	for (step = 0; step < rule->len; step++) {
 		int firstn = 0;
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+		int syno_choose = 0;
+#endif
 		const struct crush_rule_step *curstep = &rule->steps[step];
 
 		switch (curstep->op) {
@@ -984,12 +1582,37 @@ int crush_do_rule(const struct crush_map *map,
 				stable = curstep->arg1;
 			break;
 
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+		case CRUSH_RULE_SET_SYNO_CHOOSE_PRIMARY:
+			if ((curstep->arg1 >= 0 &&
+			     curstep->arg1 < map->max_devices) ||
+			    (-1 - curstep->arg1 >= 0 &&
+			     -1 - curstep->arg1 < map->max_buckets &&
+			     map->buckets[-1 - curstep->arg1])) {
+				syno_choose_primary = (int*)&curstep->arg1;
+			} else {
+				dprintk(" bad value %d\n", curstep->arg1);
+			}
+			break;
+
+		case CRUSH_RULE_SYNO_CHOOSE_FIRSTN:
+		case CRUSH_RULE_SYNO_CHOOSELEAF_FIRSTN:
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 		case CRUSH_RULE_CHOOSELEAF_FIRSTN:
 		case CRUSH_RULE_CHOOSE_FIRSTN:
 			firstn = 1;
 			fallthrough;
 		case CRUSH_RULE_CHOOSELEAF_INDEP:
 		case CRUSH_RULE_CHOOSE_INDEP:
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+		case CRUSH_RULE_SYNO_CHOOSE_INDEP:
+		case CRUSH_RULE_SYNO_CHOOSELEAF_INDEP:
+			syno_choose =
+				curstep->op == CRUSH_RULE_SYNO_CHOOSE_FIRSTN ||
+				curstep->op == CRUSH_RULE_SYNO_CHOOSELEAF_FIRSTN ||
+				curstep->op == CRUSH_RULE_SYNO_CHOOSE_INDEP ||
+				curstep->op == CRUSH_RULE_SYNO_CHOOSELEAF_INDEP;
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 			if (wsize == 0)
 				break;
 
@@ -998,7 +1621,13 @@ int crush_do_rule(const struct crush_map *map,
 				 CRUSH_RULE_CHOOSELEAF_FIRSTN ||
 				curstep->op ==
 				CRUSH_RULE_CHOOSELEAF_INDEP;
-
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+			recurse_to_leaf |=
+				curstep->op ==
+				 CRUSH_RULE_SYNO_CHOOSELEAF_FIRSTN ||
+				curstep->op ==
+				CRUSH_RULE_SYNO_CHOOSELEAF_INDEP;
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 			/* reset output */
 			osize = 0;
 
@@ -1027,6 +1656,9 @@ int crush_do_rule(const struct crush_map *map,
 						recurse_tries = 1;
 					else
 						recurse_tries = choose_tries;
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+					if (!syno_choose)
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 					osize += crush_choose_firstn(
 						map,
 						cw,
@@ -1045,10 +1677,37 @@ int crush_do_rule(const struct crush_map *map,
 						stable,
 						c+osize,
 						0,
-						choose_args);
+						choose_args
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+						,
+						syno_choose_primary
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
+						);
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+					else
+					osize += crush_syno_choose_firstn(
+						map,
+						cw,
+						map->buckets[bno],
+						weight, weight_max,
+						x, numrep,
+						curstep->arg2,
+						o+osize, j,
+						result_max-osize,
+						choose_tries,
+						recurse_tries,
+						recurse_to_leaf,
+						c+osize,
+						choose_args,
+						pool_ps,
+						syno_choose_primary);
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 				} else {
 					out_size = ((numrep < (result_max-osize)) ?
 						    numrep : (result_max-osize));
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+					if (!syno_choose)
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 					crush_choose_indep(
 						map,
 						cw,
@@ -1063,7 +1722,32 @@ int crush_do_rule(const struct crush_map *map,
 						recurse_to_leaf,
 						c+osize,
 						0,
-						choose_args);
+						choose_args
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+						,
+						syno_choose_primary
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
+						);
+
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+					else
+					crush_syno_choose_indep(
+						map,
+						cw,
+						map->buckets[bno],
+						weight, weight_max,
+						x, out_size, numrep,
+						curstep->arg2,
+						o+osize, j,
+						choose_tries,
+						choose_leaf_tries ?
+						   choose_leaf_tries : 1,
+						recurse_to_leaf,
+						c+osize,
+						choose_args,
+						pool_ps,
+						syno_choose_primary);
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 					osize += out_size;
 				}
 			}
@@ -1078,7 +1762,32 @@ int crush_do_rule(const struct crush_map *map,
 			w = tmp;
 			wsize = osize;
 			break;
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+		case CRUSH_RULE_SYNO_ENUM:
+			osize = 0;
 
+			for (i = 0; i < wsize; i++) {
+				/* make sure bucket id is valid */
+				int bno = -1 - w[i];
+				if (bno < 0 || bno >= map->max_buckets) {
+					// w[i] is probably CRUSH_ITEM_NONE
+					dprintk("  bad w[i] %d\n", w[i]);
+					continue;
+				}
+				osize += syno_enum(map,
+						   map->buckets[bno],
+						   weight, weight_max,
+						   x, curstep->arg1,
+						   o+osize,
+						   result_max-osize);
+			}
+			/* swap o and w arrays */
+			tmp = o;
+			o = w;
+			w = tmp;
+			wsize = osize;
+			break;
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 
 		case CRUSH_RULE_EMIT:
 			for (i = 0; i < wsize && result_len < result_max; i++) {

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * linux/fs/ext4/ioctl.c
@@ -271,6 +274,122 @@ static int uuid_is_zero(__u8 u[16])
 }
 #endif
 
+#ifdef MY_ABC_HERE
+static int ext4_ioctl_get_features(struct file *filp, void __user *arg)
+{
+	struct inode *inode = file_inode(filp);
+	struct super_block *sb = inode->i_sb;
+	struct ext4_super_block *es = EXT4_SB(sb)->s_es;
+	struct ext4_ioctl_feature_flags features;
+
+	features.syno_capability = le32_to_cpu(es->s_feature_syno_capability);
+
+	if (copy_to_user(arg, &features, sizeof(features)))
+		return -EFAULT;
+	return 0;
+}
+
+static int check_feature_bits(u32 change_mask, u32 flags,
+			      const char *type, u32 supported_flags,
+			      u32 safe_set, u32 safe_clear)
+{
+	u32 disallowed, unsupported;
+	u32 set_mask = flags & change_mask;
+	u32 clear_mask = ~flags & change_mask;
+
+	unsupported = set_mask & ~supported_flags;
+	if (unsupported) {
+		printk(KERN_WARNING
+		       "this kernel does not support %s bits 0x%x\n",
+		       type, unsupported);
+		return -EOPNOTSUPP;
+	}
+
+	disallowed = set_mask & ~safe_set;
+	if (disallowed) {
+		printk(KERN_WARNING
+		       "can't set %s bits 0x%x while mounted\n",
+		       type, disallowed);
+		return -EPERM;
+	}
+
+	disallowed = clear_mask & ~safe_clear;
+	if (disallowed) {
+		printk(KERN_WARNING
+		       "can't clear %s bits 0x%x while mounted\n",
+		       type, disallowed);
+		return -EPERM;
+	}
+
+	return 0;
+}
+
+#define check_feature(change_mask, flags, mask_base)		\
+check_feature_bits(change_mask, flags, #mask_base,		\
+		   EXT4_FEATURE_ ## mask_base ## _SUPP,		\
+		   EXT4_FEATURE_ ## mask_base ## _SAFE_SET,	\
+		   EXT4_FEATURE_ ## mask_base ## _SAFE_CLEAR)
+
+struct ext4_feature_args {
+	u32 set_capability;
+	u32 clear_capability;
+};
+
+static void update_features(struct super_block *sb, void *vals)
+{
+	struct ext4_feature_args *args = (struct ext4_feature_args *) vals;
+
+	spin_lock(&(EXT4_SB(sb)->s_feature_lock));
+	EXT4_SET_SYNO_CAPABILITY_FEATURE(sb, args->set_capability);
+	EXT4_CLEAR_SYNO_CAPABILITY_FEATURE(sb, args->clear_capability);
+	spin_unlock(&(EXT4_SB(sb)->s_feature_lock));
+}
+
+static int ext4_ioctl_set_features(struct file *filp, void __user *arg)
+{
+	int ret;
+	struct ext4_feature_args args;
+	struct inode *inode = file_inode(filp);
+	struct super_block *sb = inode->i_sb;
+	struct ext4_ioctl_feature_flags flags[2];
+
+	if (!capable(CAP_SYS_ADMIN)) {
+		ret = -EPERM;
+		goto out;
+	}
+
+	if (copy_from_user(flags, arg, sizeof(flags))) {
+		ret = -EFAULT;
+		goto out;
+	}
+
+	/* Nothing to do */
+	if (!flags[0].syno_capability) {
+		ret = 0;
+		goto out;
+	}
+
+	ret = check_feature(flags[0].syno_capability,
+			    flags[1].syno_capability,
+			    SYNO_CAPABILITY);
+	if (ret)
+		goto out;
+
+	ret = mnt_want_write_file(filp);
+	if (ret)
+		goto out;
+
+	args.set_capability = flags[0].syno_capability & flags[1].syno_capability;
+	args.clear_capability = flags[0].syno_capability & ~flags[1].syno_capability;
+
+	ret = ext4_syno_write_super(sb, &args, update_features);
+
+	mnt_drop_write_file(filp);
+out:
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
 /*
  * If immutable is set and we are not clearing it, we're not allowed to change
  * anything else in the inode.  Don't error out if we're only trying to set
@@ -347,6 +466,17 @@ static int ext4_ioctl_setflags(struct inode *inode,
 		goto flags_out;
 
 	oldflags = ei->i_flags;
+
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+	/*
+	 * we use IMMUTABLE & SWAPFILE protected data,
+	 */
+	if (IS_SWAPFILE(inode) &&
+		((flags ^ oldflags) & EXT4_IMMUTABLE_FL)) {
+		err = -ETXTBSY;
+		goto flags_out;
+	}
+#endif /* MY_ABC_HERE || MY_ABC_HERE */
 
 	err = vfs_ioc_setflags_prepare(inode, oldflags, flags);
 	if (err)
@@ -1125,7 +1255,11 @@ resizefs_out:
 
 		range.minlen = max((unsigned int)range.minlen,
 				   q->limits.discard_granularity);
-		ret = ext4_trim_fs(sb, &range);
+		ret = ext4_trim_fs(sb, &range
+#ifdef MY_ABC_HERE
+				   , TRIM_SEND_TRIM
+#endif /* MY_ABC_HERE */
+				   );
 		if (ret < 0)
 			return ret;
 
@@ -1135,6 +1269,30 @@ resizefs_out:
 
 		return 0;
 	}
+#ifdef MY_ABC_HERE
+	case FIHINTUNUSED:
+	{
+		struct request_queue *q = bdev_get_queue(sb->s_bdev);
+		struct fstrim_range range;
+		int ret = 0;
+
+		if (!capable(CAP_SYS_ADMIN))
+			return -EPERM;
+
+		if (!blk_queue_unused_hint(q))
+			return -EOPNOTSUPP;
+
+		if (copy_from_user(&range, (struct fstrim_range __user *)arg,
+		    sizeof(range)))
+			return -EFAULT;
+
+		ret = ext4_trim_fs(sb, &range, TRIM_SEND_HINT);
+		if (!ret)
+			ext4_msg(sb, KERN_NOTICE, "total send %llu bytes hints", range.len);
+
+		return ret;
+	}
+#endif /* MY_ABC_HERE */
 	case EXT4_IOC_PRECACHE_EXTENTS:
 		return ext4_ext_precache(inode);
 
@@ -1314,6 +1472,12 @@ out:
 		if (!ext4_has_feature_verity(sb))
 			return -EOPNOTSUPP;
 		return fsverity_ioctl_measure(filp, (void __user *)arg);
+#ifdef MY_ABC_HERE
+	case EXT4_IOC_GET_FEATURES:
+		return ext4_ioctl_get_features(filp, (void __user *)arg);
+	case EXT4_IOC_SET_FEATURES:
+		return ext4_ioctl_set_features(filp, (void __user *)arg);
+#endif /* MY_ABC_HERE */
 
 	default:
 		return -ENOTTY;
@@ -1330,6 +1494,22 @@ long ext4_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 	return ret;
 }
+
+#ifdef MY_ABC_HERE
+long ext4_symlink_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+	long ret;
+
+	if (cmd != FS_IOC_GETFLAGS && cmd != FS_IOC_SETFLAGS)
+		return -ENOIOCTLCMD;
+
+	ext4_fc_start_update(file_inode(filp));
+	ret = __ext4_ioctl(filp, cmd, arg);
+	ext4_fc_stop_update(file_inode(filp));
+
+	return ret;
+}
+#endif /* MY_ABC_HERE */
 
 #ifdef CONFIG_COMPAT
 long ext4_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
@@ -1402,6 +1582,10 @@ long ext4_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	case EXT4_IOC_GET_ES_CACHE:
 	case FS_IOC_FSGETXATTR:
 	case FS_IOC_FSSETXATTR:
+#ifdef MY_ABC_HERE
+	case EXT4_IOC_GET_FEATURES:
+	case EXT4_IOC_SET_FEATURES:
+#endif /* MY_ABC_HERE */
 		break;
 	default:
 		return -ENOIOCTLCMD;

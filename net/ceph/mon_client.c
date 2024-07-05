@@ -1388,6 +1388,10 @@ static void mon_fault(struct ceph_connection *con)
 		} else {
 			dout("%s already hunting\n", __func__);
 		}
+#ifdef CONFIG_SYNO_CEPH_SKIP_CRC
+	pr_err("%s: syno: mon%d fault, try `ms_crc_header = false' on server side\n",
+	       __func__, monc->cur_mon);
+#endif /* CONFIG_SYNO_CEPH_SKIP_CRC */
 	}
 	mutex_unlock(&monc->mutex);
 }

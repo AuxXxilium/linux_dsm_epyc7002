@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  *  linux/include/linux/hfsplus_raw.h
@@ -380,6 +383,41 @@ struct hfsplus_attr_extents {
 
 #define HFSPLUS_MAX_INLINE_DATA_SIZE 3802
 
+#ifdef MY_ABC_HERE
+/*
+ * Apple Open Source hfs project mentions that HFSPlusAttrInlineData is
+ * obsolete use HFSPlusAttrData instead[1]. However, Apple Technical 
+ * Specification doesn't reveal which is correct attr_inline_data data
+ * structure [2]. Since the following structure is still compatible with
+ * latest hfs implementation, we don't update it in 5.10.x Kernel Porting.
+ *
+ * Why we said it is compatible?
+ * hfs_format.h
+ * struct HFSPlusAttrData {
+ * 	u_int32_t    recordType;   // == kHFSPlusAttrInlineData
+ * 	u_int32_t    reserved[2];
+ * 	u_int32_t    attrSize;     // size of attribute data in bytes
+ * 	u_int8_t     attrData[2];  // variable length
+ * } __attribute__((aligned(2), packed));
+ * - recordType/record_type both start in offset 0 bytes.
+ * - attrSize/length can read the same value:
+ *     1. hfs - getmaxinlineattrsize mentions 3,802 bytes for an 8K node size.
+ *        size_t nodesize = ATTRIBUTE_FILE_NODE_SIZE; // 8K is hard coded
+ *        3802 is never bigger than 65535 (2^16 - 1)
+ *     2. Big-Endian make it works.
+ *        ex: 0x00001234
+ *            attrSize see 0x00|0x00|0x12|0x34 (offset: 12th - 15th byte)
+ *            length see             0x12|0x34 (offset: 14th - 15th byte)
+ *
+ * If someone get the spec in the future, To-do:
+ * 1. Update struct hfsplus_attr_inline_data
+ * 2. Don't use slab malloc; use kvmalloc instead
+ *
+ * References:
+ * [1] https://opensource.apple.com/source/hfs/
+ * [2] https://developer.apple.com/library/archive/technotes/tn/tn1150.html
+ */
+#endif /* MY_ABC_HERE */
 /* HFS+ attribute inline data */
 struct hfsplus_attr_inline_data {
 	__be32 record_type;

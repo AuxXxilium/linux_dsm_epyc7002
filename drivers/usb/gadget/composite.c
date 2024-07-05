@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * composite.c - infrastructure for Composite USB Gadgets
@@ -346,6 +349,16 @@ done:
 	if (value)
 		DBG(config->cdev, "adding '%s'/%p --> %d\n",
 				function->name, function, value);
+#if defined(MY_DEF_HERE)
+
+#ifdef CONFIG_USB_PATCH_ON_RTK
+	/* add to print log*/
+	pr_notice("adding '%s'/%p to config '%s'/%p --> %s (ret=%d)\n",
+			function->name, function,
+			config->label, config, value?"Fail":"Ok", value);
+#endif // CONFIG_USB_PATCH_ON_RTK
+
+#endif /* MY_DEF_HERE */
 	return value;
 }
 EXPORT_SYMBOL_GPL(usb_add_function);

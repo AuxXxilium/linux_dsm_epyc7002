@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * devices.c
@@ -46,6 +49,11 @@
 #include <linux/uaccess.h>
 
 #include "usb.h"
+
+#ifdef MY_DEF_HERE
+#include <linux/synolib.h>
+#include <uapi/linux/syno.h>
+#endif /* MY_DEF_HERE */
 
 /* Define ALLOW_SERIAL_NUMBER if you want to see the serial number of devices */
 #define ALLOW_SERIAL_NUMBER
@@ -437,6 +445,62 @@ static char *usb_dump_string(char *start, char *end,
 }
 
 #endif /* PROC_EXTRA */
+/* return value :
+ * 0 : a usbdev is not a usb copy port
+ * 1 : the usbdev is a usb copy port
+ * -ENODEV : error no of_root or no usbdev
+ */
+#ifdef MY_DEF_HERE
+static int usb_copy_support(struct usb_device *usbdev)
+{
+	int ret = -ENODEV;
+	const char* dt_usb_copy = NULL;
+	struct device_node *usb_slot = NULL, *usb_port = NULL;
+
+	if (NULL == of_root || NULL == usbdev) {
+		goto END;
+	}
+
+	for_each_child_of_node(of_root, usb_slot) {
+		if (!usb_slot->full_name || strncmp(usb_slot->full_name, DT_USB_SLOT, strlen(DT_USB_SLOT))) {
+			continue;
+		}
+
+		if (0 > of_property_read_string(usb_slot, DT_USB_COPY, &dt_usb_copy) ||
+		    0 != strncmp(dt_usb_copy, "true", strlen("true"))) {
+			continue;
+		}
+
+		usb_port = of_get_child_by_name(usb_slot, DT_USB2);
+		if (0 == of_property_read_string(usb_port, DT_USB_PORT, &dt_usb_copy) &&
+		    0 == strncmp(dt_usb_copy, dev_name(&usbdev->dev), strlen(dt_usb_copy))) {
+			ret = 1;
+			goto END;
+		}
+		of_node_put(usb_port);
+		usb_port = NULL;
+
+		usb_port = of_get_child_by_name(usb_slot, DT_USB3);
+		if (0 == of_property_read_string(usb_port, DT_USB_PORT, &dt_usb_copy) &&
+		    0 == strncmp(dt_usb_copy, dev_name(&usbdev->dev), strlen(dt_usb_copy))) {
+			ret = 1;
+			goto END;
+		}
+		of_node_put(usb_port);
+		usb_port = NULL;
+	}
+
+	ret = 0;
+END:
+	if (usb_slot) {
+		of_node_put(usb_slot);
+	}
+	if (usb_port) {
+		of_node_put(usb_port);
+	}
+	return ret;
+}
+#endif /* MY_DEF_HERE */
 
 /*****************************************************************/
 
@@ -494,6 +558,16 @@ static ssize_t usb_device_dump(char __user **buffer, size_t *nbytes,
 	default:
 		speed = "??";
 	}
+
+#if defined(MY_DEF_HERE)
+	if(0 < usb_copy_support(usbdev))
+		// Port=99 in /sys/kernel/debug/usb/devices
+		data_end = pages_start + sprintf(pages_start, format_topo,
+				bus->busnum, level, parent_devnum,
+				USBCOPY_PORT_LOCATION, count, usbdev->devnum,
+				speed, usbdev->maxchild);
+	else
+#endif /* defined(MY_DEF_HERE) */
 	data_end = pages_start + sprintf(pages_start, format_topo,
 			bus->busnum, level, parent_devnum,
 			index, count, usbdev->devnum,

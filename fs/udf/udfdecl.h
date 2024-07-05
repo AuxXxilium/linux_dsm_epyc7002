@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __UDF_DECL_H
 #define __UDF_DECL_H
@@ -130,6 +133,10 @@ static inline unsigned int udf_dir_entry_len(struct fileIdentDesc *cfi)
 		le16_to_cpu(cfi->lengthOfImpUse) + cfi->lengthFileIdent,
 		UDF_NAME_PAD);
 }
+#ifdef MY_ABC_HERE
+extern int udf_match(int len1, const unsigned char *name1, int len2,
+		     const unsigned char *name2, int is_caseless);
+#endif /* MY_ABC_HERE */
 
 /* file.c */
 extern long udf_ioctl(struct file *, unsigned int, unsigned long);

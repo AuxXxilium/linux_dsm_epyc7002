@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2007 Oracle.  All rights reserved.
@@ -51,6 +54,22 @@
 #include "delalloc-space.h"
 #include "block-group.h"
 #include "space-info.h"
+
+#ifdef MY_ABC_HERE
+#include <linux/namei.h>
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#include <linux/fsnotify.h>
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#include "syno_acl.h"
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#include "syno-rbd-meta.h"
+#endif /* MY_ABC_HERE */
 
 struct btrfs_iget_args {
 	u64 ino;
@@ -140,6 +159,123 @@ static inline void btrfs_cleanup_ordered_extents(struct btrfs_inode *inode,
 
 static int btrfs_dirty_inode(struct inode *inode);
 
+#ifdef MY_ABC_HERE
+static int btrfs_syno_init_archive_bit(struct btrfs_trans_handle *trans,
+		struct inode *inode)
+{
+	__le32 archive_bit_le32 = cpu_to_le32(ALL_SYNO_ARCHIVE);
+
+	return btrfs_xattr_syno_set_archive_bit(trans, inode,
+			&archive_bit_le32, sizeof(archive_bit_le32),
+			XATTR_CREATE, false);
+}
+
+static int btrfs_syno_set_archive_bit(struct dentry *dentry, u32 archive_bit)
+{
+	struct inode *inode = d_inode(dentry);
+	__le32 archive_bit_le32 = cpu_to_le32(archive_bit);
+
+	return btrfs_xattr_syno_set_archive_bit(NULL, inode,
+			&archive_bit_le32, sizeof(archive_bit_le32),
+			0, false);
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static int btrfs_syno_get_inode_archive_version(struct dentry *dentry, u32 *version)
+{
+	int ret;
+	struct inode *inode = d_inode(dentry);
+	struct syno_xattr_archive_version value;
+
+	if (IS_ARCHIVE_VERSION_CACHED(inode)) {
+		*version = inode->i_archive_version;
+		return 0;
+	}
+
+	ret = btrfs_getxattr(inode, XATTR_SYNO_ARCHIVE_VERSION, &value, sizeof(value));
+	if (ret == sizeof(value)) {
+		inode->i_archive_version = le32_to_cpu(value.v_archive_version);
+	} else if (-ENODATA == ret) {
+		inode->i_archive_version = 0;
+	} else {
+		if (ret > 0)
+			ret = -EMSGSIZE;
+		*version = 0;
+		return ret;
+	}
+
+	*version = inode->i_archive_version;
+	inode->i_flags |= S_ARCHIVE_VERSION_CACHED;
+
+	return 0;
+}
+
+static int btrfs_syno_set_inode_archive_version(struct dentry *dentry, u32 version)
+{
+	int ret;
+	struct inode *inode = d_inode(dentry);
+	struct syno_xattr_archive_version value;
+
+	value.v_magic = cpu_to_le16(0x2552);
+	value.v_struct_version = cpu_to_le16(1);
+	value.v_archive_version = cpu_to_le32(version);
+
+	ret = btrfs_setxattr_trans(inode, XATTR_SYNO_ARCHIVE_VERSION,
+			&value, sizeof(value), 0);
+	if (ret)
+		return ret;
+
+	inode->i_archive_version = version;
+	inode->i_flags |= S_ARCHIVE_VERSION_CACHED;
+
+	return 0;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static int btrfs_syno_init_crtime(struct btrfs_trans_handle *trans,
+				  struct inode *inode)
+{
+	struct btrfs_timespec crtime;
+
+	crtime.sec = cpu_to_le64(inode->i_mtime.tv_sec);
+	crtime.nsec = cpu_to_le32(inode->i_mtime.tv_nsec);
+	return btrfs_xattr_syno_set_crtime(trans, inode, &crtime,
+			XATTR_CREATE);
+}
+
+static int btrfs_syno_get_crtime(struct inode *inode, struct timespec64 *time)
+{
+	if (!test_and_set_bit(BTRFS_INODE_CREATE_TIME,
+			&BTRFS_I(inode)->runtime_flags)) {
+		struct btrfs_timespec crtime;
+		if (btrfs_getxattr(inode, XATTR_SYNO_CREATE_TIME, &crtime,
+		    sizeof(crtime)) == sizeof(crtime)) {
+			spin_lock(&BTRFS_I(inode)->lock);
+			BTRFS_I(inode)->i_otime.tv_sec =
+					btrfs_stack_timespec_sec(&crtime);
+			BTRFS_I(inode)->i_otime.tv_nsec =
+					btrfs_stack_timespec_nsec(&crtime);
+			spin_unlock(&BTRFS_I(inode)->lock);
+		}
+	}
+
+	*time = BTRFS_I(inode)->i_otime;
+
+	return 0;
+}
+
+static int btrfs_syno_set_crtime(struct inode *inode, struct timespec64 *time)
+{
+	struct btrfs_timespec crtime;
+
+	crtime.sec = cpu_to_le64(time->tv_sec);
+	crtime.nsec = cpu_to_le32(time->tv_nsec);
+	return btrfs_xattr_syno_set_crtime(NULL, inode, &crtime, 0);
+}
+#endif /* MY_ABC_HERE */
+
 static int btrfs_init_inode_security(struct btrfs_trans_handle *trans,
 				     struct inode *inode,  struct inode *dir,
 				     const struct qstr *qstr)
@@ -158,7 +294,7 @@ static int btrfs_init_inode_security(struct btrfs_trans_handle *trans,
  * no overlapping inline items exist in the btree
  */
 static int insert_inline_extent(struct btrfs_trans_handle *trans,
-				struct btrfs_path *path, int extent_inserted,
+				struct btrfs_path *path, bool extent_inserted,
 				struct btrfs_root *root, struct inode *inode,
 				u64 start, size_t size, size_t compressed_size,
 				int compress_type,
@@ -178,8 +314,6 @@ static int insert_inline_extent(struct btrfs_trans_handle *trans,
 
 	if (compressed_size && compressed_pages)
 		cur_size = compressed_size;
-
-	inode_add_bytes(inode, size);
 
 	if (!extent_inserted) {
 		struct btrfs_key key;
@@ -203,6 +337,9 @@ static int insert_inline_extent(struct btrfs_trans_handle *trans,
 	btrfs_set_file_extent_type(leaf, ei, BTRFS_FILE_EXTENT_INLINE);
 	btrfs_set_file_extent_encryption(leaf, ei, 0);
 	btrfs_set_file_extent_other_encoding(leaf, ei, 0);
+#ifdef MY_ABC_HERE
+	btrfs_set_file_extent_syno_flag(leaf, ei, 0);
+#endif /* MY_ABC_HERE */
 	btrfs_set_file_extent_ram_bytes(leaf, ei, size);
 	ptr = btrfs_file_extent_inline_start(ei);
 
@@ -256,8 +393,6 @@ static int insert_inline_extent(struct btrfs_trans_handle *trans,
 	 * could end up racing with unlink.
 	 */
 	BTRFS_I(inode)->disk_i_size = inode->i_size;
-	ret = btrfs_update_inode(trans, root, inode);
-
 fail:
 	return ret;
 }
@@ -273,6 +408,7 @@ static noinline int cow_file_range_inline(struct btrfs_inode *inode, u64 start,
 					  int compress_type,
 					  struct page **compressed_pages)
 {
+	struct btrfs_drop_extents_args drop_args = { 0 };
 	struct btrfs_root *root = inode->root;
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct btrfs_trans_handle *trans;
@@ -283,8 +419,6 @@ static noinline int cow_file_range_inline(struct btrfs_inode *inode, u64 start,
 	u64 data_len = inline_len;
 	int ret;
 	struct btrfs_path *path;
-	int extent_inserted = 0;
-	u32 extent_item_size;
 
 	if (compressed_size)
 		data_len = compressed_size;
@@ -310,16 +444,20 @@ static noinline int cow_file_range_inline(struct btrfs_inode *inode, u64 start,
 	}
 	trans->block_rsv = &inode->block_rsv;
 
+	drop_args.path = path;
+	drop_args.start = start;
+	drop_args.end = aligned_end;
+	drop_args.drop_cache = true;
+	drop_args.replace_extent = true;
+
 	if (compressed_size && compressed_pages)
-		extent_item_size = btrfs_file_extent_calc_inline_size(
+		drop_args.extent_item_size = btrfs_file_extent_calc_inline_size(
 		   compressed_size);
 	else
-		extent_item_size = btrfs_file_extent_calc_inline_size(
+		drop_args.extent_item_size = btrfs_file_extent_calc_inline_size(
 		    inline_len);
 
-	ret = __btrfs_drop_extents(trans, root, inode, path, start, aligned_end,
-				   NULL, 1, 1, extent_item_size,
-				   &extent_inserted);
+	ret = btrfs_drop_extents(trans, root, inode, &drop_args);
 	if (ret) {
 		btrfs_abort_transaction(trans, ret);
 		goto out;
@@ -327,10 +465,30 @@ static noinline int cow_file_range_inline(struct btrfs_inode *inode, u64 start,
 
 	if (isize > actual_end)
 		inline_len = min_t(u64, isize, actual_end);
-	ret = insert_inline_extent(trans, path, extent_inserted,
+	ret = insert_inline_extent(trans, path, drop_args.extent_inserted,
 				   root, &inode->vfs_inode, start,
 				   inline_len, compressed_size,
 				   compress_type, compressed_pages);
+	if (ret && ret != -ENOSPC) {
+		btrfs_abort_transaction(trans, ret);
+		goto out;
+	} else if (ret == -ENOSPC) {
+		ret = 1;
+		goto out;
+	}
+
+#ifdef MY_ABC_HERE
+	down_read(&root->rescan_lock);
+	btrfs_update_inode_bytes(inode, inline_len, drop_args.bytes_found);
+	btrfs_qgroup_syno_accounting(inode,
+			inline_len, drop_args.bytes_found, UPDATE_QUOTA);
+	btrfs_usrquota_syno_accounting(inode,
+			inline_len, drop_args.bytes_found, UPDATE_QUOTA);
+	up_read(&root->rescan_lock);
+#else
+	btrfs_update_inode_bytes(inode, inline_len, drop_args.bytes_found);
+#endif /* MY_ABC_HERE */
+	ret = btrfs_update_inode(trans, root, &inode->vfs_inode);
 	if (ret && ret != -ENOSPC) {
 		btrfs_abort_transaction(trans, ret);
 		goto out;
@@ -404,17 +562,6 @@ static noinline int add_async_extent(struct async_chunk *cow,
 }
 
 /*
- * Check if the inode has flags compatible with compression
- */
-static inline bool inode_can_compress(struct btrfs_inode *inode)
-{
-	if (inode->flags & BTRFS_INODE_NODATACOW ||
-	    inode->flags & BTRFS_INODE_NODATASUM)
-		return false;
-	return true;
-}
-
-/*
  * Check if the inode needs to be submitted to compression, based on mount
  * options, defragmentation, properties or heuristics.
  */
@@ -423,7 +570,7 @@ static inline int inode_need_compress(struct btrfs_inode *inode, u64 start,
 {
 	struct btrfs_fs_info *fs_info = inode->root->fs_info;
 
-	if (!inode_can_compress(inode)) {
+	if (!btrfs_inode_can_compress(inode)) {
 		WARN(IS_ENABLED(CONFIG_BTRFS_DEBUG),
 			KERN_ERR "BTRFS: unexpected compression for ino %llu\n",
 			btrfs_ino(inode));
@@ -451,7 +598,11 @@ static inline void inode_should_defrag(struct btrfs_inode *inode,
 	/* If this is a small write inside eof, kick off a defrag */
 	if (num_bytes < small_write &&
 	    (start > 0 || end + 1 < inode->disk_i_size))
-		btrfs_add_inode_defrag(NULL, inode);
+		btrfs_add_inode_defrag(NULL, inode
+#ifdef MY_ABC_HERE
+		          , 0, 0, BTRFS_INODE_DEFRAG_NORMAL
+#endif /* MY_ABC_HERE */
+		          );
 }
 
 /*
@@ -936,6 +1087,11 @@ static u64 get_extent_allocation_hint(struct btrfs_inode *inode, u64 start,
 	struct extent_map *em;
 	u64 alloc_hint = 0;
 
+#ifdef MY_ABC_HERE
+	if (btrfs_test_opt(inode->root->fs_info, SSD))
+		return 0;
+#endif /* MY_ABC_HERE */
+
 	read_lock(&em_tree->lock);
 	em = search_extent_mapping(em_tree, start, num_bytes);
 	if (em) {
@@ -993,7 +1149,21 @@ static noinline int cow_file_range(struct btrfs_inode *inode,
 	unsigned long page_ops;
 	bool extent_reserved = false;
 	int ret = 0;
+#ifdef MY_ABC_HERE
+	bool dedupe = root->inline_dedupe;
+	bool skip_extent = false;
+	struct inode *dedupe_inode = NULL;
+	u64 match_off = 0, match_len = 0;
+	bool already_hit = false;
+	u64 dedupe_disk_offset;
+	u64 dedupe_disk_bytenr, dedupe_disk_num_bytes;
+#endif /* MY_ABC_HERE */
 
+#ifdef MY_ABC_HERE
+	if ((inode->flags & BTRFS_INODE_NODEDUPE) ||
+		test_bit(BTRFS_FS_SYNO_QUOTA_V1_ENABLED, &root->fs_info->flags))
+		dedupe = false;
+#endif /* MY_ABC_HERE */
 	if (btrfs_is_free_space_inode(inode)) {
 		WARN_ON_ONCE(1);
 		ret = -EINVAL;
@@ -1053,31 +1223,74 @@ static noinline int cow_file_range(struct btrfs_inode *inode,
 
 	while (num_bytes > 0) {
 		cur_alloc_size = num_bytes;
-		ret = btrfs_reserve_extent(root, cur_alloc_size, cur_alloc_size,
-					   min_alloc_size, 0, alloc_hint,
-					   &ins, 1, 1);
-		if (ret < 0)
-			goto out_unlock;
-		cur_alloc_size = ins.offset;
-		extent_reserved = true;
+#ifdef MY_ABC_HERE
+		if (dedupe) {
+			skip_extent = false;
+			if (!already_hit) {
+				dedupe_inode = igrab(&inode->vfs_inode);
+				if (!inline_dedupe_search(dedupe_inode, start, cur_alloc_size, &dedupe_disk_bytenr,
+						&dedupe_disk_num_bytes, &dedupe_disk_offset, &match_off, &match_len)) {
+					already_hit = true;
+				}
+				iput(dedupe_inode);
+			}
+			if (already_hit) {
+				if (start == match_off) {
+					already_hit = false;
+					skip_extent = true;
+					cur_alloc_size = match_len;
+				} else { // flush first
+					cur_alloc_size = match_off - start;
+				}
+			}
+		}
 
-		ram_size = ins.offset;
-		em = create_io_em(inode, start, ins.offset, /* len */
-				  start, /* orig_start */
-				  ins.objectid, /* block_start */
-				  ins.offset, /* block_len */
-				  ins.offset, /* orig_block_len */
-				  ram_size, /* ram_bytes */
-				  BTRFS_COMPRESS_NONE, /* compress_type */
-				  BTRFS_ORDERED_REGULAR /* type */);
+		if (!skip_extent) {
+#endif /* MY_ABC_HERE */
+			ret = btrfs_reserve_extent(root, cur_alloc_size, cur_alloc_size,
+						   min_alloc_size, 0, alloc_hint,
+						   &ins, 1, 1);
+			if (ret < 0)
+				goto out_unlock;
+			cur_alloc_size = ins.offset;
+			extent_reserved = true;
+
+			ram_size = ins.offset;
+			em = create_io_em(inode, start, ins.offset, /* len */
+					  start, /* orig_start */
+					  ins.objectid, /* block_start */
+					  ins.offset, /* block_len */
+					  ins.offset, /* orig_block_len */
+					  ram_size, /* ram_bytes */
+					  BTRFS_COMPRESS_NONE, /* compress_type */
+					  BTRFS_ORDERED_REGULAR /* type */);
+#ifdef MY_ABC_HERE
+		} else {
+			memset(&ins, 0, sizeof(ins)); // reset reserved extent
+			ram_size = cur_alloc_size;
+			em = create_io_em(inode, start, cur_alloc_size, /* len */
+					  start - dedupe_disk_offset, /* orig_start */
+					  dedupe_disk_bytenr, /* block_start */
+					  dedupe_disk_num_bytes, /* block_len */
+					  dedupe_disk_num_bytes, /* orig_block_len */
+					  cur_alloc_size, /* ram_bytes */
+					  BTRFS_COMPRESS_NONE, /* compress_type */
+					  BTRFS_ORDERED_DEDUPED /* type */);
+		}
+#endif /* MY_ABC_HERE */
 		if (IS_ERR(em)) {
 			ret = PTR_ERR(em);
 			goto out_reserve;
 		}
 		free_extent_map(em);
 
+#ifdef MY_ABC_HERE
+		ret = btrfs_add_ordered_extent(inode, start, ins.objectid,
+					       ram_size, cur_alloc_size, skip_extent?BTRFS_ORDERED_DEDUPED:0);
+#else
 		ret = btrfs_add_ordered_extent(inode, start, ins.objectid,
 					       ram_size, cur_alloc_size, 0);
+#endif /* MY_ABC_HERE */
 		if (ret)
 			goto out_drop_extent_cache;
 
@@ -1101,6 +1314,9 @@ static noinline int cow_file_range(struct btrfs_inode *inode,
 						start + ram_size - 1, 0);
 		}
 
+#ifdef MY_ABC_HERE
+		if (!skip_extent)
+#endif /* MY_ABC_HERE */
 		btrfs_dec_block_group_reservations(fs_info, ins.objectid);
 
 		/* we're not doing compressed IO, don't unlock the first
@@ -1115,12 +1331,19 @@ static noinline int cow_file_range(struct btrfs_inode *inode,
 
 		extent_clear_unlock_delalloc(inode, start, start + ram_size - 1,
 					     locked_page,
+#ifdef MY_ABC_HERE
+					     EXTENT_LOCKED | EXTENT_DELALLOC | (skip_extent?EXTENT_CLEAR_DATA_RESV:0),
+#else
 					     EXTENT_LOCKED | EXTENT_DELALLOC,
+#endif /* MY_ABC_HERE */
 					     page_ops);
 		if (num_bytes < cur_alloc_size)
 			num_bytes = 0;
 		else
 			num_bytes -= cur_alloc_size;
+#ifdef MY_ABC_HERE
+		if (!skip_extent)
+#endif /* MY_ABC_HERE */
 		alloc_hint = ins.objectid + ins.offset;
 		start += cur_alloc_size;
 		extent_reserved = false;
@@ -1139,8 +1362,14 @@ out:
 out_drop_extent_cache:
 	btrfs_drop_extent_cache(inode, start, start + ram_size - 1, 0);
 out_reserve:
+#ifdef MY_ABC_HERE
+	if (!skip_extent) {
+#endif /* MY_ABC_HERE */
 	btrfs_dec_block_group_reservations(fs_info, ins.objectid);
 	btrfs_free_reserved_extent(fs_info, ins.objectid, ins.offset, 1);
+#ifdef MY_ABC_HERE
+	}
+#endif /* MY_ABC_HERE */
 out_unlock:
 	clear_bits = EXTENT_LOCKED | EXTENT_DELALLOC | EXTENT_DELALLOC_NEW |
 		EXTENT_DEFRAG | EXTENT_CLEAR_META_RESV;
@@ -1598,9 +1827,15 @@ next_slot:
 				goto out_check;
 			if (extent_type == BTRFS_FILE_EXTENT_REG && !force)
 				goto out_check;
-			/* If extent is RO, we must COW it */
-			if (btrfs_extent_readonly(fs_info, disk_bytenr))
-				goto out_check;
+
+			/*
+			 * The following checks can be expensive, as they need to
+			 * take other locks and do btree or rbtree searches, so
+			 * release the path to avoid blocking other tasks for too
+			 * long.
+			 */
+			btrfs_release_path(path);
+
 			ret = btrfs_cross_ref_exist(root, ino,
 						    found_key.offset -
 						    extent_offset, disk_bytenr, false);
@@ -1647,6 +1882,7 @@ next_slot:
 				WARN_ON_ONCE(freespace_inode);
 				goto out_check;
 			}
+			/* If the extent's block group is RO, we must COW */
 			if (!btrfs_inc_nocow_writers(fs_info, disk_bytenr))
 				goto out_check;
 			nocow = true;
@@ -1673,11 +1909,11 @@ out_check:
 			cur_offset = extent_end;
 			if (cur_offset > end)
 				break;
+			if (!path->nodes[0])
+				continue;
 			path->slots[0]++;
 			goto next_slot;
 		}
-
-		btrfs_release_path(path);
 
 		/*
 		 * COW range from cow_start to found_key.offset - 1. As the key
@@ -1826,7 +2062,7 @@ int btrfs_run_delalloc_range(struct btrfs_inode *inode, struct page *locked_page
 	} else if (inode->flags & BTRFS_INODE_PREALLOC && !force_cow) {
 		ret = run_delalloc_nocow(inode, locked_page, start, end,
 					 page_started, 0, nr_written);
-	} else if (!inode_can_compress(inode) ||
+	} else if (!btrfs_inode_can_compress(inode) ||
 		   !inode_need_compress(inode, start, end)) {
 		ret = cow_file_range(inode, locked_page, start, end,
 				     page_started, nr_written, 1);
@@ -1982,6 +2218,33 @@ static void btrfs_del_delalloc_inode(struct btrfs_root *root,
 	spin_unlock(&root->delalloc_lock);
 }
 
+#ifdef MY_ABC_HERE
+static void btrfs_syno_add_dirty_lru_inode(struct btrfs_fs_info *fs_info,
+				      struct inode *inode)
+{
+	spin_lock(&fs_info->syno_multiple_writeback_lock);
+	if (list_empty(&BTRFS_I(inode)->syno_dirty_lru_inode)) {
+		list_add_tail(&BTRFS_I(inode)->syno_dirty_lru_inode,
+			      &fs_info->syno_dirty_lru_inodes);
+		set_bit(BTRFS_INODE_SYNO_WRITEBACK_LRU_LIST,
+			&BTRFS_I(inode)->runtime_flags);
+	}
+	spin_unlock(&fs_info->syno_multiple_writeback_lock);
+}
+
+static void btrfs_syno_del_dirty_lru_inode(struct btrfs_fs_info *fs_info,
+				     struct inode *inode)
+{
+	spin_lock(&fs_info->syno_multiple_writeback_lock);
+	if (!list_empty(&BTRFS_I(inode)->syno_dirty_lru_inode)) {
+		list_del_init(&BTRFS_I(inode)->syno_dirty_lru_inode);
+		clear_bit(BTRFS_INODE_SYNO_WRITEBACK_LRU_LIST,
+			  &BTRFS_I(inode)->runtime_flags);
+	}
+	spin_unlock(&fs_info->syno_multiple_writeback_lock);
+}
+#endif /* MY_ABC_HERE */
+
 /*
  * Properly track delayed allocation bytes in the inode and to maintain the
  * list of inodes that have pending delalloc work to be done.
@@ -2014,6 +2277,10 @@ void btrfs_set_delalloc_extent(struct inode *inode, struct extent_state *state,
 
 		percpu_counter_add_batch(&fs_info->delalloc_bytes, len,
 					 fs_info->delalloc_batch);
+#ifdef MY_ABC_HERE
+		if (root->syno_delalloc_bytes)
+			percpu_counter_add_batch(root->syno_delalloc_bytes, len, fs_info->delalloc_batch);
+#endif /* MY_ABC_HERE */
 		spin_lock(&BTRFS_I(inode)->lock);
 		BTRFS_I(inode)->delalloc_bytes += len;
 		if (*bits & EXTENT_DEFRAG)
@@ -2021,6 +2288,10 @@ void btrfs_set_delalloc_extent(struct inode *inode, struct extent_state *state,
 		if (do_list && !test_bit(BTRFS_INODE_IN_DELALLOC_LIST,
 					 &BTRFS_I(inode)->runtime_flags))
 			btrfs_add_delalloc_inodes(root, inode);
+#ifdef MY_ABC_HERE
+		if (do_list && !test_bit(BTRFS_INODE_SYNO_WRITEBACK_LRU_LIST, &BTRFS_I(inode)->runtime_flags))
+			btrfs_syno_add_dirty_lru_inode(root->fs_info, inode);
+#endif /* MY_ABC_HERE */
 		spin_unlock(&BTRFS_I(inode)->lock);
 	}
 
@@ -2038,7 +2309,11 @@ void btrfs_set_delalloc_extent(struct inode *inode, struct extent_state *state,
  * accounting happens.
  */
 void btrfs_clear_delalloc_extent(struct inode *vfs_inode,
-				 struct extent_state *state, unsigned *bits)
+				 struct extent_state *state, unsigned *bits
+#ifdef MY_ABC_HERE
+				 , u64 *add_bytes
+#endif /* MY_ABC_HERE */
+				)
 {
 	struct btrfs_inode *inode = BTRFS_I(vfs_inode);
 	struct btrfs_fs_info *fs_info = btrfs_sb(vfs_inode->i_sb);
@@ -2084,21 +2359,45 @@ void btrfs_clear_delalloc_extent(struct inode *vfs_inode,
 
 		percpu_counter_add_batch(&fs_info->delalloc_bytes, -len,
 					 fs_info->delalloc_batch);
+#ifdef MY_ABC_HERE
+		if (root->syno_delalloc_bytes)
+			percpu_counter_add_batch(root->syno_delalloc_bytes, -len, fs_info->delalloc_batch);
+#endif /* MY_ABC_HERE */
 		spin_lock(&inode->lock);
 		inode->delalloc_bytes -= len;
 		if (do_list && inode->delalloc_bytes == 0 &&
 		    test_bit(BTRFS_INODE_IN_DELALLOC_LIST,
 					&inode->runtime_flags))
 			btrfs_del_delalloc_inode(root, inode);
+#ifdef MY_ABC_HERE
+		if (do_list && inode->delalloc_bytes == 0 &&
+			test_bit(BTRFS_INODE_SYNO_WRITEBACK_LRU_LIST, &inode->runtime_flags))
+			btrfs_syno_del_dirty_lru_inode(fs_info, vfs_inode);
+#endif /* MY_ABC_HERE */
 		spin_unlock(&inode->lock);
 	}
 
 	if ((state->state & EXTENT_DELALLOC_NEW) &&
 	    (*bits & EXTENT_DELALLOC_NEW)) {
+#ifdef MY_ABC_HERE
+		if (add_bytes) {
+			*add_bytes += len;
+		} else {
+			spin_lock(&inode->lock);
+			ASSERT(inode->new_delalloc_bytes >= len);
+			inode->new_delalloc_bytes -= len;
+			if (*bits & EXTENT_ADD_INODE_BYTES)
+				inode_add_bytes(&inode->vfs_inode, len);
+			spin_unlock(&inode->lock);
+		}
+#else
 		spin_lock(&inode->lock);
 		ASSERT(inode->new_delalloc_bytes >= len);
 		inode->new_delalloc_bytes -= len;
+		if (*bits & EXTENT_ADD_INODE_BYTES)
+			inode_add_bytes(&inode->vfs_inode, len);
 		spin_unlock(&inode->lock);
+#endif /*MY_ABC_HERE */
 	}
 }
 
@@ -2122,9 +2421,10 @@ int btrfs_bio_fits_in_stripe(struct page *page, size_t size, struct bio *bio,
 	struct inode *inode = page->mapping->host;
 	struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
 	u64 logical = (u64)bio->bi_iter.bi_sector << 9;
+	struct extent_map *em;
 	u64 length = 0;
 	u64 map_length;
-	int ret;
+	int ret = 0;
 	struct btrfs_io_geometry geom;
 
 	if (bio_flags & EXTENT_BIO_COMPRESSED)
@@ -2132,14 +2432,19 @@ int btrfs_bio_fits_in_stripe(struct page *page, size_t size, struct bio *bio,
 
 	length = bio->bi_iter.bi_size;
 	map_length = length;
-	ret = btrfs_get_io_geometry(fs_info, btrfs_op(bio), logical, map_length,
-				    &geom);
+	em = btrfs_get_chunk_map(fs_info, logical, map_length);
+	if (IS_ERR(em))
+		return PTR_ERR(em);
+	ret = btrfs_get_io_geometry(fs_info, em, btrfs_op(bio), logical,
+				    map_length, &geom);
 	if (ret < 0)
-		return ret;
+		goto out;
 
 	if (geom.len < length + size)
-		return 1;
-	return 0;
+		ret = 1;
+out:
+	free_extent_map(em);
+	return ret;
 }
 
 /*
@@ -2213,6 +2518,15 @@ blk_status_t btrfs_submit_data_bio(struct inode *inode, struct bio *bio,
 		if (root->root_key.objectid == BTRFS_DATA_RELOC_TREE_OBJECTID)
 			goto mapit;
 		/* we're doing a write, do the async checksumming */
+
+#ifdef MY_ABC_HERE
+		if (is_fstree(root->root_key.objectid)) {
+			ret = btrfs_wq_submit_bio_throttle(fs_info, bio, mirror_num, bio_flags,
+					  0, inode, btrfs_submit_bio_start);
+			goto out;
+		}
+#endif /* MY_ABC_HERE */
+
 		ret = btrfs_wq_submit_bio(fs_info, bio, mirror_num, bio_flags,
 					  0, inode, btrfs_submit_bio_start);
 		goto out;
@@ -2511,9 +2825,11 @@ int btrfs_writepage_cow_fixup(struct page *page, u64 start, u64 end)
 static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 				       struct btrfs_inode *inode, u64 file_pos,
 				       struct btrfs_file_extent_item *stack_fi,
+				       const bool update_inode_bytes,
 				       u64 qgroup_reserved)
 {
 	struct btrfs_root *root = inode->root;
+	const u64 sectorsize = root->fs_info->sectorsize;
 	struct btrfs_path *path;
 	struct extent_buffer *leaf;
 	struct btrfs_key ins;
@@ -2521,8 +2837,11 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	u64 disk_bytenr = btrfs_stack_file_extent_disk_bytenr(stack_fi);
 	u64 num_bytes = btrfs_stack_file_extent_num_bytes(stack_fi);
 	u64 ram_bytes = btrfs_stack_file_extent_ram_bytes(stack_fi);
-	int extent_inserted = 0;
+	struct btrfs_drop_extents_args drop_args = { 0 };
 	int ret;
+#ifdef MY_ABC_HERE
+	int syno_usage;
+#endif /* MY_ABC_HERE */
 
 	path = btrfs_alloc_path();
 	if (!path)
@@ -2537,13 +2856,16 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	 * the caller is expected to unpin it and allow it to be merged
 	 * with the others.
 	 */
-	ret = __btrfs_drop_extents(trans, root, inode, path, file_pos,
-				   file_pos + num_bytes, NULL, 0,
-				   1, sizeof(*stack_fi), &extent_inserted);
+	drop_args.path = path;
+	drop_args.start = file_pos;
+	drop_args.end = file_pos + num_bytes;
+	drop_args.replace_extent = true;
+	drop_args.extent_item_size = sizeof(*stack_fi);
+	ret = btrfs_drop_extents(trans, root, inode, &drop_args);
 	if (ret)
 		goto out;
 
-	if (!extent_inserted) {
+	if (!drop_args.extent_inserted) {
 		ins.objectid = btrfs_ino(inode);
 		ins.offset = file_pos;
 		ins.type = BTRFS_EXTENT_DATA_KEY;
@@ -2561,9 +2883,64 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 			sizeof(struct btrfs_file_extent_item));
 
 	btrfs_mark_buffer_dirty(leaf);
+
+#ifdef MY_ABC_HERE
+	/*
+	 * Check usage ref before releasing path, so we won't race with rescan
+	 * process because rescan would be blocked when it try to access the
+	 * same item.
+	 */
+	syno_usage = btrfs_syno_usage_ref_check(root, btrfs_ino(inode), file_pos);
+#endif /* MY_ABC_HERE */
+
 	btrfs_release_path(path);
 
-	inode_add_bytes(&inode->vfs_inode, num_bytes);
+	/*
+	 * If we dropped an inline extent here, we know the range where it is
+	 * was not marked with the EXTENT_DELALLOC_NEW bit, so we update the
+	 * number of bytes only for that range contaning the inline extent.
+	 * The remaining of the range will be processed when clearning the
+	 * EXTENT_DELALLOC_BIT bit through the ordered extent completion.
+	 */
+	if (file_pos == 0 && !IS_ALIGNED(drop_args.bytes_found, sectorsize)) {
+		u64 inline_size = round_down(drop_args.bytes_found, sectorsize);
+
+		inline_size = drop_args.bytes_found - inline_size;
+#ifdef MY_ABC_HERE
+		down_read(&root->rescan_lock);
+		btrfs_update_inode_bytes(inode, sectorsize, inline_size);
+		btrfs_qgroup_syno_accounting(inode,
+			sectorsize, inline_size, UPDATE_QUOTA);
+		btrfs_usrquota_syno_accounting(inode,
+			sectorsize, inline_size, UPDATE_QUOTA);
+		up_read(&root->rescan_lock);
+#else
+		btrfs_update_inode_bytes(inode, sectorsize, inline_size);
+#endif /* MY_ABC_HERE */
+		drop_args.bytes_found -= inline_size;
+		num_bytes -= sectorsize;
+	}
+
+#ifdef MY_ABC_HERE
+	if (update_inode_bytes) {
+		down_read(&root->rescan_lock);
+		btrfs_update_inode_bytes(inode, num_bytes, drop_args.bytes_found);
+		btrfs_qgroup_syno_accounting(inode,
+			num_bytes, drop_args.bytes_found, UPDATE_QUOTA);
+		btrfs_usrquota_syno_accounting(inode,
+			num_bytes, drop_args.bytes_found, UPDATE_QUOTA);
+		up_read(&root->rescan_lock);
+	}
+
+	if (qgroup_reserved &&
+			test_bit(BTRFS_FS_SYNO_QUOTA_V2_ENABLED, &root->fs_info->flags)) {
+		btrfs_qgroup_syno_free(root, qgroup_reserved);
+		btrfs_usrquota_syno_free(inode, qgroup_reserved);
+	}
+#else
+	if (update_inode_bytes)
+		btrfs_update_inode_bytes(inode, num_bytes, drop_args.bytes_found);
+#endif /* MY_ABC_HERE */
 
 	ins.objectid = disk_bytenr;
 	ins.offset = disk_num_bytes;
@@ -2574,7 +2951,14 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 		goto out;
 
 	ret = btrfs_alloc_reserved_file_extent(trans, root, btrfs_ino(inode),
-					       file_pos, qgroup_reserved, &ins);
+					       file_pos, qgroup_reserved, &ins
+#ifdef MY_ABC_HERE
+					       , syno_usage
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+					       , &(inode->vfs_inode)
+#endif /* MY_ABC_HERE */
+					       );
 out:
 	btrfs_free_path(path);
 
@@ -2601,6 +2985,7 @@ static int insert_ordered_extent_file_extent(struct btrfs_trans_handle *trans,
 {
 	struct btrfs_file_extent_item stack_fi;
 	u64 logical_len;
+	bool update_inode_bytes;
 
 	memset(&stack_fi, 0, sizeof(stack_fi));
 	btrfs_set_stack_file_extent_type(&stack_fi, BTRFS_FILE_EXTENT_REG);
@@ -2615,10 +3000,22 @@ static int insert_ordered_extent_file_extent(struct btrfs_trans_handle *trans,
 	btrfs_set_stack_file_extent_ram_bytes(&stack_fi, logical_len);
 	btrfs_set_stack_file_extent_compression(&stack_fi, oe->compress_type);
 	/* Encryption and other encoding is reserved and all 0 */
+#ifdef MY_ABC_HERE
+	/* syno flag is 0 */
+#endif /* MY_ABC_HERE */
+
+	/*
+	 * For delalloc, when completing an ordered extent we update the inode's
+	 * bytes when clearing the range in the inode's io tree, so pass false
+	 * as the argument 'update_inode_bytes' to insert_reserved_file_extent(),
+	 * except if the ordered extent was truncated.
+	 */
+	update_inode_bytes = test_bit(BTRFS_ORDERED_DIRECT, &oe->flags) ||
+			     test_bit(BTRFS_ORDERED_TRUNCATED, &oe->flags);
 
 	return insert_reserved_file_extent(trans, BTRFS_I(oe->inode),
 					   oe->file_offset, &stack_fi,
-					   oe->qgroup_rsv);
+					   update_inode_bytes, oe->qgroup_rsv);
 }
 
 /*
@@ -2640,10 +3037,18 @@ static int btrfs_finish_ordered_io(struct btrfs_ordered_extent *ordered_extent)
 	u64 logical_len = ordered_extent->num_bytes;
 	bool freespace_inode;
 	bool truncated = false;
-	bool range_locked = false;
-	bool clear_new_delalloc_bytes = false;
 	bool clear_reserved_extent = true;
-	unsigned int clear_bits;
+#ifdef MY_ABC_HERE
+	unsigned int clear_bits = 0;
+#else /* MY_ABC_HERE */
+	unsigned int clear_bits = EXTENT_DEFRAG;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	bool throttle = true;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	bool inline_dedupe = false;
+#endif /* MY_ABC_HERE */
 
 	start = ordered_extent->file_offset;
 	end = start + ordered_extent->num_bytes - 1;
@@ -2651,23 +3056,58 @@ static int btrfs_finish_ordered_io(struct btrfs_ordered_extent *ordered_extent)
 	if (!test_bit(BTRFS_ORDERED_NOCOW, &ordered_extent->flags) &&
 	    !test_bit(BTRFS_ORDERED_PREALLOC, &ordered_extent->flags) &&
 	    !test_bit(BTRFS_ORDERED_DIRECT, &ordered_extent->flags))
-		clear_new_delalloc_bytes = true;
+		clear_bits |= EXTENT_DELALLOC_NEW;
+
+#ifdef MY_ABC_HERE
+	if (!test_bit(BTRFS_ORDERED_NOCOW, &ordered_extent->flags))
+		clear_bits |= EXTENT_DEFRAG;
+#endif /* MY_ABC_HERE */
 
 	freespace_inode = btrfs_is_free_space_inode(BTRFS_I(inode));
+
+#ifdef MY_ABC_HERE
+	if (freespace_inode)
+		throttle = false;
+	if (test_bit(BTRFS_ORDERED_IOERR, &ordered_extent->flags) ||
+		test_bit(BTRFS_ORDERED_NOCOW, &ordered_extent->flags))
+		throttle = false;
+#ifdef MY_ABC_HERE
+	if (ordered_extent->high_priority)
+		throttle = false;
+#endif /* MY_ABC_HERE */
+#endif /* MY_ABC_HERE */
 
 	if (test_bit(BTRFS_ORDERED_IOERR, &ordered_extent->flags)) {
 		ret = -EIO;
 		goto out;
 	}
 
+#ifdef MY_ABC_HERE
+	inline_dedupe = test_bit(BTRFS_ORDERED_DEDUPED, &ordered_extent->flags)?true:false;
+	if (inline_dedupe && ordered_extent->qgroup_rsv &&
+			test_bit(BTRFS_FS_SYNO_QUOTA_V2_ENABLED, &fs_info->flags)) {
+		btrfs_qgroup_syno_free(root, ordered_extent->qgroup_rsv);
+		btrfs_usrquota_syno_free(BTRFS_I(inode), ordered_extent->qgroup_rsv);
+	}
+#endif /* MY_ABC_HERE */
 	btrfs_free_io_failure_record(BTRFS_I(inode), start, end);
 
 	if (test_bit(BTRFS_ORDERED_TRUNCATED, &ordered_extent->flags)) {
 		truncated = true;
 		logical_len = ordered_extent->truncated_len;
 		/* Truncated the entire extent, don't bother adding */
+#ifdef MY_ABC_HERE
+		if (!logical_len) {
+			if (ordered_extent->qgroup_rsv) {
+				btrfs_qgroup_syno_free(root, ordered_extent->qgroup_rsv);
+				btrfs_usrquota_syno_free(BTRFS_I(inode), ordered_extent->qgroup_rsv);
+			}
+			goto out;
+		}
+#else
 		if (!logical_len)
 			goto out;
+#endif /* MY_ABC_HERE */
 	}
 
 	if (test_bit(BTRFS_ORDERED_NOCOW, &ordered_extent->flags)) {
@@ -2684,13 +3124,16 @@ static int btrfs_finish_ordered_io(struct btrfs_ordered_extent *ordered_extent)
 			goto out;
 		}
 		trans->block_rsv = &BTRFS_I(inode)->block_rsv;
+#ifdef MY_ABC_HERE
+		btrfs_file_extent_deduped_clear(trans, BTRFS_I(inode), ordered_extent->file_offset);
+#endif /* MY_ABC_HERE */
 		ret = btrfs_update_inode_fallback(trans, root, inode);
 		if (ret) /* -ENOMEM or corruption */
 			btrfs_abort_transaction(trans, ret);
 		goto out;
 	}
 
-	range_locked = true;
+	clear_bits |= EXTENT_LOCKED;
 	lock_extent_bits(io_tree, start, end, &cached_state);
 
 	if (freespace_inode)
@@ -2715,6 +3158,9 @@ static int btrfs_finish_ordered_io(struct btrfs_ordered_extent *ordered_extent)
 						logical_len);
 	} else {
 		BUG_ON(root == fs_info->tree_root);
+#ifdef MY_ABC_HERE
+		if (!inline_dedupe) {
+#endif /* MY_ABC_HERE */
 		ret = insert_ordered_extent_file_extent(trans, ordered_extent);
 		if (!ret) {
 			clear_reserved_extent = false;
@@ -2722,6 +3168,9 @@ static int btrfs_finish_ordered_io(struct btrfs_ordered_extent *ordered_extent)
 						ordered_extent->disk_bytenr,
 						ordered_extent->disk_num_bytes);
 		}
+#ifdef MY_ABC_HERE
+		}
+#endif /* MY_ABC_HERE */
 	}
 	unpin_extent_cache(&BTRFS_I(inode)->extent_tree,
 			   ordered_extent->file_offset,
@@ -2731,11 +3180,47 @@ static int btrfs_finish_ordered_io(struct btrfs_ordered_extent *ordered_extent)
 		goto out;
 	}
 
+#ifdef MY_ABC_HERE
+	if (!inline_dedupe) {
+#endif /* MY_ABC_HERE */
 	ret = add_pending_csums(trans, &ordered_extent->list);
 	if (ret) {
 		btrfs_abort_transaction(trans, ret);
 		goto out;
 	}
+#ifdef MY_ABC_HERE
+	}
+#endif /* MY_ABC_HERE */
+
+	/*
+	 * If this is a new delalloc range, clear its new delalloc flag to
+	 * update the inode's number of bytes. This needs to be done first
+	 * before updating the inode item.
+	 */
+	if ((clear_bits & EXTENT_DELALLOC_NEW) &&
+	    !test_bit(BTRFS_ORDERED_TRUNCATED, &ordered_extent->flags))
+#ifdef MY_ABC_HERE
+	{
+		// To protect btrfs_clear_delalloc_extent()->inode_add_bytes().
+		down_read(&root->rescan_lock);
+		clear_extent_bit(&BTRFS_I(inode)->io_tree, start, end,
+#ifdef MY_ABC_HERE
+				 EXTENT_DELALLOC_NEW | ((inline_dedupe && !ordered_extent->disk_bytenr)?0:EXTENT_ADD_INODE_BYTES),
+#else
+				 EXTENT_DELALLOC_NEW | EXTENT_ADD_INODE_BYTES,
+#endif /* MY_ABC_HERE */
+				 0, 0, &cached_state);
+		up_read(&root->rescan_lock);
+	}
+#else
+		clear_extent_bit(&BTRFS_I(inode)->io_tree, start, end,
+#ifdef MY_ABC_HERE
+				 EXTENT_DELALLOC_NEW | ((inline_dedupe && !ordered_extent->disk_bytenr)?0:EXTENT_ADD_INODE_BYTES),
+#else
+				 EXTENT_DELALLOC_NEW | EXTENT_ADD_INODE_BYTES,
+#endif /* MY_ABC_HERE */
+				 0, 0, &cached_state);
+#endif /* MY_ABC_HERE */
 
 	btrfs_inode_safe_disk_i_size_write(inode, 0);
 	ret = btrfs_update_inode_fallback(trans, root, inode);
@@ -2745,14 +3230,16 @@ static int btrfs_finish_ordered_io(struct btrfs_ordered_extent *ordered_extent)
 	}
 	ret = 0;
 out:
-	clear_bits = EXTENT_DEFRAG;
-	if (range_locked)
-		clear_bits |= EXTENT_LOCKED;
-	if (clear_new_delalloc_bytes)
-		clear_bits |= EXTENT_DELALLOC_NEW;
+#ifdef MY_ABC_HERE
+	if (clear_bits)
+		clear_extent_bit(&BTRFS_I(inode)->io_tree, start, end, clear_bits,
+				 (clear_bits & EXTENT_LOCKED) ? 1 : 0, 0,
+				 &cached_state);
+#else
 	clear_extent_bit(&BTRFS_I(inode)->io_tree, start, end, clear_bits,
 			 (clear_bits & EXTENT_LOCKED) ? 1 : 0, 0,
 			 &cached_state);
+#endif /* MY_ABC_HERE */
 
 	if (trans)
 		btrfs_end_transaction(trans);
@@ -2790,6 +3277,9 @@ out:
 		 * has already been done.
 		 */
 		if ((ret || !logical_len) &&
+#ifdef MY_ABC_HERE
+			!inline_dedupe &&
+#endif /* MY_ABC_HERE */
 		    clear_reserved_extent &&
 		    !test_bit(BTRFS_ORDERED_NOCOW, &ordered_extent->flags) &&
 		    !test_bit(BTRFS_ORDERED_PREALLOC, &ordered_extent->flags)) {
@@ -2801,7 +3291,11 @@ out:
 				btrfs_discard_extent(fs_info,
 						ordered_extent->disk_bytenr,
 						ordered_extent->disk_num_bytes,
-						NULL);
+						NULL
+#ifdef MY_ABC_HERE
+						, TRIM_SEND_TRIM
+#endif /* MY_ABC_HERE */
+						);
 			btrfs_free_reserved_extent(fs_info,
 					ordered_extent->disk_bytenr,
 					ordered_extent->disk_num_bytes, 1);
@@ -2818,6 +3312,11 @@ out:
 	btrfs_put_ordered_extent(ordered_extent);
 	/* once for the tree */
 	btrfs_put_ordered_extent(ordered_extent);
+
+#ifdef MY_ABC_HERE
+	if (!ret && throttle)
+		btrfs_syno_btree_balance_dirty(fs_info, false);
+#endif /* MY_ABC_HERE */
 
 	return ret;
 }
@@ -2844,12 +3343,31 @@ void btrfs_writepage_endio_finish_ordered(struct page *page, u64 start,
 					    end - start + 1, uptodate))
 		return;
 
-	if (btrfs_is_free_space_inode(inode))
+	if (btrfs_is_free_space_inode(inode)) {
 		wq = fs_info->endio_freespace_worker;
-	else
+#ifdef MY_ABC_HERE
+	} else if (ordered_extent->high_priority) {
+		wq = fs_info->syno_high_priority_endio_workers;
+		set_bit(BTRFS_ORDERED_HIGH_PRIORITY, &ordered_extent->flags);
+	} else if (test_bit(BTRFS_ORDERED_NOCOW, &ordered_extent->flags)) {
+		wq = fs_info->syno_nocow_endio_workers;
+#endif /* MY_ABC_HERE */
+	} else {
+#ifdef MY_ABC_HERE
+		wq = fs_info->syno_cow_endio_workers;
+#else /* MY_ABC_HERE */
 		wq = fs_info->endio_write_workers;
+#endif /* MY_ABC_HERE */
+	}
 
 	btrfs_init_work(&ordered_extent->work, finish_ordered_fn, NULL, NULL);
+#ifdef MY_ABC_HERE
+	if (!btrfs_is_free_space_inode(inode)) {
+		set_bit(BTRFS_ORDERED_WORK_INITIALIZED, &ordered_extent->flags);
+		if (ordered_extent->high_priority)
+			btrfs_set_work_high_priority(&ordered_extent->work);
+	}
+#endif /* MY_ABC_HERE */
 	btrfs_queue_work(wq, &ordered_extent->work);
 }
 
@@ -2878,12 +3396,32 @@ static int check_data_csum(struct inode *inode, struct btrfs_io_bio *io_bio,
 	return 0;
 zeroit:
 	btrfs_print_data_csum_error(BTRFS_I(inode), start, csum, csum_expected,
-				    io_bio->mirror_num);
+				    io_bio->mirror_num
+#ifdef MY_ABC_HERE
+				    , fs_info->correction_suppress_log
+#endif /* MY_ABC_HERE */
+				    );
 	if (io_bio->device)
 		btrfs_dev_stat_inc_and_print(io_bio->device,
 					     BTRFS_DEV_STAT_CORRUPTION_ERRS);
+#ifdef MY_ABC_HERE
+	if (io_bio->nr_retry) {
+		if (io_bio->nr_retry != 1 &&
+		    !memcmp(io_bio->retry.prev_bad_csum, csum, csum_size))
+			io_bio->nr_retry = BTRFS_BIO_SHOULD_ABORT_RETRY;
+		else {
+			memset(io_bio->retry.prev_bad_csum, 0,
+			       sizeof(io_bio->retry.prev_bad_csum));
+			memcpy(io_bio->retry.prev_bad_csum, csum, csum_size);
+		}
+	} else if (fs_info->correction_disable) {
+		kunmap_atomic(kaddr);
+		return 0;
+	}
+#else /* MY_ABC_HERE */
 	memset(kaddr + pgoff, 1, len);
 	flush_dcache_page(page);
+#endif /* MY_ABC_HERE */
 	kunmap_atomic(kaddr);
 	return -EIO;
 }
@@ -2914,6 +3452,11 @@ int btrfs_verify_data_csum(struct btrfs_io_bio *io_bio, u64 phy_offset,
 		clear_extent_bits(io_tree, start, end, EXTENT_NODATASUM);
 		return 0;
 	}
+
+#ifdef MY_ABC_HERE
+	if (unlikely(bio_flagged(&io_bio->bio, BIO_CORRECTION_ERR)))
+		return -EIO;
+#endif /* MY_ABC_HERE */
 
 	phy_offset >>= inode->i_sb->s_blocksize_bits;
 	return check_data_csum(inode, io_bio, phy_offset, page, offset, start,
@@ -3045,6 +3588,10 @@ int btrfs_orphan_cleanup(struct btrfs_root *root)
 	struct inode *inode;
 	u64 last_objectid = 0;
 	int ret = 0, nr_unlink = 0;
+#ifdef MY_ABC_HERE
+	bool early_exit = false;
+	bool in_progress = false;
+#endif /* MY_ABC_HERE */
 
 	if (cmpxchg(&root->orphan_cleanup_state, 0, ORPHAN_CLEANUP_STARTED))
 		return 0;
@@ -3055,6 +3602,38 @@ int btrfs_orphan_cleanup(struct btrfs_root *root)
 		goto out;
 	}
 	path->reada = READA_BACK;
+
+#ifdef MY_ABC_HERE
+	if (btrfs_root_dead(root)) {
+		root->orphan_cleanup_state = ORPHAN_CLEANUP_DONE;
+		if (!list_empty(&root->syno_orphan_cleanup.root)) {
+			spin_lock(&fs_info->syno_orphan_cleanup.lock);
+			list_del_init(&root->syno_orphan_cleanup.root);
+			spin_unlock(&fs_info->syno_orphan_cleanup.lock);
+		}
+		goto out;
+	}
+	if (btrfs_need_cleaner_sleep(fs_info) ||
+		fs_info->syno_orphan_cleanup.orphan_inode_delayed) {
+		root->orphan_cleanup_state = 0;
+		goto out;
+	}
+
+	spin_lock(&root->root_item_lock);
+	if (root->send_in_progress) {
+		spin_unlock(&root->root_item_lock);
+		if (!list_empty(&root->syno_orphan_cleanup.root)) {
+			spin_lock(&fs_info->syno_orphan_cleanup.lock);
+			list_del_init(&root->syno_orphan_cleanup.root);
+			spin_unlock(&fs_info->syno_orphan_cleanup.lock);
+		}
+		root->orphan_cleanup_state = 0;
+		goto out;
+	}
+	root->syno_orphan_cleanup.cleanup_in_progress++;
+	in_progress = true;
+	spin_unlock(&root->root_item_lock);
+#endif /* MY_ABC_HERE */
 
 	key.objectid = BTRFS_ORPHAN_OBJECTID;
 	key.type = BTRFS_ORPHAN_ITEM_KEY;
@@ -3090,6 +3669,17 @@ int btrfs_orphan_cleanup(struct btrfs_root *root)
 		/* release the path since we're done with it */
 		btrfs_release_path(path);
 
+#ifdef MY_ABC_HERE
+		/*
+		 * we skip processed orphan item,
+		 * maybe others get inode refs,
+		 * so we can't immediately remove inode with iput.
+		 */
+		if (found_key.offset == last_objectid) {
+			key.offset = last_objectid - 1;
+			continue;
+		}
+#else /* MY_ABC_HERE */
 		/*
 		 * this is where we are basically btrfs_lookup, without the
 		 * crossing root thing.  we store the inode number in the
@@ -3102,6 +3692,7 @@ int btrfs_orphan_cleanup(struct btrfs_root *root)
 			ret = -EINVAL;
 			goto out;
 		}
+#endif /* MY_ABC_HERE */
 
 		last_objectid = found_key.offset;
 
@@ -3176,6 +3767,10 @@ int btrfs_orphan_cleanup(struct btrfs_root *root)
 			ret = btrfs_del_orphan_item(trans, root,
 						    found_key.objectid);
 			btrfs_end_transaction(trans);
+#ifdef MY_ABC_HERE
+			if (ret == -ENOENT)
+				ret = 0;
+#endif /* MY_ABC_HERE */
 			if (ret)
 				goto out;
 			continue;
@@ -3185,11 +3780,32 @@ int btrfs_orphan_cleanup(struct btrfs_root *root)
 
 		/* this will do delete_inode and everything for us */
 		iput(inode);
+
+#ifdef MY_ABC_HERE
+		if (btrfs_need_cleaner_sleep(fs_info) ||
+			fs_info->syno_orphan_cleanup.orphan_inode_delayed) {
+			early_exit = true;
+			break;
+		}
+		if (btrfs_root_dead(root))
+			break;
+#endif /* MY_ABC_HERE */
 	}
 	/* release the path since we're done with it */
 	btrfs_release_path(path);
 
 	root->orphan_cleanup_state = ORPHAN_CLEANUP_DONE;
+#ifdef MY_ABC_HERE
+	if (early_exit) {
+		root->orphan_cleanup_state = 0;
+	} else {
+		if (!list_empty(&root->syno_orphan_cleanup.root)) {
+			spin_lock(&fs_info->syno_orphan_cleanup.lock);
+			list_del_init(&root->syno_orphan_cleanup.root);
+			spin_unlock(&fs_info->syno_orphan_cleanup.lock);
+		}
+	}
+#endif /* MY_ABC_HERE */
 
 	if (test_bit(BTRFS_ROOT_ORPHAN_ITEM_INSERTED, &root->state)) {
 		trans = btrfs_join_transaction(root);
@@ -3204,6 +3820,21 @@ out:
 	if (ret)
 		btrfs_err(fs_info, "could not do orphan cleanup %d", ret);
 	btrfs_free_path(path);
+#ifdef MY_ABC_HERE
+	if (in_progress) {
+		spin_lock(&root->root_item_lock);
+		root->syno_orphan_cleanup.cleanup_in_progress--;
+		/*
+		 * Not much left to do, we don't know why it's unbalanced and
+		 * can't blindly reset it to 0.
+		 */
+		if (root->syno_orphan_cleanup.cleanup_in_progress < 0)
+			btrfs_err(fs_info,
+				"cleanup_in_progress unbalanced %d root %llu",
+				root->syno_orphan_cleanup.cleanup_in_progress, root->root_key.objectid);
+		spin_unlock(&root->root_item_lock);
+	}
+#endif /* MY_ABC_HERE */
 	return ret;
 }
 
@@ -3355,6 +3986,15 @@ static int btrfs_read_locked_inode(struct inode *inode,
 
 	BTRFS_I(inode)->index_cnt = (u64)-1;
 	BTRFS_I(inode)->flags = btrfs_inode_flags(leaf, inode_item);
+#ifdef MY_ABC_HERE
+	if (BTRFS_I(inode)->flags & BTRFS_INODE_NODATACOW)
+		BTRFS_I(inode)->flags &= ~(BTRFS_INODE_NOCOMPRESS | BTRFS_INODE_COMPRESS);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	BTRFS_I(inode)->uq_rfer_used =
+			btrfs_inode_syno_uq_rfer_used(leaf, inode_item);
+#endif /* MY_ABC_HERE */
 
 cache_index:
 	/*
@@ -3444,6 +4084,10 @@ cache_acl:
 				  "error loading props for ino %llu (root %llu): %d",
 				  btrfs_ino(BTRFS_I(inode)),
 				  root->root_key.objectid, ret);
+#ifdef MY_ABC_HERE
+		if (BTRFS_I(inode)->flags & BTRFS_INODE_NODATACOW)
+			BTRFS_I(inode)->flags &= ~(BTRFS_INODE_NOCOMPRESS | BTRFS_INODE_COMPRESS);
+#endif /* MY_ABC_HERE */
 	}
 	if (path != in_path)
 		btrfs_free_path(path);
@@ -3522,6 +4166,9 @@ static void fill_inode_item(struct btrfs_trans_handle *trans,
 	btrfs_set_token_inode_rdev(&token, item, inode->i_rdev);
 	btrfs_set_token_inode_flags(&token, item, BTRFS_I(inode)->flags);
 	btrfs_set_token_inode_block_group(&token, item, 0);
+#ifdef MY_ABC_HERE
+	btrfs_set_token_inode_syno_uq_rfer_used(&token, item, BTRFS_I(inode)->uq_rfer_used);
+#endif /* MY_ABC_HERE */
 }
 
 /*
@@ -3561,6 +4208,31 @@ failed:
 	return ret;
 }
 
+#ifdef MY_ABC_HERE
+void block_dump___btrfs_update_inode(struct inode *inode)
+{
+	struct btrfs_root *root = BTRFS_I(inode)->root;
+	struct dentry *dentry;
+	const char *name = "?";
+
+	dentry = d_find_alias(inode);
+	if (dentry) {
+		spin_lock(&dentry->d_lock);
+		name = (const char *) dentry->d_name.name;
+	}
+	printk(KERN_DEBUG
+		   "ppid:%d(%s), pid:%d(%s), dirtied subvolume %llu inode %llu (%s) on %s\n",
+		   task_pid_nr(current->parent), current->parent->comm,
+		   task_pid_nr(current), current->comm,
+		   root->root_key.objectid, btrfs_ino(BTRFS_I(inode)),
+		   name, inode->i_sb->s_id);
+	if (dentry) {
+		spin_unlock(&dentry->d_lock);
+		dput(dentry);
+	}
+}
+#endif /* MY_ABC_HERE */
+
 /*
  * copy everything in the in-memory inode into the btree.
  */
@@ -3569,6 +4241,11 @@ noinline int btrfs_update_inode(struct btrfs_trans_handle *trans,
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	int ret;
+
+#ifdef MY_ABC_HERE
+	if (unlikely(block_dump))
+		block_dump___btrfs_update_inode(inode);
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * If the inode is a free space inode, we can deadlock during commit
@@ -3602,6 +4279,38 @@ noinline int btrfs_update_inode_fallback(struct btrfs_trans_handle *trans,
 		return btrfs_update_inode_item(trans, root, inode);
 	return ret;
 }
+
+#ifdef MY_ABC_HERE
+static int btrfs_unlink_dir_item_caseless(struct btrfs_trans_handle *trans,
+					  struct btrfs_root *root,
+					  struct btrfs_inode *dir,
+					  const char *name, int name_len)
+{
+	struct btrfs_path *path;
+	int ret = 0;
+	struct btrfs_dir_item *di;
+	u64 dir_ino = btrfs_ino(dir);
+
+	path = btrfs_alloc_path();
+	if (!path)
+		return -ENOMEM;
+
+	path->search_caseless_key = 1;
+	path->leave_spinning = 1;
+
+	di = btrfs_lookup_dir_item(trans, root, path, dir_ino,
+				   name, name_len, -1);
+	if (IS_ERR_OR_NULL(di)) {
+		ret = di ? PTR_ERR(di) : 0;
+		goto err;
+	}
+	ret = btrfs_delete_one_dir_name(trans, root, path, di);
+err:
+	btrfs_free_path(path);
+	return ret;
+
+}
+#endif /* MY_ABC_HERE */
 
 /*
  * unlink helper that gets used here in inode.c and in the tree logging
@@ -3640,6 +4349,13 @@ static int __btrfs_unlink_inode(struct btrfs_trans_handle *trans,
 		goto err;
 	btrfs_release_path(path);
 
+#ifdef MY_ABC_HERE
+	ret = btrfs_unlink_dir_item_caseless(trans, root, dir, name, name_len);
+	if (ret) {
+		btrfs_abort_transaction(trans, ret);
+		goto err;
+	}
+#endif /* MY_ABC_HERE */
 	/*
 	 * If we don't have dir index, we have to get it by looking up
 	 * the inode ref, since we get the inode ref, remove it directly,
@@ -3827,6 +4543,13 @@ static int btrfs_unlink_subvol(struct btrfs_trans_handle *trans,
 	}
 	btrfs_release_path(path);
 
+#ifdef MY_ABC_HERE
+	ret = btrfs_unlink_dir_item_caseless(trans, root, BTRFS_I(dir), name, name_len);
+	if (ret) {
+		btrfs_abort_transaction(trans, ret);
+		goto out;
+	}
+#endif /* MY_ABC_HERE */
 	/*
 	 * This is a placeholder inode for a subvolume we didn't have a
 	 * reference to at the time of the snapshot creation.  In the meantime
@@ -3891,6 +4614,12 @@ static noinline int may_destroy_subvol(struct btrfs_root *root)
 	struct btrfs_key key;
 	u64 dir_id;
 	int ret;
+
+#ifdef MY_ABC_HERE
+	ret = btrfs_syno_locker_may_destroy_subvol(root);
+	if (ret)
+		return ret;
+#endif /* MY_ABC_HERE */
 
 	path = btrfs_alloc_path();
 	if (!path)
@@ -4101,6 +4830,24 @@ int btrfs_delete_subvolume(struct inode *dir, struct dentry *dentry)
 
 	free_anon_bdev(dest->anon_dev);
 	dest->anon_dev = 0;
+
+#ifdef MY_ABC_HERE
+	mutex_lock(&fs_info->qgroup_ioctl_lock);
+	btrfs_remove_queued_syno_rescan(trans, dest->root_key.objectid);
+	mutex_unlock(&fs_info->qgroup_ioctl_lock);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	btrfs_syno_locker_disk_root_delete(trans, dest);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	if (!list_empty(&dest->syno_orphan_cleanup.root)) {
+		spin_lock(&fs_info->syno_orphan_cleanup.lock);
+		list_del_init(&dest->syno_orphan_cleanup.root);
+		spin_unlock(&fs_info->syno_orphan_cleanup.lock);
+	}
+#endif /* MY_ABC_HERE */
+
 out_end_trans:
 	trans->block_rsv = NULL;
 	trans->bytes_reserved = 0;
@@ -4155,9 +4902,12 @@ static int btrfs_rmdir(struct inode *dir, struct dentry *dentry)
 		goto out;
 	}
 
+#ifdef MY_ABC_HERE
+#else  /* MY_ABC_HERE */
 	err = btrfs_orphan_add(trans, BTRFS_I(inode));
 	if (err)
 		goto out;
+#endif /* MY_ABC_HERE */
 
 	last_unlink_trans = BTRFS_I(inode)->last_unlink_trans;
 
@@ -4181,6 +4931,17 @@ static int btrfs_rmdir(struct inode *dir, struct dentry *dentry)
 		if (last_unlink_trans >= trans->transid)
 			BTRFS_I(dir)->last_unlink_trans = last_unlink_trans;
 	}
+#ifdef MY_ABC_HERE
+	if (err)
+		goto out;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	err = btrfs_orphan_add(trans, BTRFS_I(inode));
+	if (err)
+		goto out;
+#endif /* MY_ABC_HERE */
+
 out:
 	btrfs_end_transaction(trans);
 	btrfs_btree_balance_dirty(root->fs_info);
@@ -4234,6 +4995,9 @@ int btrfs_truncate_inode_items(struct btrfs_trans_handle *trans,
 	bool should_throttle = false;
 	const u64 lock_start = ALIGN_DOWN(new_size, fs_info->sectorsize);
 	struct extent_state *cached_state = NULL;
+#ifdef MY_ABC_HERE
+	u64 ram_bytes = 0;
+#endif /* MY_ABC_HERE */
 
 	BUG_ON(new_size > 0 && min_type != BTRFS_EXTENT_DATA_KEY);
 
@@ -4374,12 +5138,27 @@ search_again:
 				if (test_bit(BTRFS_ROOT_SHAREABLE,
 					     &root->state) &&
 				    extent_start != 0)
+#ifdef MY_ABC_HERE
+				{
+					down_read(&root->rescan_lock);
 					inode_sub_bytes(inode, num_dec);
+					btrfs_qgroup_syno_accounting(BTRFS_I(inode),
+								0, num_dec, UPDATE_QUOTA);
+					btrfs_usrquota_syno_accounting(BTRFS_I(inode),
+								0, num_dec, UPDATE_QUOTA);
+					up_read(&root->rescan_lock);
+				}
+#else
+					inode_sub_bytes(inode, num_dec);
+#endif /* MY_ABC_HERE */
 				btrfs_mark_buffer_dirty(leaf);
 			} else {
 				extent_num_bytes =
 					btrfs_file_extent_disk_num_bytes(leaf,
 									 fi);
+#ifdef MY_ABC_HERE
+				ram_bytes = btrfs_file_extent_ram_bytes(leaf, fi);
+#endif /* MY_ABC_HERE */
 				extent_offset = found_key.offset -
 					btrfs_file_extent_offset(leaf, fi);
 
@@ -4389,7 +5168,19 @@ search_again:
 					found_extent = 1;
 					if (test_bit(BTRFS_ROOT_SHAREABLE,
 						     &root->state))
+#ifdef MY_ABC_HERE
+					{
+						down_read(&root->rescan_lock);
 						inode_sub_bytes(inode, num_dec);
+						btrfs_qgroup_syno_accounting(BTRFS_I(inode),
+									0, num_dec, UPDATE_QUOTA);
+						btrfs_usrquota_syno_accounting(BTRFS_I(inode),
+									0, num_dec, UPDATE_QUOTA);
+						up_read(&root->rescan_lock);
+					}
+#else
+						inode_sub_bytes(inode, num_dec);
+#endif /* MY_ABC_HERE */
 				}
 			}
 			clear_len = num_dec;
@@ -4424,7 +5215,21 @@ search_again:
 			}
 
 			if (test_bit(BTRFS_ROOT_SHAREABLE, &root->state))
+#ifdef MY_ABC_HERE
+			{
+				down_read(&root->rescan_lock);
 				inode_sub_bytes(inode, item_end + 1 - new_size);
+				if (del_item) {
+					btrfs_qgroup_syno_accounting(BTRFS_I(inode),
+							0, item_end + 1 - new_size, UPDATE_QUOTA);
+					btrfs_usrquota_syno_accounting(BTRFS_I(inode),
+							0, item_end + 1 - new_size, UPDATE_QUOTA);
+				}
+				up_read(&root->rescan_lock);
+			}
+#else
+				inode_sub_bytes(inode, item_end + 1 - new_size);
+#endif /* MY_ABC_HERE */
 		}
 delete:
 		/*
@@ -4473,7 +5278,20 @@ delete:
 					extent_start, extent_num_bytes, 0);
 			ref.real_root = root->root_key.objectid;
 			btrfs_init_data_ref(&ref, btrfs_header_owner(leaf),
-					ino, extent_offset);
+					ino, extent_offset
+#ifdef MY_ABC_HERE
+					, btrfs_syno_usage_ref_check(root, found_key.objectid, found_key.offset)
+#endif /* MY_ABC_HERE */
+					);
+#ifdef MY_ABC_HERE
+			if (btrfs_root_disable_quota(root))
+				ref.skip_qgroup = true;
+			else {
+				ref.skip_qgroup = false;
+				ref.ram_bytes = ram_bytes;
+				ref.inode = inode;
+			}
+#endif /* MY_ABC_HERE */
 			ret = btrfs_free_extent(trans, &ref);
 			if (ret) {
 				btrfs_abort_transaction(trans, ret);
@@ -4704,6 +5522,7 @@ static int maybe_insert_hole(struct btrfs_root *root, struct inode *inode,
 {
 	struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
 	struct btrfs_trans_handle *trans;
+	struct btrfs_drop_extents_args drop_args = { 0 };
 	int ret;
 
 	/*
@@ -4726,7 +5545,11 @@ static int maybe_insert_hole(struct btrfs_root *root, struct inode *inode,
 	if (IS_ERR(trans))
 		return PTR_ERR(trans);
 
-	ret = btrfs_drop_extents(trans, root, inode, offset, offset + len, 1);
+	drop_args.start = offset;
+	drop_args.end = offset + len;
+	drop_args.drop_cache = true;
+
+	ret = btrfs_drop_extents(trans, root, BTRFS_I(inode), &drop_args);
 	if (ret) {
 		btrfs_abort_transaction(trans, ret);
 		btrfs_end_transaction(trans);
@@ -4735,10 +5558,22 @@ static int maybe_insert_hole(struct btrfs_root *root, struct inode *inode,
 
 	ret = btrfs_insert_file_extent(trans, root, btrfs_ino(BTRFS_I(inode)),
 			offset, 0, 0, len, 0, len, 0, 0, 0);
-	if (ret)
+	if (ret) {
 		btrfs_abort_transaction(trans, ret);
-	else
+	} else {
+#ifdef MY_ABC_HERE
+		down_read(&root->rescan_lock);
+		btrfs_update_inode_bytes(BTRFS_I(inode), 0, drop_args.bytes_found);
+		btrfs_qgroup_syno_accounting(BTRFS_I(inode),
+						0, drop_args.bytes_found, UPDATE_QUOTA);
+		btrfs_usrquota_syno_accounting(BTRFS_I(inode),
+						0, drop_args.bytes_found, UPDATE_QUOTA);
+		up_read(&root->rescan_lock);
+#else
+		btrfs_update_inode_bytes(BTRFS_I(inode), 0, drop_args.bytes_found);
+#endif /* MY_ABC_HERE */
 		btrfs_update_inode(trans, root, inode);
+	}
 	btrfs_end_transaction(trans);
 	return ret;
 }
@@ -4909,13 +5744,24 @@ static int btrfs_setsize(struct inode *inode, struct iattr *attr)
 		 * zero. Make sure any new writes to the file get on disk
 		 * on close.
 		 */
-		if (newsize == 0)
+		if (newsize == 0
+#ifdef MY_ABC_HERE
+			&& oldsize != newsize
+#endif /* MY_ABC_HERE */
+			)
 			set_bit(BTRFS_INODE_FLUSH_ON_CLOSE,
 				&BTRFS_I(inode)->runtime_flags);
 
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 		truncate_setsize(inode, newsize);
+#endif /* MY_ABC_HERE */
 
 		inode_dio_wait(inode);
+
+#ifdef MY_ABC_HERE
+		truncate_setsize(inode, newsize);
+#endif /* MY_ABC_HERE */
 
 		ret = btrfs_truncate(inode, newsize == oldsize);
 		if (ret && inode->i_nlink) {
@@ -4946,6 +5792,11 @@ static int btrfs_setattr(struct dentry *dentry, struct iattr *attr)
 	if (btrfs_root_readonly(root))
 		return -EROFS;
 
+#ifdef MY_ABC_HERE
+	if (IS_SYNOACL(dentry))
+		err = 0; // skip permission check
+	else
+#endif /* MY_ABC_HERE */
 	err = setattr_prepare(dentry, attr);
 	if (err)
 		return err;
@@ -4955,6 +5806,22 @@ static int btrfs_setattr(struct dentry *dentry, struct iattr *attr)
 		if (err)
 			return err;
 	}
+
+#ifdef MY_ABC_HERE
+	if ((S_ISREG(inode->i_mode) || S_ISLNK(inode->i_mode)) &&
+				(attr->ia_valid & ATTR_UID) &&
+				!uid_eq(attr->ia_uid, inode->i_uid)) {
+		if (test_bit(BTRFS_FS_SYNO_QUOTA_V2_ENABLED, &root->fs_info->flags)) {
+			err = btrfs_usrquota_transfer(inode, attr->ia_uid);
+			if (err)
+				return err;
+		} else if (test_bit(BTRFS_FS_SYNO_QUOTA_V1_ENABLED, &root->fs_info->flags)) {
+			err = btrfs_usrquota_v1_transfer(inode, attr->ia_uid);
+			if (err)
+				return err;
+		}
+	}
+#endif /* MY_ABC_HERE */
 
 	if (attr->ia_valid) {
 		setattr_copy(inode, attr);
@@ -4985,9 +5852,19 @@ static void evict_inode_truncate_pages(struct inode *inode)
 	struct extent_io_tree *io_tree = &BTRFS_I(inode)->io_tree;
 	struct extent_map_tree *map_tree = &BTRFS_I(inode)->extent_tree;
 	struct rb_node *node;
+#ifdef MY_ABC_HERE
+	struct btrfs_fs_info *fs_info = BTRFS_I(inode)->root->fs_info;
+#endif /* MY_ABC_HERE */
 
 	ASSERT(inode->i_state & I_FREEING);
 	truncate_inode_pages_final(&inode->i_data);
+
+#ifdef MY_ABC_HERE
+	spin_lock(&fs_info->extent_map_inode_list_lock);
+	WARN_ON(atomic_read(&BTRFS_I(inode)->free_extent_map_counts) != 0);
+	list_del_init(&BTRFS_I(inode)->free_extent_map_inode);
+	spin_unlock(&fs_info->extent_map_inode_list_lock);
+#endif /* MY_ABC_HERE */
 
 	write_lock(&map_tree->lock);
 	while (!RB_EMPTY_ROOT(&map_tree->map.rb_root)) {
@@ -5048,9 +5925,20 @@ static void evict_inode_truncate_pages(struct inode *inode)
 		 *
 		 * Note, end is the bytenr of last byte, so we need + 1 here.
 		 */
+#ifdef MY_ABC_HERE
+		/*
+		 * EXTENT_QGROUP_RESERVED bit isn't guaranteed to be cleared in
+		 * try_release_extent_state(). We need to clear them to prevent
+		 * infinite loop.
+		 */
+		if (state_flags & (EXTENT_DELALLOC | EXTENT_QGROUP_RESERVED))
+			btrfs_qgroup_free_data(BTRFS_I(inode), NULL, start,
+					       end - start + 1);
+#else
 		if (state_flags & EXTENT_DELALLOC)
 			btrfs_qgroup_free_data(BTRFS_I(inode), NULL, start,
 					       end - start + 1);
+#endif /* MY_ABC_HERE */
 
 		clear_extent_bit(io_tree, start, end,
 				 EXTENT_LOCKED | EXTENT_DELALLOC |
@@ -5121,6 +6009,9 @@ void btrfs_evict_inode(struct inode *inode)
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 	struct btrfs_block_rsv *rsv;
 	int ret;
+#ifdef MY_ABC_HERE
+	u32 truncate_retry_count = 0;
+#endif /* MY_ABC_HERE */
 
 	trace_btrfs_inode_evict(inode);
 
@@ -5178,6 +6069,10 @@ void btrfs_evict_inode(struct inode *inode)
 			goto free_rsv;
 		else if (!ret)
 			break;
+#ifdef MY_ABC_HERE
+		if (++truncate_retry_count > 8 && fs_info->syno_orphan_cleanup.orphan_inode_delayed)
+			goto free_rsv;
+#endif /* MY_ABC_HERE */
 	}
 
 	/*
@@ -5209,9 +6104,36 @@ no_delete:
 	 * the tree and we'll retry on the next mount. Again, we might also want
 	 * to retry these periodically in the future.
 	 */
+#ifdef MY_ABC_HERE
+	btrfs_syno_del_dirty_lru_inode(root->fs_info, inode);
+#endif /* MY_ABC_HERE */
 	btrfs_remove_delayed_node(BTRFS_I(inode));
 	clear_inode(inode);
 }
+
+#ifdef MY_ABC_HERE
+static int btrfs_replace_caseless_dentry_name(
+			const struct extent_buffer *leaf,
+			struct btrfs_dir_item *di,
+			struct dentry *dentry)
+{
+	char real_name[BTRFS_NAME_LEN + 1] = {0};
+	int real_name_len = btrfs_dir_name_len(leaf, di);
+
+	if (unlikely(real_name_len > BTRFS_NAME_LEN))
+		return -ENAMETOOLONG;
+
+	read_extent_buffer(leaf, (void *) real_name,
+			   (unsigned long)(di + 1), real_name_len);
+	/*
+	 * In caseless lookup, this dentry just been created and not
+	 * register into hash table list.  So it cannot be reference
+	 * by other thread, and we don't need to hold any lock or deal
+	 * with rcu lookup mode.
+	 */
+	return dentry_replace_name(dentry, real_name, real_name_len);
+}
+#endif /* MY_ABC_HERE */
 
 /*
  * Return the key found in the dir entry in the location pointer, fill @type
@@ -5221,7 +6143,11 @@ no_delete:
  * If found a corrupted location in dir entry, returns -EUCLEAN.
  */
 static int btrfs_inode_by_name(struct inode *dir, struct dentry *dentry,
-			       struct btrfs_key *location, u8 *type)
+			       struct btrfs_key *location, u8 *type
+#ifdef MY_ABC_HERE
+			       , int caseless
+#endif /* MY_ABC_HERE */
+			       )
 {
 	const char *name = dentry->d_name.name;
 	int namelen = dentry->d_name.len;
@@ -5234,12 +6160,28 @@ static int btrfs_inode_by_name(struct inode *dir, struct dentry *dentry,
 	if (!path)
 		return -ENOMEM;
 
+#ifdef MY_ABC_HERE
+	if (caseless) {
+		if (btrfs_super_compat_flags(root->fs_info->super_copy) & BTRFS_FEATURE_COMPAT_SYNO_CASELESS)
+			path->search_caseless_key = 1;
+		path->caseless_lookup = 1;
+	}
+#endif /* MY_ABC_HERE */
+
 	di = btrfs_lookup_dir_item(NULL, root, path, btrfs_ino(BTRFS_I(dir)),
 			name, namelen, 0);
 	if (IS_ERR_OR_NULL(di)) {
 		ret = di ? PTR_ERR(di) : -ENOENT;
 		goto out;
 	}
+
+#ifdef MY_ABC_HERE
+	if (caseless) {
+		ret = btrfs_replace_caseless_dentry_name(path->nodes[0], di, dentry);
+		if (ret)
+			goto out;
+	}
+#endif /* MY_ABC_HERE */
 
 	btrfs_dir_item_key_to_cpu(path->nodes[0], di, location);
 	if (location->type != BTRFS_INODE_ITEM_KEY &&
@@ -5430,6 +6372,9 @@ struct inode *btrfs_iget_path(struct super_block *s, u64 ino,
 			      struct btrfs_root *root, struct btrfs_path *path)
 {
 	struct inode *inode;
+#ifdef MY_ABC_HERE
+	__le32 archive_bit;
+#endif /* MY_ABC_HERE */
 
 	inode = btrfs_iget_locked(s, ino, root);
 	if (!inode)
@@ -5442,6 +6387,27 @@ struct inode *btrfs_iget_path(struct super_block *s, u64 ino,
 		if (!ret) {
 			inode_tree_add(inode);
 			unlock_new_inode(inode);
+#ifdef MY_ABC_HERE
+			if (btrfs_is_free_space_inode(BTRFS_I(inode))) {
+				/*
+				 * For xfstests btrfs/131.
+				 * To avoid a WARNING calltrace of getting
+				 * a read lock by btrfs_getxattr when holding
+				 * the write lock by COW of free space inode.
+				 */
+				inode->i_archive_bit = 0;
+			} else {
+				ret = btrfs_getxattr(inode, XATTR_SYNO_ARCHIVE_BIT,
+						&archive_bit, sizeof(archive_bit));
+				if (ret == sizeof(archive_bit))
+					inode->i_archive_bit = le32_to_cpu(archive_bit);
+				else
+					inode->i_archive_bit = 0;
+			}
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+			btrfs_syno_locker_disk_inode_read(inode);
+#endif /* MY_ABC_HERE*/
 		} else {
 			iget_failed(inode);
 			/*
@@ -5462,6 +6428,123 @@ struct inode *btrfs_iget(struct super_block *s, u64 ino, struct btrfs_root *root
 {
 	return btrfs_iget_path(s, ino, root, NULL);
 }
+
+#ifdef MY_ABC_HERE
+/* check whether file could be access by path or not */
+static int check_file_name_exist(struct btrfs_root *root, u64 inum)
+{
+	int ret = 0;
+	struct btrfs_key key;
+	struct btrfs_path *path = NULL;
+
+	path = btrfs_alloc_path();
+	if (!path)
+		return -ENOMEM;
+	ret = btrfs_find_item(root, path, inum, 0, BTRFS_INODE_REF_KEY, &key);
+	if (1 == ret)
+		ret = -ESTALE;
+	btrfs_free_path(path);
+
+	return ret;
+}
+
+static int check_is_regular_file(struct btrfs_root *root, struct inode *inode)
+{
+	int ret = -ESTALE;
+
+	inode_lock(inode);
+
+	ret = check_file_name_exist(root, inode->i_ino);
+	if (ret) {
+		goto out;
+	}
+
+	if (S_ISDIR(inode->i_mode)) {
+		ret = -EISDIR;
+		goto out;
+	}
+	if (!S_ISREG(inode->i_mode) || inode->i_state & (I_FREEING|I_WILL_FREE|I_NEW)) {
+		ret = -ESTALE;
+		goto out;
+	}
+
+	ret = 0;
+out:
+	inode_unlock(inode);
+	return ret;
+}
+
+/**
+ * Get inode by root id and its object id.
+ * This object must be a regular file and is not freeing or just newly created.
+ */
+struct inode *btrfs_get_regular_file_inode(struct super_block *sb, u64 root_objectid,
+					   u64 objectid)
+{
+	int ret;
+	struct btrfs_root *root;
+	struct inode *inode;
+
+	if (!sb)
+		return ERR_PTR(-EINVAL);
+
+	if (objectid < BTRFS_FIRST_FREE_OBJECTID || objectid > BTRFS_LAST_FREE_OBJECTID)
+		return ERR_PTR(-ESTALE);
+
+	root = btrfs_get_fs_root(btrfs_sb(sb), root_objectid, true);
+	if (IS_ERR(root)) {
+		return (struct inode *)root;
+	}
+
+	inode = btrfs_iget(sb, objectid, root);
+	if (IS_ERR(inode)) {
+		if (-ENOENT == PTR_ERR(inode))
+			inode = ERR_PTR(-ESTALE);
+		goto out;
+	}
+
+	ret = check_is_regular_file(root, inode);
+	if (ret) {
+		iput(inode);
+		inode = ERR_PTR(ret);
+		goto out;
+	}
+
+out:
+	btrfs_put_root(root);
+	return inode;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static int btrfs_match_actor(struct inode *inode, unsigned long hashval, void *opaque)
+{
+	struct btrfs_iget_args *args = opaque;
+
+	if (args->ino == BTRFS_I(inode)->location.objectid &&
+		args->root == BTRFS_I(inode)->root)
+		return 1;
+	return 0;
+}
+
+/*
+ * Test if the inode exists in hash table.
+ * See comments in find_inode_nowait().
+ */
+bool btrfs_test_inode_nowait(struct super_block *s, u64 ino,
+					struct btrfs_root *root)
+{
+	struct btrfs_iget_args args;
+	unsigned long hashval = btrfs_inode_hash(ino, root);
+
+	args.ino = ino;
+	args.root = root;
+
+	if (find_inode_nowait(s, hashval, btrfs_match_actor, (void *)&args))
+		return true;
+	return false;
+}
+#endif /* MY_ABC_HERE */
 
 static struct inode *new_simple_dir(struct super_block *s,
 				    struct btrfs_key *key,
@@ -5511,7 +6594,11 @@ static inline u8 btrfs_inode_type(struct inode *inode)
 	return fs_umode_to_ftype(inode->i_mode);
 }
 
-struct inode *btrfs_lookup_dentry(struct inode *dir, struct dentry *dentry)
+struct inode *btrfs_lookup_dentry(struct inode *dir, struct dentry *dentry
+#ifdef MY_ABC_HERE
+				  , int caseless
+#endif /* MY_ABC_HERE */
+				  )
 {
 	struct btrfs_fs_info *fs_info = btrfs_sb(dir->i_sb);
 	struct inode *inode;
@@ -5524,7 +6611,11 @@ struct inode *btrfs_lookup_dentry(struct inode *dir, struct dentry *dentry)
 	if (dentry->d_name.len > BTRFS_NAME_LEN)
 		return ERR_PTR(-ENAMETOOLONG);
 
+#ifdef MY_ABC_HERE
+	ret = btrfs_inode_by_name(dir, dentry, &location, &di_type, caseless);
+#else /* MY_ABC_HERE */
 	ret = btrfs_inode_by_name(dir, dentry, &location, &di_type);
+#endif /* MY_ABC_HERE */
 	if (ret < 0)
 		return ERR_PTR(ret);
 
@@ -5559,14 +6650,26 @@ struct inode *btrfs_lookup_dentry(struct inode *dir, struct dentry *dentry)
 		btrfs_put_root(sub_root);
 
 	if (!IS_ERR(inode) && root != sub_root) {
-		down_read(&fs_info->cleanup_work_sem);
-		if (!sb_rdonly(inode->i_sb))
-			ret = btrfs_orphan_cleanup(sub_root);
-		up_read(&fs_info->cleanup_work_sem);
-		if (ret) {
-			iput(inode);
-			inode = ERR_PTR(ret);
+#ifdef MY_ABC_HERE
+		if (is_fstree(sub_root->root_key.objectid) && sub_root->root_key.objectid <= BTRFS_LAST_FREE_OBJECTID &&
+			!btrfs_root_dead(sub_root) && test_bit(BTRFS_ROOT_IN_RADIX, &sub_root->state)) {
+			spin_lock(&fs_info->syno_orphan_cleanup.lock);
+			if (list_empty(&sub_root->syno_orphan_cleanup.root))
+				list_add_tail(&sub_root->syno_orphan_cleanup.root, &fs_info->syno_orphan_cleanup.roots);
+			spin_unlock(&fs_info->syno_orphan_cleanup.lock);
+		} else {
+#endif /* MY_ABC_HERE */
+			down_read(&fs_info->cleanup_work_sem);
+			if (!sb_rdonly(inode->i_sb))
+				ret = btrfs_orphan_cleanup(sub_root);
+			up_read(&fs_info->cleanup_work_sem);
+			if (ret) {
+				iput(inode);
+				inode = ERR_PTR(ret);
+			}
+#ifdef MY_ABC_HERE
 		}
+#endif /* MY_ABC_HERE */
 	}
 
 	return inode;
@@ -5594,7 +6697,11 @@ static int btrfs_dentry_delete(const struct dentry *dentry)
 static struct dentry *btrfs_lookup(struct inode *dir, struct dentry *dentry,
 				   unsigned int flags)
 {
+#ifdef MY_ABC_HERE
+	struct inode *inode = btrfs_lookup_dentry(dir, dentry, (flags & LOOKUP_CASELESS_COMPARE) ? 1 : 0);
+#else /* MY_ABC_HERE */
 	struct inode *inode = btrfs_lookup_dentry(dir, dentry);
+#endif /* MY_ABC_HERE */
 
 	if (inode == ERR_PTR(-ENOENT))
 		inode = NULL;
@@ -5631,6 +6738,9 @@ struct dir_entry {
 	u64 offset;
 	unsigned type;
 	int name_len;
+#ifdef MY_ABC_HERE
+	bool hidden;
+#endif /* MY_ABC_HERE */
 };
 
 static int btrfs_filldir(void *addr, int entries, struct dir_context *ctx)
@@ -5640,10 +6750,17 @@ static int btrfs_filldir(void *addr, int entries, struct dir_context *ctx)
 		char *name = (char *)(entry + 1);
 
 		ctx->pos = get_unaligned(&entry->offset);
+#ifdef MY_ABC_HERE
+		if (get_unaligned(&entry->hidden))
+			goto skip;
+#endif /* MY_ABC_HERE */
 		if (!dir_emit(ctx, name, get_unaligned(&entry->name_len),
 					 get_unaligned(&entry->ino),
 					 get_unaligned(&entry->type)))
 			return 1;
+#ifdef MY_ABC_HERE
+skip:
+#endif /* MY_ABC_HERE */
 		addr += sizeof(struct dir_entry) +
 			get_unaligned(&entry->name_len);
 		ctx->pos++;
@@ -5742,6 +6859,19 @@ again:
 		put_unaligned(fs_ftype_to_dtype(btrfs_dir_type(leaf, di)),
 				&entry->type);
 		btrfs_dir_item_key_to_cpu(leaf, di, &location);
+#ifdef MY_ABC_HERE
+		put_unaligned(false, &entry->hidden);
+		if (location.type == BTRFS_ROOT_ITEM_KEY) {
+			struct btrfs_root *subvol_root = btrfs_get_fs_root(
+					root->fs_info, location.objectid, true);
+
+			if (!IS_ERR(subvol_root)) {
+				if (btrfs_root_hide(subvol_root))
+					put_unaligned(true, &entry->hidden);
+				btrfs_put_root(subvol_root);
+			}
+		}
+#endif /* MY_ABC_HERE */
 		put_unaligned(location.objectid, &entry->ino);
 		put_unaligned(found_key.offset, &entry->offset);
 		entries++;
@@ -5823,6 +6953,10 @@ static int btrfs_dirty_inode(struct inode *inode)
 	btrfs_end_transaction(trans);
 	if (BTRFS_I(inode)->delayed_node)
 		btrfs_balance_delayed_items(fs_info);
+
+#ifdef MY_ABC_HERE
+	ret = btrfs_syno_locker_disk_inode_update_trans(inode);
+#endif /* MY_ABC_HERE */
 
 	return ret;
 }
@@ -6120,6 +7254,15 @@ static struct inode *btrfs_new_inode(struct btrfs_trans_handle *trans,
 		if (btrfs_test_opt(fs_info, NODATACOW))
 			BTRFS_I(inode)->flags |= BTRFS_INODE_NODATACOW |
 				BTRFS_INODE_NODATASUM;
+
+#ifdef MY_ABC_HERE
+		if (test_bit(BTRFS_FS_SYNO_USRQUOTA_V1_ENABLED, &fs_info->flags) &&
+				!btrfs_root_disable_quota(root) &&
+				btrfs_usrquota_compat_inode_quota(fs_info) &&
+				is_fstree(root->root_key.objectid)) {
+			BTRFS_I(inode)->flags |= BTRFS_INODE_UQ_REF_USED;
+		}
+#endif /* MY_ABC_HERE */
 	}
 
 	inode_tree_add(inode);
@@ -6257,13 +7400,40 @@ static int btrfs_mknod(struct inode *dir, struct dentry *dentry,
 	int err;
 	u64 objectid;
 	u64 index = 0;
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+	int credit_for_syno = 0;
+#endif /* MY_ABC_HERE || MY_ABC_HERE || MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	err = btrfs_check_dir_item_collision(root, dir->i_ino,
+					     dentry->d_name.name,
+					     dentry->d_name.len,
+					     0);
+	if (err)
+		return err;
+	// 1 for dir_item_caseless
+	if (btrfs_super_compat_flags(root->fs_info->super_copy) & BTRFS_FEATURE_COMPAT_SYNO_CASELESS)
+		credit_for_syno++;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	// 1 for xattr to store archive bit
+	credit_for_syno++;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	credit_for_syno++;
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * 2 for inode item and ref
 	 * 2 for dir items
 	 * 1 for xattr if selinux is on
 	 */
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+	trans = btrfs_start_transaction(root, 5 + credit_for_syno);
+#else /* MY_ABC_HERE || MY_ABC_HERE || MY_ABC_HERE */
 	trans = btrfs_start_transaction(root, 5);
+#endif /* MY_ABC_HERE || MY_ABC_HERE || MY_ABC_HERE */
 	if (IS_ERR(trans))
 		return PTR_ERR(trans);
 
@@ -6293,6 +7463,18 @@ static int btrfs_mknod(struct inode *dir, struct dentry *dentry,
 	if (err)
 		goto out_unlock;
 
+#ifdef MY_ABC_HERE
+	err = btrfs_syno_init_archive_bit(trans, inode);
+	if (err)
+		goto out_unlock;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	err = btrfs_syno_init_crtime(trans, inode);
+	if (err)
+		goto out_unlock;
+#endif /* MY_ABC_HERE */
+
 	err = btrfs_add_nondir(trans, BTRFS_I(dir), dentry, BTRFS_I(inode),
 			0, index);
 	if (err)
@@ -6321,13 +7503,40 @@ static int btrfs_create(struct inode *dir, struct dentry *dentry,
 	int err;
 	u64 objectid;
 	u64 index = 0;
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+	int credit_for_syno = 0;
+#endif /* MY_ABC_HERE || MY_ABC_HERE || MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	err = btrfs_check_dir_item_collision(root, dir->i_ino,
+					     dentry->d_name.name,
+					     dentry->d_name.len,
+					     0);
+	if (err)
+		return err;
+	// 1 for dir_item_caseless
+	if (btrfs_super_compat_flags(root->fs_info->super_copy) & BTRFS_FEATURE_COMPAT_SYNO_CASELESS)
+		credit_for_syno++;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	// 1 for xattr to store archive bit
+	credit_for_syno++;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	credit_for_syno++;
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * 2 for inode item and ref
 	 * 2 for dir items
 	 * 1 for xattr if selinux is on
 	 */
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+	trans = btrfs_start_transaction(root, 5 + credit_for_syno);
+#else /* MY_ABC_HERE || MY_ABC_HERE || MY_ABC_HERE */
 	trans = btrfs_start_transaction(root, 5);
+#endif /* MY_ABC_HERE || MY_ABC_HERE || MY_ABC_HERE */
 	if (IS_ERR(trans))
 		return PTR_ERR(trans);
 
@@ -6356,6 +7565,18 @@ static int btrfs_create(struct inode *dir, struct dentry *dentry,
 	err = btrfs_init_inode_security(trans, inode, dir, &dentry->d_name);
 	if (err)
 		goto out_unlock;
+
+#ifdef MY_ABC_HERE
+	err = btrfs_syno_init_archive_bit(trans, inode);
+	if (err)
+		goto out_unlock;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	err = btrfs_syno_init_crtime(trans, inode);
+	if (err)
+		goto out_unlock;
+#endif /* MY_ABC_HERE */
 
 	err = btrfs_update_inode(trans, root, inode);
 	if (err)
@@ -6388,6 +7609,9 @@ static int btrfs_link(struct dentry *old_dentry, struct inode *dir,
 	u64 index;
 	int err;
 	int drop_inode = 0;
+#ifdef MY_ABC_HERE
+	int credit_for_syno = 0;
+#endif /* MY_ABC_HERE */
 
 	/* do not allow sys_link's with other subvols of the same device */
 	if (root->root_key.objectid != BTRFS_I(inode)->root->root_key.objectid)
@@ -6395,6 +7619,15 @@ static int btrfs_link(struct dentry *old_dentry, struct inode *dir,
 
 	if (inode->i_nlink >= BTRFS_LINK_MAX)
 		return -EMLINK;
+
+#ifdef MY_ABC_HERE
+	err = btrfs_check_dir_item_collision(root, dir->i_ino,
+					     dentry->d_name.name,
+					     dentry->d_name.len,
+					     0);
+	if (err)
+		return err;
+#endif /* MY_ABC_HERE */
 
 	err = btrfs_set_inode_index(BTRFS_I(dir), &index);
 	if (err)
@@ -6406,7 +7639,17 @@ static int btrfs_link(struct dentry *old_dentry, struct inode *dir,
 	 * 1 item for parent inode
 	 * 1 item for orphan item deletion if O_TMPFILE
 	 */
+#ifdef MY_ABC_HERE
+	/*
+	 * 1 item for dir caseless item if CASELESS FEATURE support
+	 */
+	if (btrfs_super_compat_flags(root->fs_info->super_copy) & BTRFS_FEATURE_COMPAT_SYNO_CASELESS)
+		credit_for_syno++;
+
+	trans = btrfs_start_transaction(root, (inode->i_nlink ? 5 : 6) + credit_for_syno);
+#else /* MY_ABC_HERE */
 	trans = btrfs_start_transaction(root, inode->i_nlink ? 5 : 6);
+#endif /* MY_ABC_HERE */
 	if (IS_ERR(trans)) {
 		err = PTR_ERR(trans);
 		trans = NULL;
@@ -6438,6 +7681,10 @@ static int btrfs_link(struct dentry *old_dentry, struct inode *dir,
 			 * with open(2) O_TMPFILE flag.
 			 */
 			err = btrfs_orphan_del(trans, BTRFS_I(inode));
+#ifdef MY_ABC_HERE
+			if (err == -ENOENT)
+				err = 0;
+#endif /* MY_ABC_HERE */
 			if (err)
 				goto fail;
 		}
@@ -6465,13 +7712,40 @@ static int btrfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	int err = 0;
 	u64 objectid = 0;
 	u64 index = 0;
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+	int credit_for_syno = 0;
+#endif /* MY_ABC_HERE || MY_ABC_HERE || MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	err = btrfs_check_dir_item_collision(root, dir->i_ino,
+					     dentry->d_name.name,
+					     dentry->d_name.len,
+					     0);
+	if (err)
+		return err;
+	// 1 for dir_item_caseless
+	if (btrfs_super_compat_flags(root->fs_info->super_copy) & BTRFS_FEATURE_COMPAT_SYNO_CASELESS)
+		credit_for_syno++;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	// 1 for xattr to store archive bit
+	credit_for_syno++;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	credit_for_syno++;
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * 2 items for inode and ref
 	 * 2 items for dir items
 	 * 1 for xattr if selinux is on
 	 */
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+	trans = btrfs_start_transaction(root, 5 + credit_for_syno);
+#else /* MY_ABC_HERE || MY_ABC_HERE || MY_ABC_HERE */
 	trans = btrfs_start_transaction(root, 5);
+#endif /* MY_ABC_HERE || MY_ABC_HERE || MY_ABC_HERE */
 	if (IS_ERR(trans))
 		return PTR_ERR(trans);
 
@@ -6495,6 +7769,18 @@ static int btrfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	err = btrfs_init_inode_security(trans, inode, dir, &dentry->d_name);
 	if (err)
 		goto out_fail;
+
+#ifdef MY_ABC_HERE
+	err = btrfs_syno_init_archive_bit(trans, inode);
+	if (err)
+		goto out_fail;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	err = btrfs_syno_init_crtime(trans, inode);
+	if (err)
+		goto out_fail;
+#endif /* MY_ABC_HERE */
 
 	btrfs_i_size_write(BTRFS_I(inode), 0);
 	err = btrfs_update_inode(trans, root, inode);
@@ -6600,7 +7886,6 @@ struct extent_map *btrfs_get_extent(struct btrfs_inode *inode,
 	struct btrfs_key found_key;
 	struct extent_map *em = NULL;
 	struct extent_map_tree *em_tree = &inode->extent_tree;
-	struct extent_io_tree *io_tree = &inode->io_tree;
 
 	read_lock(&em_tree->lock);
 	em = lookup_extent_mapping(em_tree, start, len);
@@ -6639,7 +7924,15 @@ struct extent_map *btrfs_get_extent(struct btrfs_inode *inode,
 	 */
 	path->leave_spinning = 1;
 
-	path->recurse = btrfs_is_free_space_inode(inode);
+	/*
+	 * The same explanation in load_free_space_cache applies here as well,
+	 * we only read when we're loading the free space cache, and at that
+	 * point the commit_root has everything we need.
+	 */
+	if (btrfs_is_free_space_inode(inode)) {
+		path->search_commit_root = 1;
+		path->skip_locking = 1;
+	}
 
 	ret = btrfs_lookup_file_extent(NULL, root, path, objectid, start, 0);
 	if (ret < 0) {
@@ -6762,8 +8055,6 @@ next:
 			}
 			flush_dcache_page(page);
 		}
-		set_extent_uptodate(io_tree, em->start,
-				    extent_map_end(em) - 1, NULL, GFP_NOFS);
 		goto insert;
 	}
 not_found:
@@ -7249,6 +8540,9 @@ static struct extent_map *create_io_em(struct btrfs_inode *inode, u64 start,
 	ASSERT(type == BTRFS_ORDERED_PREALLOC ||
 	       type == BTRFS_ORDERED_COMPRESSED ||
 	       type == BTRFS_ORDERED_NOCOW ||
+#ifdef MY_ABC_HERE
+	       type == BTRFS_ORDERED_DEDUPED ||
+#endif /* MY_ABC_HERE */
 	       type == BTRFS_ORDERED_REGULAR);
 
 	em_tree = &inode->extent_tree;
@@ -7270,6 +8564,14 @@ static struct extent_map *create_io_em(struct btrfs_inode *inode, u64 start,
 	} else if (type == BTRFS_ORDERED_COMPRESSED) {
 		set_bit(EXTENT_FLAG_COMPRESSED, &em->flags);
 		em->compress_type = compress_type;
+#ifdef MY_ABC_HERE
+	} else if (type == BTRFS_ORDERED_DEDUPED) {
+		if (!block_start) {
+			em->block_len = 0;
+			em->block_start = EXTENT_MAP_HOLE;
+		}
+		set_bit(EXTENT_FLAG_DEDUPED, &em->flags);
+#endif /* MY_ABC_HERE */
 	}
 
 	do {
@@ -7662,7 +8964,11 @@ static blk_status_t btrfs_check_read_dio_bio(struct inode *inode,
 				clean_io_failure(fs_info, failure_tree, io_tree,
 						 start, bvec.bv_page,
 						 btrfs_ino(BTRFS_I(inode)),
-						 pgoff);
+						 pgoff
+#ifdef MY_ABC_HERE
+						 , false
+#endif /* MY_ABC_HERE */
+						 );
 			} else {
 				blk_status_t status;
 
@@ -7673,7 +8979,11 @@ static blk_status_t btrfs_check_read_dio_bio(struct inode *inode,
 							start,
 							start + sectorsize - 1,
 							io_bio->mirror_num,
-							submit_dio_repair_bio);
+							submit_dio_repair_bio
+#ifdef MY_ABC_HERE
+							, false, NULL
+#endif /* MY_ABC_HERE */
+							);
 				if (status)
 					err = status;
 			}
@@ -7696,10 +9006,15 @@ static void __endio_write_update_ordered(struct btrfs_inode *inode,
 	u64 ordered_bytes = bytes;
 	u64 last_offset;
 
-	if (btrfs_is_free_space_inode(inode))
+	if (btrfs_is_free_space_inode(inode)) {
 		wq = fs_info->endio_freespace_worker;
-	else
+	} else {
+#ifdef MY_ABC_HERE
+		wq = fs_info->syno_cow_endio_workers;
+#else /* MY_ABC_HERE */
 		wq = fs_info->endio_write_workers;
+#endif /* MY_ABC_HERE */
+	}
 
 	while (ordered_offset < offset + bytes) {
 		last_offset = ordered_offset;
@@ -7709,6 +9024,20 @@ static void __endio_write_update_ordered(struct btrfs_inode *inode,
 							 uptodate)) {
 			btrfs_init_work(&ordered->work, finish_ordered_fn, NULL,
 					NULL);
+#ifdef MY_ABC_HERE
+			if (!btrfs_is_free_space_inode(inode)) {
+				if (ordered->high_priority) {
+					wq = fs_info->syno_high_priority_endio_workers;
+					set_bit(BTRFS_ORDERED_HIGH_PRIORITY, &ordered->flags);
+				} else if (test_bit(BTRFS_ORDERED_NOCOW, &ordered->flags)) {
+					wq = fs_info->syno_nocow_endio_workers;
+				}
+
+				set_bit(BTRFS_ORDERED_WORK_INITIALIZED, &ordered->flags);
+				if (ordered->high_priority)
+					btrfs_set_work_high_priority(&ordered->work);
+			}
+#endif /* MY_ABC_HERE */
 			btrfs_queue_work(wq, &ordered->work);
 		}
 		/*
@@ -7783,6 +9112,14 @@ static inline blk_status_t btrfs_submit_dio_bio(struct bio *bio,
 		goto map;
 
 	if (write && async_submit) {
+#ifdef MY_ABC_HERE
+		if (is_fstree(BTRFS_I(inode)->root->root_key.objectid)) {
+			ret = btrfs_wq_submit_bio_throttle(fs_info, bio, 0, 0,
+						  file_offset, inode,
+						  btrfs_submit_bio_start_direct_io);
+			goto err;
+		}
+#endif /* MY_ABC_HERE */
 		ret = btrfs_wq_submit_bio(fs_info, bio, 0, 0,
 					  file_offset, inode,
 					  btrfs_submit_bio_start_direct_io);
@@ -7858,12 +9195,14 @@ static blk_qc_t btrfs_submit_direct(struct inode *inode, struct iomap *iomap,
 	u64 start_sector;
 	int async_submit = 0;
 	u64 submit_len;
-	int clone_offset = 0;
-	int clone_len;
+	u64 clone_offset = 0;
+	u64 clone_len;
+	u64 logical;
 	int ret;
 	blk_status_t status;
 	struct btrfs_io_geometry geom;
 	struct btrfs_dio_data *dio_data = iomap->private;
+	struct extent_map *em = NULL;
 
 	dip = btrfs_create_dio_private(dio_bio, inode, file_offset);
 	if (!dip) {
@@ -7891,16 +9230,22 @@ static blk_qc_t btrfs_submit_direct(struct inode *inode, struct iomap *iomap,
 	submit_len = dio_bio->bi_iter.bi_size;
 
 	do {
-		ret = btrfs_get_io_geometry(fs_info, btrfs_op(dio_bio),
-					    start_sector << 9, submit_len,
-					    &geom);
+		logical = start_sector << 9;
+		em = btrfs_get_chunk_map(fs_info, logical, submit_len);
+		if (IS_ERR(em)) {
+			status = errno_to_blk_status(PTR_ERR(em));
+			em = NULL;
+			goto out_err_em;
+		}
+		ret = btrfs_get_io_geometry(fs_info, em, btrfs_op(dio_bio),
+					    logical, submit_len, &geom);
 		if (ret) {
 			status = errno_to_blk_status(ret);
-			goto out_err;
+			goto out_err_em;
 		}
-		ASSERT(geom.len <= INT_MAX);
 
-		clone_len = min_t(int, submit_len, geom.len);
+		clone_len = min(submit_len, geom.len);
+		ASSERT(clone_len <= UINT_MAX);
 
 		/*
 		 * This will never fail as it's passing GPF_NOFS and
@@ -7941,19 +9286,24 @@ static blk_qc_t btrfs_submit_direct(struct inode *inode, struct iomap *iomap,
 			bio_put(bio);
 			if (submit_len > 0)
 				refcount_dec(&dip->refs);
-			goto out_err;
+			goto out_err_em;
 		}
 
 		dio_data->submitted += clone_len;
 		clone_offset += clone_len;
 		start_sector += clone_len >> 9;
 		file_offset += clone_len;
+
+		free_extent_map(em);
 	} while (submit_len > 0);
 	return BLK_QC_T_NONE;
 
+out_err_em:
+	free_extent_map(em);
 out_err:
 	dip->dio_bio->bi_status = status;
 	btrfs_dio_private_put(dip);
+
 	return BLK_QC_T_NONE;
 }
 
@@ -8203,6 +9553,8 @@ static void btrfs_invalidatepage(struct page *page, unsigned int offset,
 	u64 start;
 	u64 end;
 	int inode_evicting = inode->vfs_inode.i_state & I_FREEING;
+	bool found_ordered = false;
+	bool completed_ordered = false;
 
 	/*
 	 * we have the page locked, so new writeback can't start,
@@ -8237,15 +9589,17 @@ static void btrfs_invalidatepage(struct page *page, unsigned int offset,
 again:
 	ordered = btrfs_lookup_ordered_range(inode, start, page_end - start + 1);
 	if (ordered) {
+		found_ordered = true;
 		end = min(page_end,
 			  ordered->file_offset + ordered->num_bytes - 1);
 		/*
-		 * IO on this page will never be started, so we need
-		 * to account for any ordered extents now
+		 * IO on this page will never be started, so we need to account
+		 * for any ordered extents now. Don't clear EXTENT_DELALLOC_NEW
+		 * here, must leave that up for the ordered extent completion.
 		 */
 		if (!inode_evicting)
 			clear_extent_bit(tree, start, end,
-					 EXTENT_DELALLOC | EXTENT_DELALLOC_NEW |
+					 EXTENT_DELALLOC |
 					 EXTENT_LOCKED | EXTENT_DO_ACCOUNTING |
 					 EXTENT_DEFRAG, 1, 0, &cached_state);
 		/*
@@ -8267,8 +9621,10 @@ again:
 
 			if (btrfs_dec_test_ordered_pending(inode, &ordered,
 							   start,
-							   end - start + 1, 1))
+							   end - start + 1, 1)) {
 				btrfs_finish_ordered_io(ordered);
+				completed_ordered = true;
+			}
 		}
 		btrfs_put_ordered_extent(ordered);
 		if (!inode_evicting) {
@@ -8297,10 +9653,23 @@ again:
 	 */
 	btrfs_qgroup_free_data(inode, NULL, page_start, PAGE_SIZE);
 	if (!inode_evicting) {
+		bool delete = true;
+
+		/*
+		 * If there's an ordered extent for this range and we have not
+		 * finished it ourselves, we must leave EXTENT_DELALLOC_NEW set
+		 * in the range for the ordered extent completion. We must also
+		 * not delete the range, otherwise we would lose that bit (and
+		 * any other bits set in the range). Make sure EXTENT_UPTODATE
+		 * is cleared if we don't delete, otherwise it can lead to
+		 * corruptions if the i_size is extented later.
+		 */
+		if (found_ordered && !completed_ordered)
+			delete = false;
 		clear_extent_bit(tree, page_start, page_end, EXTENT_LOCKED |
-				 EXTENT_DELALLOC | EXTENT_DELALLOC_NEW |
-				 EXTENT_DO_ACCOUNTING | EXTENT_DEFRAG, 1, 1,
-				 &cached_state);
+				 EXTENT_DELALLOC | EXTENT_UPTODATE |
+				 EXTENT_DO_ACCOUNTING | EXTENT_DEFRAG, 1,
+				 delete, &cached_state);
 
 		__btrfs_releasepage(page, GFP_NOFS);
 	}
@@ -8344,6 +9713,10 @@ vm_fault_t btrfs_page_mkwrite(struct vm_fault *vmf)
 	u64 page_end;
 	u64 end;
 
+#ifdef MY_ABC_HERE
+	syno_ordered_extent_throttle(fs_info);
+#endif /* MY_ABC_HERE */
+
 	reserved_space = PAGE_SIZE;
 
 	sb_start_pagefault(inode->i_sb);
@@ -8363,6 +9736,9 @@ vm_fault_t btrfs_page_mkwrite(struct vm_fault *vmf)
 					    page_start, reserved_space);
 	if (!ret2) {
 		ret2 = file_update_time(vmf->vma->vm_file);
+#ifdef MY_ABC_HERE
+		fsnotify_modify(vmf->vma->vm_file);
+#endif /* MY_ABC_HERE */
 		reserved = 1;
 	}
 	if (ret2) {
@@ -8638,6 +10014,18 @@ int btrfs_create_subvol_root(struct btrfs_trans_handle *trans,
 	inode->i_op = &btrfs_dir_inode_operations;
 	inode->i_fop = &btrfs_dir_file_operations;
 
+#ifdef MY_ABC_HERE
+	err = btrfs_syno_init_archive_bit(trans, inode);
+	if (err)
+		goto out_fail;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	err = btrfs_syno_init_crtime(trans, inode);
+	if (err)
+		goto out_fail;
+#endif /* MY_ABC_HERE */
+
 	set_nlink(inode, 1);
 	btrfs_i_size_write(BTRFS_I(inode), 0);
 	unlock_new_inode(inode);
@@ -8652,6 +10040,12 @@ int btrfs_create_subvol_root(struct btrfs_trans_handle *trans,
 
 	iput(inode);
 	return err;
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+out_fail:
+	inode_dec_link_count(inode);
+	discard_new_inode(inode);
+	return err;
+#endif /* MY_ABC_HERE || MY_ABC_HERE */
 }
 
 struct inode *btrfs_alloc_inode(struct super_block *sb)
@@ -8697,6 +10091,13 @@ struct inode *btrfs_alloc_inode(struct super_block *sb)
 
 	inode = &ei->vfs_inode;
 	extent_map_tree_init(&ei->extent_tree);
+
+#ifdef MY_ABC_HERE
+	ei->extent_tree.inode = ei;
+	INIT_LIST_HEAD(&ei->free_extent_map_inode);
+	atomic_set(&ei->free_extent_map_counts, 0);
+#endif /* MY_ABC_HERE */
+
 	extent_io_tree_init(fs_info, &ei->io_tree, IO_TREE_INODE_IO, inode);
 	extent_io_tree_init(fs_info, &ei->io_failure_tree,
 			    IO_TREE_INODE_IO_FAILURE, inode);
@@ -8708,9 +10109,30 @@ struct inode *btrfs_alloc_inode(struct super_block *sb)
 	mutex_init(&ei->log_mutex);
 	btrfs_ordered_inode_tree_init(&ei->ordered_tree);
 	INIT_LIST_HEAD(&ei->delalloc_inodes);
+#ifdef MY_ABC_HERE
+	INIT_LIST_HEAD(&ei->syno_dirty_lru_inode);
+#endif /* MY_ABC_HERE */
 	INIT_LIST_HEAD(&ei->delayed_iput);
 	RB_CLEAR_NODE(&ei->rb_node);
 	init_rwsem(&ei->dio_sem);
+
+#ifdef MY_ABC_HERE
+	ei->__locker_state          = LS_OPEN;
+	ei->__locker_update_time    = LOCKER_DEFAULT_UPDATE_TIME;
+	ei->__locker_period_begin   = LOCKER_DEFAULT_PERIOD_BEGIN;
+	ei->__locker_period_end     = LOCKER_DEFAULT_PERIOD_END;
+	ei->locker_dirty            = false;
+	spin_lock_init(&ei->locker_lock);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	atomic_set(&ei->syno_uq_refs, 0);
+	ei->uq_reserved = 0;
+	ei->uq_rfer_used = 0;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	INIT_LIST_HEAD(&ei->syno_rbd_meta_file);
+#endif /* MY_ABC_HERE */
 
 	return inode;
 }
@@ -8738,6 +10160,9 @@ void btrfs_destroy_inode(struct inode *vfs_inode)
 	WARN_ON(vfs_inode->i_data.nrpages);
 	WARN_ON(inode->block_rsv.reserved);
 	WARN_ON(inode->block_rsv.size);
+#ifdef MY_ABC_HERE
+	WARN_ON(atomic_read(&inode->syno_uq_refs));
+#endif /* MY_ABC_HERE */
 	WARN_ON(inode->outstanding_extents);
 	WARN_ON(inode->delalloc_bytes);
 	WARN_ON(inode->new_delalloc_bytes);
@@ -8751,6 +10176,12 @@ void btrfs_destroy_inode(struct inode *vfs_inode)
 	 */
 	if (!root)
 		return;
+
+#ifdef MY_ABC_HERE
+	if (test_bit(BTRFS_FS_SYNO_QUOTA_V1_ENABLED, &root->fs_info->flags) ||
+			test_bit(BTRFS_FS_SYNO_QUOTA_V2_ENABLED, &root->fs_info->flags))
+		WARN_ON(inode->uq_reserved);
+#endif /* MY_ABC_HERE */
 
 	while (1) {
 		ordered = btrfs_lookup_first_ordered_extent(inode, (u64)-1);
@@ -8850,13 +10281,18 @@ static int btrfs_getattr(const struct path *path, struct kstat *stat,
 			 u32 request_mask, unsigned int flags)
 {
 	u64 delalloc_bytes;
+	u64 inode_bytes;
 	struct inode *inode = d_inode(path->dentry);
 	u32 blocksize = inode->i_sb->s_blocksize;
 	u32 bi_flags = BTRFS_I(inode)->flags;
 
 	stat->result_mask |= STATX_BTIME;
+#ifdef MY_ABC_HERE
+	btrfs_syno_get_crtime(inode, &stat->btime);
+#else /* MY_ABC_HERE */
 	stat->btime.tv_sec = BTRFS_I(inode)->i_otime.tv_sec;
 	stat->btime.tv_nsec = BTRFS_I(inode)->i_otime.tv_nsec;
+#endif /* MY_ABC_HERE */
 	if (bi_flags & BTRFS_INODE_APPEND)
 		stat->attributes |= STATX_ATTR_APPEND;
 	if (bi_flags & BTRFS_INODE_COMPRESS)
@@ -8872,15 +10308,109 @@ static int btrfs_getattr(const struct path *path, struct kstat *stat,
 				  STATX_ATTR_NODUMP);
 
 	generic_fillattr(inode, stat);
+#ifdef MY_ABC_HERE
+	btrfs_syno_locker_fillattr(inode, stat);
+#endif /* MY_ABC_HERE */
 	stat->dev = BTRFS_I(inode)->root->anon_dev;
 
 	spin_lock(&BTRFS_I(inode)->lock);
 	delalloc_bytes = BTRFS_I(inode)->new_delalloc_bytes;
+	inode_bytes = inode_get_bytes(inode);
 	spin_unlock(&BTRFS_I(inode)->lock);
-	stat->blocks = (ALIGN(inode_get_bytes(inode), blocksize) +
+	stat->blocks = (ALIGN(inode_bytes, blocksize) +
 			ALIGN(delalloc_bytes, blocksize)) >> 9;
 	return 0;
 }
+
+#ifdef MY_ABC_HERE
+static int btrfs_is_inode_inline(struct inode *inode)
+{
+	struct btrfs_path *path;
+	struct btrfs_inode *btrfs_inode = BTRFS_I(inode);
+	struct btrfs_root *root = btrfs_inode->root;
+	struct extent_buffer *leaf;
+	struct btrfs_key key;
+	struct btrfs_file_extent_item *fi;
+	u64 delalloc_bytes;
+	int ret;
+
+	// Deal with unflushed extents
+	spin_lock(&btrfs_inode->lock);
+	delalloc_bytes = btrfs_inode->delalloc_bytes;
+	spin_unlock(&btrfs_inode->lock);
+	if (delalloc_bytes) {
+		if (i_size_read(inode) > BTRFS_DEFAULT_MAX_INLINE)
+			return 0;
+		else
+			return 1;
+	}
+
+	path = btrfs_alloc_path();
+	if (!path)
+		return -ENOMEM;
+	path->leave_spinning = 1;
+
+	ret = btrfs_lookup_file_extent(NULL, root, path, btrfs_ino(btrfs_inode), 0, 0);
+	if (ret == 0) {
+		leaf = path->nodes[0];
+		btrfs_item_key_to_cpu(leaf, &key, path->slots[0]);
+		if (key.objectid == btrfs_ino(btrfs_inode) && key.type == BTRFS_EXTENT_DATA_KEY) {
+			fi = btrfs_item_ptr(leaf, path->slots[0],
+					struct btrfs_file_extent_item);
+			if (btrfs_file_extent_type(leaf, fi) == BTRFS_FILE_EXTENT_INLINE) {
+				btrfs_free_path(path);
+				return 1;
+			}
+		}
+	}
+	btrfs_free_path(path);
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
+
+static int btrfs_syno_getattr(struct dentry *dentry, struct kstat *kst, unsigned int syno_flags)
+{
+	int err = 0;
+	struct inode *inode = dentry->d_inode;
+
+	if (syno_flags & SYNOST_COMPRESSION)
+		kst->syno_compressed = BTRFS_I(inode)->flags & BTRFS_INODE_COMPRESS ? 1 : 0;
+
+	if (syno_flags & SYNOST_IS_INLINE) {
+                err = btrfs_is_inode_inline(inode);
+                if (err < 0)
+                        return err;
+                kst->is_inline = (err > 0);
+                err = 0;
+        }
+
+#ifdef MY_ABC_HERE
+	if (syno_flags & SYNOST_ARCHIVE_BIT) {
+		mutex_lock(&inode->i_archive_bit_mutex);
+		kst->syno_archive_bit = inode->i_archive_bit;
+		mutex_unlock(&inode->i_archive_bit_mutex);
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (syno_flags & SYNOST_CREATE_TIME) {
+		btrfs_syno_get_crtime(inode, &kst->syno_create_time);
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (syno_flags & SYNOST_ARCHIVE_VER) {
+		mutex_lock(&inode->i_archive_version_mutex);
+		err = btrfs_syno_get_inode_archive_version(dentry, &kst->syno_archive_version);
+		mutex_unlock(&inode->i_archive_version_mutex);
+	}
+#endif /* MY_ABC_HERE */
+
+	return err;
+}
+#endif /* MY_ABC_HERE */
 
 static int btrfs_rename_exchange(struct inode *old_dir,
 			      struct dentry *old_dentry,
@@ -8902,16 +10432,37 @@ static int btrfs_rename_exchange(struct inode *old_dir,
 	int ret2;
 	bool root_log_pinned = false;
 	bool dest_log_pinned = false;
+#if defined(MY_ABC_HERE)
+	int credit_for_syno = 0;
+#endif /* MY_ABC_HERE */
 	bool need_abort = false;
 
 	/* we only allow rename subvolume link between subvolumes */
 	if (old_ino != BTRFS_FIRST_FREE_OBJECTID && root != dest)
 		return -EXDEV;
 
+#ifdef MY_ABC_HERE
+	/*
+	 * we should check the locker status first. if both EOPNOTSUPP(source not empty)
+	 * and ENOTEMPTY(dest not empty), EOPNOTSUPP should be prior to ENOTEMPTY, because
+	 * SYNOCopyDirectoryExI() has different reactions on them and would like to handle
+	 * EOPNOTSUPP first.
+	 */
+	ret = btrfs_syno_locker_may_rename(old_dir, old_dentry, new_dir, new_dentry, true);
+	if (ret)
+		return ret;
+#endif /* MY_ABC_HERE */
+
 	/* close the race window with snapshot create/destroy ioctl */
 	if (old_ino == BTRFS_FIRST_FREE_OBJECTID ||
 	    new_ino == BTRFS_FIRST_FREE_OBJECTID)
 		down_read(&fs_info->subvol_sem);
+
+#ifdef MY_ABC_HERE
+	// 2 for dir_item_caseless
+	if (btrfs_super_compat_flags(root->fs_info->super_copy) & BTRFS_FEATURE_COMPAT_SYNO_CASELESS)
+		credit_for_syno += 2;
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * We want to reserve the absolute worst case amount of items.  So if
@@ -8921,7 +10472,11 @@ static int btrfs_rename_exchange(struct inode *old_dir,
 	 * inodes.  So 5 * 2 is 10, plus 2 for the new links, so 12 total items
 	 * should cover the worst case number of items we'll modify.
 	 */
+#if defined(MY_ABC_HERE)
+	trans = btrfs_start_transaction(root, 12 + credit_for_syno);
+#else /* MY_ABC_HERE */
 	trans = btrfs_start_transaction(root, 12);
+#endif /* MY_ABC_HERE */
 	if (IS_ERR(trans)) {
 		ret = PTR_ERR(trans);
 		goto out_notrans;
@@ -9186,11 +10741,27 @@ static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	    new_inode->i_size > BTRFS_EMPTY_DIR_SIZE)
 		return -ENOTEMPTY;
 
+#ifdef MY_ABC_HERE
+	/*
+	 * we should check the locker status first. if both EOPNOTSUPP(source not empty)
+	 * and ENOTEMPTY(dest not empty), EOPNOTSUPP should be prior to ENOTEMPTY, because
+	 * SYNOCopyDirectoryExI() has different reactions on them and would like to handle
+	 * EOPNOTSUPP first.
+	 */
+	ret = btrfs_syno_locker_may_rename(old_dir, old_dentry, new_dir, new_dentry, true);
+	if (ret)
+		return ret;
+#endif /* MY_ABC_HERE */
+
 
 	/* check for collisions, even if the  name isn't there */
 	ret = btrfs_check_dir_item_collision(dest, new_dir->i_ino,
 			     new_dentry->d_name.name,
-			     new_dentry->d_name.len);
+			     new_dentry->d_name.len
+#ifdef MY_ABC_HERE
+			     , 1
+#endif /* MY_ABC_HERE */
+			     );
 
 	if (ret) {
 		if (ret == -EEXIST) {
@@ -9230,6 +10801,14 @@ static int btrfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	trans_num_items = 11;
 	if (flags & RENAME_WHITEOUT)
 		trans_num_items += 5;
+#if defined(MY_ABC_HERE)
+	// 1 for dir_item_caseless
+	if (btrfs_super_compat_flags(root->fs_info->super_copy) & BTRFS_FEATURE_COMPAT_SYNO_CASELESS)  {
+		++trans_num_items;
+		if (flags & RENAME_WHITEOUT)
+			++trans_num_items;
+	}
+#endif /* MY_ABC_HERE */
 	trans = btrfs_start_transaction(root, trans_num_items);
 	if (IS_ERR(trans)) {
 		ret = PTR_ERR(trans);
@@ -9385,23 +10964,53 @@ struct btrfs_delalloc_work {
 	struct completion completion;
 	struct list_head list;
 	struct btrfs_work work;
+#ifdef MY_ABC_HERE
+	bool syno_writeback;
+#endif /* MY_ABC_HERE */
 };
 
 static void btrfs_run_delalloc_work(struct btrfs_work *work)
 {
 	struct btrfs_delalloc_work *delalloc_work;
 	struct inode *inode;
+#ifdef MY_ABC_HERE
+	struct btrfs_fs_info *fs_info = NULL;
+	bool syno_writeback = false;
+	struct blk_plug plug;
+#endif /* MY_ABC_HERE */
 
 	delalloc_work = container_of(work, struct btrfs_delalloc_work,
 				     work);
 	inode = delalloc_work->inode;
+#ifdef MY_ABC_HERE
+	blk_start_plug(&plug);
+#endif /* MY_ABC_HERE */
 	filemap_flush(inode->i_mapping);
 	if (test_bit(BTRFS_INODE_HAS_ASYNC_EXTENT,
 				&BTRFS_I(inode)->runtime_flags))
 		filemap_flush(inode->i_mapping);
+#ifdef MY_ABC_HERE
+	blk_finish_plug(&plug);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (delalloc_work->syno_writeback) {
+		spin_lock(&inode->i_lock);
+		inode_sync_complete(inode);
+		spin_unlock(&inode->i_lock);
+		syno_writeback = true;
+		fs_info = BTRFS_I(inode)->root->fs_info;
+	}
+#endif /* MY_ABC_HERE */
 
 	iput(inode);
 	complete(&delalloc_work->completion);
+#ifdef MY_ABC_HERE
+	if (syno_writeback && fs_info) {
+		atomic_dec(&fs_info->syno_writeback_thread_count);
+		kfree(delalloc_work);
+	}
+#endif /* MY_ABC_HERE */
 }
 
 static struct btrfs_delalloc_work *btrfs_alloc_delalloc_work(struct inode *inode)
@@ -9415,6 +11024,9 @@ static struct btrfs_delalloc_work *btrfs_alloc_delalloc_work(struct inode *inode
 	init_completion(&work->completion);
 	INIT_LIST_HEAD(&work->list);
 	work->inode = inode;
+#ifdef MY_ABC_HERE
+	work->syno_writeback = false;
+#endif /* MY_ABC_HERE */
 	btrfs_init_work(&work->work, btrfs_run_delalloc_work, NULL, NULL);
 
 	return work;
@@ -9503,6 +11115,90 @@ out:
 	mutex_unlock(&root->delalloc_mutex);
 	return ret;
 }
+
+#ifdef MY_ABC_HERE
+void syno_writeback_balance_dirty_pages(struct btrfs_fs_info *fs_info)
+{
+	struct btrfs_delalloc_work *work;
+	struct btrfs_inode *binode, *first_binode = NULL;
+	struct inode *inode;
+	int nr_retry = 8;
+
+	if (btrfs_fs_closing(fs_info) || fs_info->syno_writeback_thread_max == 0)
+		goto out;
+
+	if (!writeback_in_progress(&fs_info->sb->s_bdi->wb))
+		goto out;
+
+	if (list_empty(&fs_info->syno_dirty_lru_inodes))
+		goto out;
+
+	if (atomic_read(&fs_info->syno_writeback_thread_count) >= fs_info->syno_writeback_thread_max)
+		goto out;
+
+	syno_perf_indicator_dirty_limit_update(fs_info);
+	if ((global_node_page_state(NR_FILE_DIRTY) < fs_info->syno_perf_indicator.dirty_background_thresh) &&
+		!work_busy(&fs_info->async_reclaim_work))
+		goto out;
+
+	if (!atomic_add_unless(&fs_info->syno_writeback_thread_count, 1, fs_info->syno_writeback_thread_max))
+		goto out;
+
+	spin_lock(&fs_info->syno_multiple_writeback_lock);
+again:
+	if (list_empty(&fs_info->syno_dirty_lru_inodes)) {
+		spin_unlock(&fs_info->syno_multiple_writeback_lock);
+		goto out_dec;
+	}
+	binode = list_first_entry(&fs_info->syno_dirty_lru_inodes, struct btrfs_inode, syno_dirty_lru_inode);
+	if (first_binode == binode)
+		nr_retry = 0;
+	if (!first_binode)
+		first_binode = binode;
+	inode = igrab(&binode->vfs_inode);
+	if (!inode) {
+		list_del_init(&binode->syno_dirty_lru_inode);
+		clear_bit(BTRFS_INODE_SYNO_WRITEBACK_LRU_LIST, &binode->runtime_flags);
+		if (first_binode == binode)
+			first_binode = NULL;
+		goto again;
+	}
+	spin_lock(&inode->i_lock);
+	if (inode->i_state & I_SYNC) {
+		spin_unlock(&inode->i_lock);
+		iput(inode);
+		if (nr_retry-- > 0) {
+			list_move_tail(&binode->syno_dirty_lru_inode, &fs_info->syno_dirty_lru_inodes);
+			goto again;
+		}
+		spin_unlock(&fs_info->syno_multiple_writeback_lock);
+		goto out_dec;
+	}
+	inode->i_state |= I_SYNC;
+	spin_unlock(&inode->i_lock);
+
+	list_move_tail(&BTRFS_I(inode)->syno_dirty_lru_inode, &fs_info->syno_dirty_lru_inodes);
+	spin_unlock(&fs_info->syno_multiple_writeback_lock);
+
+	work = btrfs_alloc_delalloc_work(inode);
+	if (!work)
+		goto out_inode;
+	work->syno_writeback = true;
+	btrfs_queue_work(fs_info->syno_multiple_writeback_workers, &work->work);
+
+out:
+	return;
+
+out_inode:
+	spin_lock(&inode->i_lock);
+	inode_sync_complete(inode);
+	spin_unlock(&inode->i_lock);
+	iput(inode);
+out_dec:
+	atomic_dec(&fs_info->syno_writeback_thread_count);
+	goto out;
+}
+#endif /* MY_ABC_HERE */
 
 int btrfs_start_delalloc_snapshot(struct btrfs_root *root)
 {
@@ -9593,10 +11289,37 @@ static int btrfs_symlink(struct inode *dir, struct dentry *dentry,
 	unsigned long ptr;
 	struct btrfs_file_extent_item *ei;
 	struct extent_buffer *leaf;
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+	int credit_for_syno = 0;
+#endif /* MY_ABC_HERE || MY_ABC_HERE || MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	bool quota_added = false;
+	bool need_reserve = test_bit(BTRFS_FS_SYNO_QUOTA_V2_ENABLED, &fs_info->flags); // Only V2 account symlink's quota.
+#endif /* MY_ABC_HERE */
 
 	name_len = strlen(symname);
 	if (name_len > BTRFS_MAX_INLINE_DATA_SIZE(fs_info))
 		return -ENAMETOOLONG;
+
+#ifdef MY_ABC_HERE
+	err = btrfs_check_dir_item_collision(root, dir->i_ino,
+					     dentry->d_name.name,
+					     dentry->d_name.len,
+					     0);
+	if (err)
+		return err;
+	// 1 for dir_item_caseless
+	if (btrfs_super_compat_flags(root->fs_info->super_copy) & BTRFS_FEATURE_COMPAT_SYNO_CASELESS)
+		credit_for_syno++;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	// 1 for xattr to store archive bit
+	credit_for_syno++;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	credit_for_syno++;
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * 2 items for inode item and ref
@@ -9605,7 +11328,11 @@ static int btrfs_symlink(struct inode *dir, struct dentry *dentry,
 	 * 1 item for the inline extent item
 	 * 1 item for xattr if selinux is on
 	 */
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+	trans = btrfs_start_transaction(root, 7 + credit_for_syno);
+#else /* MY_ABC_HERE || MY_ABC_HERE || MY_ABC_HERE */
 	trans = btrfs_start_transaction(root, 7);
+#endif /* MY_ABC_HERE || MY_ABC_HERE || MY_ABC_HERE */
 	if (IS_ERR(trans))
 		return PTR_ERR(trans);
 
@@ -9622,6 +11349,21 @@ static int btrfs_symlink(struct inode *dir, struct dentry *dentry,
 		goto out_unlock;
 	}
 
+#ifdef MY_ABC_HERE
+	down_read(&fs_info->inflight_reserve_lock);
+
+	if (need_reserve) {
+		// After btrfs_new_inode(), so we can get uid to reserve user quota.
+		err = btrfs_qgroup_syno_reserve(root, name_len);
+		if (err < 0)
+			goto free_inode;
+
+		err = btrfs_usrquota_syno_reserve(BTRFS_I(inode), name_len);
+		if (err < 0)
+			goto free_qgroup;
+	}
+#endif /* MY_ABC_HERE */
+
 	/*
 	* If the active LSM wants to access the inode during
 	* d_instantiate it needs these. Smack checks to see
@@ -9635,6 +11377,18 @@ static int btrfs_symlink(struct inode *dir, struct dentry *dentry,
 	err = btrfs_init_inode_security(trans, inode, dir, &dentry->d_name);
 	if (err)
 		goto out_unlock;
+
+#ifdef MY_ABC_HERE
+	err = btrfs_syno_init_archive_bit(trans, inode);
+	if (err)
+		goto out_unlock;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	err = btrfs_syno_init_crtime(trans, inode);
+	if (err)
+		goto out_unlock;
+#endif /* MY_ABC_HERE */
 
 	path = btrfs_alloc_path();
 	if (!path) {
@@ -9660,6 +11414,9 @@ static int btrfs_symlink(struct inode *dir, struct dentry *dentry,
 	btrfs_set_file_extent_encryption(leaf, ei, 0);
 	btrfs_set_file_extent_compression(leaf, ei, 0);
 	btrfs_set_file_extent_other_encoding(leaf, ei, 0);
+#ifdef MY_ABC_HERE
+	btrfs_set_file_extent_syno_flag(leaf, ei, 0);
+#endif /* MY_ABC_HERE */
 	btrfs_set_file_extent_ram_bytes(leaf, ei, name_len);
 
 	ptr = btrfs_file_extent_inline_start(ei);
@@ -9669,7 +11426,18 @@ static int btrfs_symlink(struct inode *dir, struct dentry *dentry,
 
 	inode->i_op = &btrfs_symlink_inode_operations;
 	inode_nohighmem(inode);
+#ifdef MY_ABC_HERE
+	down_read(&root->rescan_lock);
 	inode_set_bytes(inode, name_len);
+	btrfs_qgroup_syno_accounting(BTRFS_I(inode),
+			name_len, 0, UPDATE_QUOTA_FREE_RESERVED);
+	btrfs_usrquota_syno_accounting(BTRFS_I(inode),
+			name_len, 0, UPDATE_QUOTA_FREE_RESERVED);
+	up_read(&root->rescan_lock);
+	quota_added = true;
+#else
+	inode_set_bytes(inode, name_len);
+#endif /* MY_ABC_HERE */
 	btrfs_i_size_write(BTRFS_I(inode), name_len);
 	err = btrfs_update_inode(trans, root, inode);
 	/*
@@ -9686,6 +11454,26 @@ static int btrfs_symlink(struct inode *dir, struct dentry *dentry,
 	d_instantiate_new(dentry, inode);
 
 out_unlock:
+#ifdef MY_ABC_HERE
+	if (err && inode) {
+		if (quota_added)
+			btrfs_qgroup_syno_accounting(BTRFS_I(inode),
+						0, name_len, UPDATE_QUOTA);
+		if (need_reserve)
+			btrfs_usrquota_syno_free(BTRFS_I(inode), name_len);
+	}
+free_qgroup:
+	if (err && inode) {
+		if (quota_added)
+			btrfs_usrquota_syno_accounting(BTRFS_I(inode),
+						0, name_len, UPDATE_QUOTA);
+		if (need_reserve)
+			btrfs_qgroup_syno_free(root, name_len);
+	}
+free_inode:
+	if (inode)
+		up_read(&fs_info->inflight_reserve_lock);
+#endif /* MY_ABC_HERE */
 	btrfs_end_transaction(trans);
 	if (err && inode) {
 		inode_dec_link_count(inode);
@@ -9698,7 +11486,11 @@ out_unlock:
 static struct btrfs_trans_handle *insert_prealloc_file_extent(
 				       struct btrfs_trans_handle *trans_in,
 				       struct inode *inode, struct btrfs_key *ins,
-				       u64 file_offset)
+				       u64 file_offset
+#ifdef CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN
+				       , int extent_type
+#endif /* CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN */
+				       )
 {
 	struct btrfs_file_extent_item stack_fi;
 	struct btrfs_replace_extent_info extent_info;
@@ -9710,13 +11502,20 @@ static struct btrfs_trans_handle *insert_prealloc_file_extent(
 
 	memset(&stack_fi, 0, sizeof(stack_fi));
 
+#ifdef CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN
+	btrfs_set_stack_file_extent_type(&stack_fi, extent_type);
+#else /* CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN */
 	btrfs_set_stack_file_extent_type(&stack_fi, BTRFS_FILE_EXTENT_PREALLOC);
+#endif /* CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN */
 	btrfs_set_stack_file_extent_disk_bytenr(&stack_fi, start);
 	btrfs_set_stack_file_extent_disk_num_bytes(&stack_fi, len);
 	btrfs_set_stack_file_extent_num_bytes(&stack_fi, len);
 	btrfs_set_stack_file_extent_ram_bytes(&stack_fi, len);
 	btrfs_set_stack_file_extent_compression(&stack_fi, BTRFS_COMPRESS_NONE);
 	/* Encryption and other encoding is reserved and all 0 */
+#ifdef MY_ABC_HERE
+	/* syno flag is 0 */
+#endif /* MY_ABC_HERE */
 
 	ret = btrfs_qgroup_release_data(BTRFS_I(inode), file_offset, len);
 	if (ret < 0)
@@ -9724,7 +11523,8 @@ static struct btrfs_trans_handle *insert_prealloc_file_extent(
 
 	if (trans) {
 		ret = insert_reserved_file_extent(trans, BTRFS_I(inode),
-						  file_offset, &stack_fi, ret);
+						  file_offset, &stack_fi,
+						  true, ret);
 		if (ret)
 			return ERR_PTR(ret);
 		return trans;
@@ -9739,6 +11539,11 @@ static struct btrfs_trans_handle *insert_prealloc_file_extent(
 	extent_info.is_new_extent = true;
 	extent_info.qgroup_reserved = ret;
 	extent_info.insertions = 0;
+#ifdef MY_ABC_HERE
+	extent_info.clone_range = false;
+	extent_info.clone_account_quota = false;
+	extent_info.clone_check_backref = false;
+#endif /* MY_ABC_HERE */
 
 	path = btrfs_alloc_path();
 	if (!path)
@@ -9746,7 +11551,11 @@ static struct btrfs_trans_handle *insert_prealloc_file_extent(
 
 	ret = btrfs_replace_file_extents(inode, path, file_offset,
 				     file_offset + len - 1, &extent_info,
-				     &trans);
+				     &trans
+#ifdef MY_ABC_HERE
+				     , NULL
+#endif /* MY_ABC_HERE */
+				     );
 	btrfs_free_path(path);
 	if (ret)
 		return ERR_PTR(ret);
@@ -9772,48 +11581,96 @@ static int __btrfs_prealloc_file_range(struct inode *inode, int mode,
 	int ret = 0;
 	bool own_trans = true;
 	u64 end = start + num_bytes - 1;
+#ifdef MY_ABC_HERE
+	bool dedupe = root->inline_dedupe;
+#endif /* MY_ABC_HERE */
+#ifdef CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN
+	int mark_written = (mode & FALLOC_FL_MARK_WRITTEN);
+	int extent_type = BTRFS_FILE_EXTENT_PREALLOC;
+#endif /* CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN */
 
+#ifdef MY_ABC_HERE
+	if ((BTRFS_I(inode)->flags & BTRFS_INODE_NODEDUPE) ||
+			test_bit(BTRFS_FS_SYNO_QUOTA_V1_ENABLED, &fs_info->flags))
+		dedupe = false;
+
+	if (dedupe)
+		mark_written = false;
+#endif
+#ifdef CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN
+	if (mark_written)
+		extent_type = BTRFS_FILE_EXTENT_REG;
+#endif /* CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN */
 	if (trans)
 		own_trans = false;
 	while (num_bytes > 0) {
 		cur_bytes = min_t(u64, num_bytes, SZ_256M);
 		cur_bytes = max(cur_bytes, min_size);
-		/*
-		 * If we are severely fragmented we could end up with really
-		 * small allocations, so if the allocator is returning small
-		 * chunks lets make its job easier by only searching for those
-		 * sized chunks.
-		 */
-		cur_bytes = min(cur_bytes, last_alloc);
-		ret = btrfs_reserve_extent(root, cur_bytes, cur_bytes,
-				min_size, 0, *alloc_hint, &ins, 1, 0);
-		if (ret)
-			break;
+#ifdef MY_ABC_HERE
+		if (dedupe) {
+			if (own_trans) {
+				trans = btrfs_start_transaction(root, 3);
+				if (IS_ERR(trans)) {
+					ret = PTR_ERR(trans);
+					break;
+				}
+			}
+			ret = insert_dedupe_file_extent(trans, inode, cur_offset, cur_bytes, 0, 0, 0);
+			if (ret) {
+				btrfs_abort_transaction(trans, ret);
+				if (own_trans)
+					btrfs_end_transaction(trans);
+				break;
+			}
+			ins.objectid = 0;
+			ins.offset = cur_bytes;
+			btrfs_free_reserved_data_space(BTRFS_I(inode), NULL, cur_offset, cur_bytes);
+			clear_offset += ins.offset;
+		} else {
+#endif /* MY_ABC_HERE */
+			/*
+			 * If we are severely fragmented we could end up with really
+			 * small allocations, so if the allocator is returning small
+			 * chunks lets make its job easier by only searching for those
+			 * sized chunks.
+			 */
+			cur_bytes = min(cur_bytes, last_alloc);
+			ret = btrfs_reserve_extent(root, cur_bytes, cur_bytes,
+					min_size, 0, *alloc_hint, &ins, 1, 0);
+			if (ret)
+				break;
 
-		/*
-		 * We've reserved this space, and thus converted it from
-		 * ->bytes_may_use to ->bytes_reserved.  Any error that happens
-		 * from here on out we will only need to clear our reservation
-		 * for the remaining unreserved area, so advance our
-		 * clear_offset by our extent size.
-		 */
-		clear_offset += ins.offset;
+			/*
+			 * We've reserved this space, and thus converted it from
+			 * ->bytes_may_use to ->bytes_reserved.  Any error that happens
+			 * from here on out we will only need to clear our reservation
+			 * for the remaining unreserved area, so advance our
+			 * clear_offset by our extent size.
+			 */
+			clear_offset += ins.offset;
 
-		last_alloc = ins.offset;
-		trans = insert_prealloc_file_extent(trans, inode, &ins, cur_offset);
-		/*
-		 * Now that we inserted the prealloc extent we can finally
-		 * decrement the number of reservations in the block group.
-		 * If we did it before, we could race with relocation and have
-		 * relocation miss the reserved extent, making it fail later.
-		 */
-		btrfs_dec_block_group_reservations(fs_info, ins.objectid);
-		if (IS_ERR(trans)) {
-			ret = PTR_ERR(trans);
-			btrfs_free_reserved_extent(fs_info, ins.objectid,
-						   ins.offset, 0);
-			break;
+			last_alloc = ins.offset;
+			trans = insert_prealloc_file_extent(trans, inode, &ins, cur_offset
+#ifdef CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN
+							   , extent_type
+#endif /* CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN */
+							   );
+			/*
+			 * Now that we inserted the prealloc extent we can finally
+			 * decrement the number of reservations in the block group.
+			 * If we did it before, we could race with relocation and have
+			 * relocation miss the reserved extent, making it fail later.
+			 */
+			btrfs_dec_block_group_reservations(fs_info, ins.objectid);
+			if (IS_ERR(trans)) {
+				ret = PTR_ERR(trans);
+				btrfs_free_reserved_extent(fs_info, ins.objectid,
+							ins.offset, 0);
+				break;
+			}
+#ifdef MY_ABC_HERE
 		}
+#endif /* MY_ABC_HERE */
 
 		btrfs_drop_extent_cache(BTRFS_I(inode), cur_offset,
 					cur_offset + ins.offset -1, 0);
@@ -9832,9 +11689,24 @@ static int __btrfs_prealloc_file_range(struct inode *inode, int mode,
 		em->block_len = ins.offset;
 		em->orig_block_len = ins.offset;
 		em->ram_bytes = ins.offset;
+#ifdef MY_ABC_HERE
+		if (!dedupe)
+#endif /* MY_ABC_HERE */
+#ifdef CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN
+		if (!mark_written)
+			set_bit(EXTENT_FLAG_PREALLOC, &em->flags);
+#else /* CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN */
 		set_bit(EXTENT_FLAG_PREALLOC, &em->flags);
+#endif /* CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN */
 		em->generation = trans->transid;
 
+#ifdef MY_ABC_HERE
+		if (dedupe) {
+			em->block_start = EXTENT_MAP_HOLE;
+			em->block_len = 0;
+			em->orig_block_len = 0;
+		}
+#endif /* MY_ABC_HERE */
 		while (1) {
 			write_lock(&em_tree->lock);
 			ret = add_extent_mapping(em_tree, em, 1);
@@ -9853,7 +11725,12 @@ next:
 
 		inode_inc_iversion(inode);
 		inode->i_ctime = current_time(inode);
+#ifdef CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN
+		if (!mark_written)
+			BTRFS_I(inode)->flags |= BTRFS_INODE_PREALLOC;
+#else /* CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN */
 		BTRFS_I(inode)->flags |= BTRFS_INODE_PREALLOC;
+#endif /* CONFIG_SYNO_BTRFS_FALLOCATE_MARK_WRITTEN */
 		if (!(mode & FALLOC_FL_KEEP_SIZE) &&
 		    (actual_len > inode->i_size) &&
 		    (cur_offset > inode->i_size)) {
@@ -9922,6 +11799,36 @@ static int btrfs_permission(struct inode *inode, int mask)
 	}
 	return generic_permission(inode, mask);
 }
+
+#ifdef MY_ABC_HERE
+static int btrfs_syno_permission(struct dentry *dentry, int mask)
+{
+	struct inode *inode = d_inode(dentry);
+	struct btrfs_root *root = BTRFS_I(inode)->root;
+	umode_t mode = inode->i_mode;
+
+	if (mask & MASK_RDONLY_CHECK &&
+	    (S_ISREG(mode) || S_ISDIR(mode) || S_ISLNK(mode))) {
+		if (btrfs_root_readonly(root))
+			return -EROFS;
+		if (BTRFS_I(inode)->flags & BTRFS_INODE_READONLY)
+			return -EACCES;
+	}
+	return synoacl_mod_permission(dentry, mask);
+}
+
+static int btrfs_syno_may_delete(struct dentry *victim, struct inode *dir)
+{
+	struct btrfs_root *root = BTRFS_I(dir)->root;
+
+	if (btrfs_root_readonly(root))
+		return -EROFS;
+	if (BTRFS_I(dir)->flags & BTRFS_INODE_READONLY)
+		return -EACCES;
+	return synoacl_mod_may_delete(victim, dir);
+}
+#endif /* MY_ABC_HERE */
+
 
 static int btrfs_tmpfile(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
@@ -10009,7 +11916,11 @@ void btrfs_set_range_writeback(struct extent_io_tree *tree, u64 start, u64 end)
  * swapfile. Returns 0 on success, 1 if there is already an entry for it, or a
  * negative errno on failure.
  */
-static int btrfs_add_swapfile_pin(struct inode *inode, void *ptr,
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
+static
+#endif /* MY_ABC_HERE */
+int btrfs_add_swapfile_pin(struct inode *inode, void *ptr,
 				  bool is_block_group)
 {
 	struct btrfs_fs_info *fs_info = BTRFS_I(inode)->root->fs_info;
@@ -10051,7 +11962,11 @@ static int btrfs_add_swapfile_pin(struct inode *inode, void *ptr,
 }
 
 /* Free all of the entries pinned by this swapfile. */
-static void btrfs_free_swapfile_pins(struct inode *inode)
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
+static
+#endif /* MY_ABC_HERE */
+void btrfs_free_swapfile_pins(struct inode *inode)
 {
 	struct btrfs_fs_info *fs_info = BTRFS_I(inode)->root->fs_info;
 	struct btrfs_swapfile_pin *sp;
@@ -10374,7 +12289,455 @@ static int btrfs_swap_activate(struct swap_info_struct *sis, struct file *file,
 }
 #endif
 
+#ifdef MY_ABC_HERE
+int btrfs_quota_query(struct file *file, u64 *used, u64 *reserved, u64 *limit)
+{
+	struct btrfs_root *root = BTRFS_I(file_inode(file))->root;
+	struct btrfs_ioctl_qgroup_query_args qqa;
+	int ret;
+
+	memset(&qqa, 0, sizeof(qqa));
+
+	// use subvol id as qgroup id
+	ret = btrfs_qgroup_query(root, &qqa);
+	if (!ret) {
+		*used = qqa.rfer;
+		*reserved = qqa.reserved;
+		*limit = qqa.max_rfer;
+	}
+
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+int btrfs_syno_space_usage(struct file *file, struct syno_space_usage_info *info)
+{
+	int ret;
+	struct btrfs_root *root = BTRFS_I(file_inode(file))->root;
+
+	if (!info) {
+		ret = -EINVAL;
+		goto out;
+	}
+	memset(&info->result_mask, 0, sizeof(*info) - offsetof(struct syno_space_usage_info, result_mask));
+
+	if (!info->request_mask)
+		goto success;
+
+#ifdef MY_ABC_HERE
+	if ((info->request_mask & SYNO_SPACE_USAGE_REQUEST_DATA_USED) &&
+		test_bit(BTRFS_ROOT_SYNO_SPACE_USAGE_ENABLED, &root->state)) {
+		info->data_used = root->syno_usage_root_status.num_bytes;
+		if (root->syno_usage_root_status.flags & BTRFS_SYNO_USAGE_ROOT_FLAG_FULL_RESCAN)
+			info->flags |= SYNO_SPACE_USAGE_FLAG_RESCAN;
+		info->result_mask |= SYNO_SPACE_USAGE_REQUEST_DATA_USED;
+	}
+
+	if (info->request_mask & SYNO_SPACE_USAGE_REQUEST_DATA_DELAY_ALLOCATED &&
+		root->syno_delalloc_bytes) {
+		info->data_delay_allocated = percpu_counter_sum_positive(root->syno_delalloc_bytes);
+		info->result_mask |= SYNO_SPACE_USAGE_REQUEST_DATA_DELAY_ALLOCATED;
+	}
+#endif /* MY_ABC_HERE */
+
+	if (info->request_mask & SYNO_SPACE_USAGE_REQUEST_METADATA_USED) {
+		info->metadata_used = btrfs_root_used(&root->root_item);
+		info->result_mask |= SYNO_SPACE_USAGE_REQUEST_METADATA_USED;
+	}
+
+	if (!info->result_mask) {
+		ret = -EOPNOTSUPP;
+		goto out;
+	}
+
+success:
+	ret = 0;
+out:
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static int btrfs_fsdev_mapping(struct inode *inode, u64 start, u64 end, u64 *dev_start, u64 *dev_end)
+{
+	int ret;
+	struct btrfs_root *root = BTRFS_I(inode)->root;
+	struct btrfs_fs_info *fs_info = root->fs_info;
+	struct extent_io_tree *io_tree = &BTRFS_I(inode)->io_tree;
+	struct extent_state *cached_state = NULL;
+	struct extent_map *em = NULL;
+	u64 isize;
+	u64 len;
+	u64 logical_block_start, physical_block_start;
+
+	if (end < start ||
+		!dev_start || !dev_end ||
+		!IS_SWAPFILE(inode)) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	start = round_down(start, fs_info->sectorsize);
+	len = round_up(end - start + 1, fs_info->sectorsize);
+	end = start + len - 1;
+
+	isize = ALIGN_DOWN(inode->i_size, fs_info->sectorsize);
+	if (end >= isize) {
+		ret = -EOVERFLOW;
+		goto out;
+	}
+
+	lock_extent_bits(io_tree, start, end, &cached_state);
+
+	em = btrfs_get_extent(BTRFS_I(inode), NULL, 0, start, len);
+	if (IS_ERR(em)) {
+		ret = PTR_ERR(em);
+		goto out_lock;
+	}
+
+	if (em->block_start == EXTENT_MAP_HOLE) {
+		btrfs_info(fs_info, "fsdev file must not have holes");
+		ret = -EINVAL;
+		goto out_lock;
+	}
+	if (em->block_start == EXTENT_MAP_INLINE) {
+		/*
+		 * It's unlikely we'll ever actually find ourselves
+		 * here, as a file small enough to fit inline won't be
+		 * big enough to store more than the swap header, but in
+		 * case something changes in the future, let's catch it
+		 * here rather than later.
+		 */
+		btrfs_info(fs_info, "fsdev file must not be inline");
+		ret = -EINVAL;
+		goto out_lock;
+	}
+	if (test_bit(EXTENT_FLAG_COMPRESSED, &em->flags)) {
+		btrfs_info(fs_info, "fsdev file must not be compressed");
+		ret = -EINVAL;
+		goto out_lock;
+	}
+
+	logical_block_start = em->block_start + (start - em->start);
+	len = min(len, em->len - (start - em->start));
+	free_extent_map(em);
+	em = NULL;
+
+	em = btrfs_get_chunk_map(fs_info, logical_block_start, len);
+	if (IS_ERR(em)) {
+		ret = PTR_ERR(em);
+		goto out_lock;
+	}
+
+	if (em->map_lookup->type & BTRFS_BLOCK_GROUP_PROFILE_MASK) {
+		btrfs_info(fs_info, "fsdev file must have single data profile");
+		ret = -EINVAL;
+		goto out_lock;
+	}
+
+	physical_block_start = (em->map_lookup->stripes[0].physical +
+				(logical_block_start - em->start));
+	len = min(len, em->len - (logical_block_start - em->start));
+	free_extent_map(em);
+	em = NULL;
+
+	*dev_start = physical_block_start;
+	*dev_end = physical_block_start + len - 1;
+
+	ret = 0;
+out_lock:
+	if (!IS_ERR_OR_NULL(em))
+		free_extent_map(em);
+	unlock_extent_cached(io_tree, start, end, &cached_state);
+out:
+	return ret;
+}
+
+static void btrfs_fsdev_deactivate(struct inode *inode)
+{
+	btrfs_free_swapfile_pins(inode);
+	atomic_dec(&BTRFS_I(inode)->root->nr_swapfiles);
+}
+
+static int btrfs_fsdev_activate(struct inode *inode, struct block_device **fs_bdev)
+{
+	int ret;
+	struct btrfs_root *root = BTRFS_I(inode)->root;
+	struct btrfs_fs_info *fs_info = root->fs_info;
+	struct extent_io_tree *io_tree = &BTRFS_I(inode)->io_tree;
+	struct extent_state *cached_state = NULL;
+	struct extent_map *em = NULL;
+	struct btrfs_device *device = NULL;
+	u64 isize;
+	u64 start;
+
+	if (!fs_bdev) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	/*
+	 * If the fsdev file was just created, make sure delalloc is done. If the
+	 * file changes again after this, the user is doing something stupid and
+	 * we don't really care.
+	 */
+	ret = btrfs_wait_ordered_range(inode, 0, (u64)-1);
+	if (ret)
+		goto out;
+
+	/*
+	 * The inode is locked, so these flags won't change after we check them.
+	 */
+	if (BTRFS_I(inode)->flags & BTRFS_INODE_COMPRESS) {
+		btrfs_info(fs_info, "fsdev file must not be compressed");
+		ret = -EINVAL;
+		goto out;
+	}
+	if (!(BTRFS_I(inode)->flags & BTRFS_INODE_NODATACOW)) {
+		btrfs_info(fs_info, "fsdev file must not be copy-on-write");
+		ret = -EINVAL;
+		goto out;
+	}
+	if (!(BTRFS_I(inode)->flags & BTRFS_INODE_NODATASUM)) {
+		btrfs_info(fs_info, "fsdev file must not be checksummed");
+		ret = -EINVAL;
+		goto out;
+	}
+	if (!(BTRFS_I(inode)->flags & BTRFS_INODE_IMMUTABLE)) {
+		btrfs_info(fs_info, "fsdev file must be immutable");
+		ret = -EINVAL;
+		goto out;
+	}
+
+	/*
+	 * Balance or device remove/replace/resize can move stuff around from
+	 * under us. The exclop protection makes sure they aren't running/won't
+	 * run concurrently while we are mapping the swap extents, and
+	 * fs_info->swapfile_pins prevents them from running while the swap
+	 * file is active and moving the extents. Note that this also prevents
+	 * a concurrent device add which isn't actually necessary, but it's not
+	 * really worth the trouble to allow it.
+	 */
+	if (!btrfs_exclop_start(fs_info, BTRFS_EXCLOP_SWAP_ACTIVATE)) {
+		btrfs_warn(fs_info,
+	   "cannot activate fsdev file while exclusive operation is running");
+		ret = -EBUSY;
+		goto out;
+	}
+
+	/*
+	 * Prevent snapshot creation while we are activating the swap file.
+	 * We do not want to race with snapshot creation. If snapshot creation
+	 * already started before we bumped nr_swapfiles from 0 to 1 and
+	 * completes before the first write into the swap file after it is
+	 * activated, than that write would fallback to COW.
+	 */
+	if (!btrfs_drew_try_write_lock(&root->snapshot_lock)) {
+		btrfs_warn(fs_info,
+	   "cannot activate fsdev file because snapshot creation is in progress");
+		ret = -EINVAL;
+		goto out_exclop;
+	}
+
+	/*
+	 * Snapshots can create extents which require COW even if NODATACOW is
+	 * set. We use this counter to prevent snapshots. We must increment it
+	 * before walking the extents because we don't want a concurrent
+	 * snapshot to run after we've already checked the extents.
+	 */
+	atomic_inc(&root->nr_swapfiles);
+
+	isize = ALIGN_DOWN(inode->i_size, fs_info->sectorsize);
+	if (!isize) {
+		ret = -EINVAL;
+		goto out_dec;
+	}
+
+	lock_extent_bits(io_tree, 0, isize - 1, &cached_state);
+	start = 0;
+	while (start < isize) {
+		u64 logical_block_start, physical_block_start;
+		struct btrfs_block_group *bg;
+		u64 len = isize - start;
+
+		em = btrfs_get_extent(BTRFS_I(inode), NULL, 0, start, len);
+		if (IS_ERR(em)) {
+			ret = PTR_ERR(em);
+			goto out_lock;
+		}
+
+		if (em->block_start == EXTENT_MAP_HOLE) {
+			btrfs_info(fs_info, "fsdev file must not have holes");
+			ret = -EINVAL;
+			goto out_lock;
+		}
+		if (em->block_start == EXTENT_MAP_INLINE) {
+			/*
+			 * It's unlikely we'll ever actually find ourselves
+			 * here, as a file small enough to fit inline won't be
+			 * big enough to store more than the swap header, but in
+			 * case something changes in the future, let's catch it
+			 * here rather than later.
+			 */
+			btrfs_info(fs_info, "fsdev file must not be inline");
+			ret = -EINVAL;
+			goto out_lock;
+		}
+		if (test_bit(EXTENT_FLAG_COMPRESSED, &em->flags)) {
+			btrfs_info(fs_info, "fsdev file must not be compressed");
+			ret = -EINVAL;
+			goto out_lock;
+		}
+
+		logical_block_start = em->block_start + (start - em->start);
+		len = min(len, em->len - (start - em->start));
+		free_extent_map(em);
+		em = NULL;
+
+		ret = can_nocow_extent(inode, start, &len, NULL, NULL, NULL, true);
+		if (ret < 0) {
+			goto out_lock;
+		} else if (ret) {
+			ret = 0;
+		} else {
+			btrfs_info(fs_info, "fsdev file must not be copy-on-write");
+			ret = -EAGAIN;
+			goto out_lock;
+		}
+
+		em = btrfs_get_chunk_map(fs_info, logical_block_start, len);
+		if (IS_ERR(em)) {
+			ret = PTR_ERR(em);
+			goto out_lock;
+		}
+
+		if (em->map_lookup->type & BTRFS_BLOCK_GROUP_PROFILE_MASK) {
+			btrfs_info(fs_info, "fsdev file must have single data profile");
+			ret = -EINVAL;
+			goto out_lock;
+		}
+
+		if (device == NULL) {
+			device = em->map_lookup->stripes[0].dev;
+			ret = btrfs_add_swapfile_pin(inode, device, false);
+			if (ret == 1)
+				ret = 0;
+			else if (ret)
+				goto out_lock;
+		} else if (device != em->map_lookup->stripes[0].dev) {
+			btrfs_info(fs_info, "fsdev file must be on one device");
+			ret = -EINVAL;
+			goto out_lock;
+		}
+
+		physical_block_start = (em->map_lookup->stripes[0].physical +
+					(logical_block_start - em->start));
+		len = min(len, em->len - (logical_block_start - em->start));
+		free_extent_map(em);
+		em = NULL;
+
+		bg = btrfs_lookup_block_group(fs_info, logical_block_start);
+		if (!bg) {
+			btrfs_info(fs_info,
+			   "could not find block group containing fsdev file");
+			ret = -EINVAL;
+			goto out_lock;
+		}
+
+		if (!btrfs_inc_block_group_swap_extents(bg)) {
+			btrfs_warn(fs_info,
+			   "block group for fsdev file at %llu is read-only%s",
+			   bg->start,
+			   atomic_read(&fs_info->scrubs_running) ?
+				       " (scrub running)" : "");
+			btrfs_put_block_group(bg);
+			ret = -EINVAL;
+			goto out_lock;
+		}
+
+		ret = btrfs_add_swapfile_pin(inode, bg, true);
+		if (ret) {
+			btrfs_put_block_group(bg);
+			if (ret == 1) {
+				ret = 0;
+			} else {
+				btrfs_dec_block_group_swap_extents(bg, 1);
+				goto out_lock;
+			}
+		}
+
+		start += len;
+	}
+
+	if (!device) {
+		ret = -ENOENT;
+		goto out_lock;
+	}
+
+	*fs_bdev = device->bdev;
+	ret = 0;
+out_lock:
+	if (!IS_ERR_OR_NULL(em))
+		free_extent_map(em);
+
+	unlock_extent_cached(io_tree, 0, isize - 1, &cached_state);
+
+out_dec:
+	if (ret)
+		btrfs_fsdev_deactivate(inode);
+
+	btrfs_drew_write_unlock(&root->snapshot_lock);
+
+out_exclop:
+	btrfs_exclop_finish(fs_info);
+out:
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
+/*
+ * Update the number of bytes used in the VFS' inode. When we replace extents in
+ * a range (clone, dedupe, fallocate's zero range), we must update the number of
+ * bytes used by the inode in an atomic manner, so that concurrent stat(2) calls
+ * always get a correct value.
+ */
+void btrfs_update_inode_bytes(struct btrfs_inode *inode,
+			      const u64 add_bytes,
+			      const u64 del_bytes)
+{
+	if (add_bytes == del_bytes)
+		return;
+
+	spin_lock(&inode->lock);
+	if (del_bytes > 0)
+		inode_sub_bytes(&inode->vfs_inode, del_bytes);
+	if (add_bytes > 0)
+		inode_add_bytes(&inode->vfs_inode, add_bytes);
+	spin_unlock(&inode->lock);
+}
+
 static const struct inode_operations btrfs_dir_inode_operations = {
+#ifdef MY_ABC_HERE
+	.syno_getattr	= btrfs_syno_getattr,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_set_archive_bit = btrfs_syno_set_archive_bit,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_get_archive_version = btrfs_syno_get_inode_archive_version,
+	.syno_set_archive_version = btrfs_syno_set_inode_archive_version,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_get_crtime = btrfs_syno_get_crtime,
+	.syno_set_crtime = btrfs_syno_set_crtime,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_locker_mode_get = btrfs_syno_locker_mode_get,
+	.syno_locker_state_get = btrfs_syno_locker_state_get,
+	.syno_locker_state_set = btrfs_syno_locker_state_set,
+	.syno_locker_period_end_set = btrfs_syno_locker_period_end_set,
+#endif /* MY_ABC_HERE */
 	.getattr	= btrfs_getattr,
 	.lookup		= btrfs_lookup,
 	.create		= btrfs_create,
@@ -10390,6 +12753,12 @@ static const struct inode_operations btrfs_dir_inode_operations = {
 	.permission	= btrfs_permission,
 	.get_acl	= btrfs_get_acl,
 	.set_acl	= btrfs_set_acl,
+#ifdef MY_ABC_HERE
+	.syno_get_acl	= btrfs_get_syno_acl,
+	.syno_set_acl	= btrfs_set_syno_acl,
+	.syno_permission = btrfs_syno_permission,
+	.syno_may_delete = btrfs_syno_may_delete,
+#endif /* MY_ABC_HERE */
 	.update_time	= btrfs_update_time,
 	.tmpfile        = btrfs_tmpfile,
 };
@@ -10405,6 +12774,12 @@ static const struct file_operations btrfs_dir_file_operations = {
 #endif
 	.release        = btrfs_release_file,
 	.fsync		= btrfs_sync_file,
+#ifdef MY_ABC_HERE
+	.quota_query	= btrfs_quota_query,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_space_usage = btrfs_syno_space_usage,
+#endif /* MY_ABC_HERE */
 };
 
 /*
@@ -10437,6 +12812,26 @@ static const struct address_space_operations btrfs_aops = {
 };
 
 static const struct inode_operations btrfs_file_inode_operations = {
+#ifdef MY_ABC_HERE
+	.syno_getattr	= btrfs_syno_getattr,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_set_archive_bit = btrfs_syno_set_archive_bit,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_get_archive_version = btrfs_syno_get_inode_archive_version,
+	.syno_set_archive_version = btrfs_syno_set_inode_archive_version,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_get_crtime = btrfs_syno_get_crtime,
+	.syno_set_crtime = btrfs_syno_set_crtime,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_locker_mode_get = btrfs_syno_locker_mode_get,
+	.syno_locker_state_get = btrfs_syno_locker_state_get,
+	.syno_locker_state_set = btrfs_syno_locker_state_set,
+	.syno_locker_period_end_set = btrfs_syno_locker_period_end_set,
+#endif /* MY_ABC_HERE */
 	.getattr	= btrfs_getattr,
 	.setattr	= btrfs_setattr,
 	.listxattr      = btrfs_listxattr,
@@ -10444,18 +12839,81 @@ static const struct inode_operations btrfs_file_inode_operations = {
 	.fiemap		= btrfs_fiemap,
 	.get_acl	= btrfs_get_acl,
 	.set_acl	= btrfs_set_acl,
+#ifdef MY_ABC_HERE
+	.syno_get_acl	= btrfs_get_syno_acl,
+	.syno_set_acl	= btrfs_set_syno_acl,
+	.syno_permission = btrfs_syno_permission,
+	.syno_may_delete = btrfs_syno_may_delete,
+#endif /* MY_ABC_HERE */
 	.update_time	= btrfs_update_time,
+#ifdef MY_ABC_HERE
+	.fsdev_activate	= btrfs_fsdev_activate,
+	.fsdev_deactivate = btrfs_fsdev_deactivate,
+	.fsdev_mapping = btrfs_fsdev_mapping,
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	.syno_rbd_meta_file_activate 	= btrfs_rbd_meta_file_activate,
+	.syno_rbd_meta_file_deactivate 	= btrfs_rbd_meta_file_deactivate,
+	.syno_rbd_meta_file_mapping 	= btrfs_rbd_meta_file_mapping,
+#endif /* MY_ABC_HERE */
 };
 static const struct inode_operations btrfs_special_inode_operations = {
+#ifdef MY_ABC_HERE
+	.syno_getattr	= btrfs_syno_getattr,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_set_archive_bit = btrfs_syno_set_archive_bit,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_get_archive_version = btrfs_syno_get_inode_archive_version,
+	.syno_set_archive_version = btrfs_syno_set_inode_archive_version,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_get_crtime = btrfs_syno_get_crtime,
+	.syno_set_crtime = btrfs_syno_set_crtime,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_locker_mode_get = btrfs_syno_locker_mode_get,
+	.syno_locker_state_get = btrfs_syno_locker_state_get,
+	.syno_locker_state_set = btrfs_syno_locker_state_set,
+	.syno_locker_period_end_set = btrfs_syno_locker_period_end_set,
+#endif /* MY_ABC_HERE */
 	.getattr	= btrfs_getattr,
 	.setattr	= btrfs_setattr,
 	.permission	= btrfs_permission,
 	.listxattr	= btrfs_listxattr,
 	.get_acl	= btrfs_get_acl,
 	.set_acl	= btrfs_set_acl,
+#ifdef MY_ABC_HERE
+	.syno_get_acl	= btrfs_get_syno_acl,
+	.syno_set_acl	= btrfs_set_syno_acl,
+	.syno_permission = btrfs_syno_permission,
+	.syno_may_delete = btrfs_syno_may_delete,
+#endif /* MY_ABC_HERE */
 	.update_time	= btrfs_update_time,
 };
 static const struct inode_operations btrfs_symlink_inode_operations = {
+#ifdef MY_ABC_HERE
+	.syno_getattr	= btrfs_syno_getattr,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_set_archive_bit = btrfs_syno_set_archive_bit,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_get_archive_version = btrfs_syno_get_inode_archive_version,
+	.syno_set_archive_version = btrfs_syno_set_inode_archive_version,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_get_crtime = btrfs_syno_get_crtime,
+	.syno_set_crtime = btrfs_syno_set_crtime,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_locker_mode_get = btrfs_syno_locker_mode_get,
+	.syno_locker_state_get = btrfs_syno_locker_state_get,
+	.syno_locker_state_set = btrfs_syno_locker_state_set,
+	.syno_locker_period_end_set = btrfs_syno_locker_period_end_set,
+#endif /* MY_ABC_HERE */
 	.get_link	= page_get_link,
 	.getattr	= btrfs_getattr,
 	.setattr	= btrfs_setattr,
@@ -10464,6 +12922,37 @@ static const struct inode_operations btrfs_symlink_inode_operations = {
 	.update_time	= btrfs_update_time,
 };
 
+#ifdef MY_ABC_HERE
+/* Hash a string to an integer in a caseless way */
+static int btrfs_dentry_hash(const struct dentry *dentry, struct qstr *this)
+{
+	int ret;
+	u32 hash;
+	ret = btrfs_upper_name_hash(this->name, this->len, &hash);
+	if (!ret)
+		this->hash = hash;
+	return ret;
+}
+
+/* return 1 on failure and 0 on success */
+static int btrfs_dentry_compare(const struct dentry *dentry, unsigned int len,
+				const char *str, const struct qstr *name,
+				int caseless)
+{
+	if (caseless) {
+		return syno_utf8_strcmp(str, name->name, len, name->len, NULL);
+	} else {
+		if (len != name->len)
+			return 1;
+		return dentry_cmp(dentry, name->name, name->len);
+	}
+}
+#endif /* MY_ABC_HERE */
+
 const struct dentry_operations btrfs_dentry_operations = {
 	.d_delete	= btrfs_dentry_delete,
+#ifdef MY_ABC_HERE
+	.d_hash		= btrfs_dentry_hash,
+	.d_compare_case	= btrfs_dentry_compare,
+#endif /* MY_ABC_HERE */
 };

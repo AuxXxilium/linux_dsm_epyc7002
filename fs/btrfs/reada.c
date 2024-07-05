@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2011 STRATO.  All rights reserved.
@@ -649,6 +652,9 @@ static int reada_tree_block_flagged(struct btrfs_fs_info *fs_info, u64 bytenr,
 {
 	struct extent_buffer *buf = NULL;
 	int ret;
+#ifdef MY_ABC_HERE
+	bool can_retry = false;
+#endif /* MY_ABC_HERE */
 
 	buf = btrfs_find_create_tree_block(fs_info, bytenr);
 	if (IS_ERR(buf))
@@ -656,7 +662,11 @@ static int reada_tree_block_flagged(struct btrfs_fs_info *fs_info, u64 bytenr,
 
 	set_bit(EXTENT_BUFFER_READAHEAD, &buf->bflags);
 
-	ret = read_extent_buffer_pages(buf, WAIT_PAGE_LOCK, mirror_num);
+	ret = read_extent_buffer_pages(buf, WAIT_PAGE_LOCK, mirror_num
+#ifdef MY_ABC_HERE
+				       , &can_retry, 0
+#endif /* MY_ABC_HERE */
+				       );
 	if (ret) {
 		free_extent_buffer_stale(buf);
 		return ret;

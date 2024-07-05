@@ -5,3 +5,4 @@ obj-$(CONFIG_FSNOTIFY)		+= fsnotify.o notification.o group.o mark.o \
 obj-y			+= dnotify/
 obj-y			+= inotify/
 obj-y			+= fanotify/
+obj-y			+= synotify/

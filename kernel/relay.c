@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  * Public API and common code for kernel->userspace relay file support.
  *
@@ -180,6 +183,10 @@ static struct rchan_buf *relay_create_buf(struct rchan *chan)
 
 	buf->chan = chan;
 	kref_get(&buf->chan->kref);
+#ifdef MY_ABC_HERE
+	spin_lock_init(&buf->lock);
+#endif /* MY_ABC_HERE */
+
 	return buf;
 
 free_buf:
@@ -1126,11 +1133,17 @@ static ssize_t relay_file_read(struct file *filp,
 	size_t read_start, avail;
 	size_t written = 0;
 	int ret;
+#ifdef MY_ABC_HERE
+	int copy_to_user_ret = -1;
+#endif /* MY_ABC_HERE */
 
 	if (!count)
 		return 0;
 
 	inode_lock(file_inode(filp));
+#ifdef MY_ABC_HERE
+	spin_lock_irq(&buf->lock);
+#endif /* MY_ABC_HERE */
 	do {
 		void *from;
 
@@ -1145,8 +1158,17 @@ static ssize_t relay_file_read(struct file *filp,
 		avail = min(count, avail);
 		from = buf->start + read_start;
 		ret = avail;
+#ifdef MY_ABC_HERE
+		spin_unlock_irq(&buf->lock);
+		copy_to_user_ret = copy_to_user(buffer, from, avail);
+		spin_lock_irq(&buf->lock);
+		if (copy_to_user_ret) {
+			break;
+		}
+#else
 		if (copy_to_user(buffer, from, avail))
 			break;
+#endif /* MY_ABC_HERE */
 
 		buffer += ret;
 		written += ret;
@@ -1155,6 +1177,9 @@ static ssize_t relay_file_read(struct file *filp,
 		relay_file_read_consume(buf, read_start, ret);
 		*ppos = relay_file_read_end_pos(buf, read_start, ret);
 	} while (count);
+#ifdef MY_ABC_HERE
+	spin_unlock_irq(&buf->lock);
+#endif /* MY_ABC_HERE */
 	inode_unlock(file_inode(filp));
 
 	return written;

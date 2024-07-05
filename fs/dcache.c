@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * fs/dcache.c
@@ -191,7 +194,11 @@ int proc_nr_dentry(struct ctl_table *table, int write, void *buffer,
  * In contrast, 'ct' and 'tcount' can be from a pathname, and do
  * need the careful unaligned handling.
  */
-static inline int dentry_string_cmp(const unsigned char *cs, const unsigned char *ct, unsigned tcount)
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
+static
+#endif /* MY_ABC_HERE */
+inline int dentry_string_cmp(const unsigned char *cs, const unsigned char *ct, unsigned tcount)
 {
 	unsigned long a,b,mask;
 
@@ -214,7 +221,11 @@ static inline int dentry_string_cmp(const unsigned char *cs, const unsigned char
 
 #else
 
-static inline int dentry_string_cmp(const unsigned char *cs, const unsigned char *ct, unsigned tcount)
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
+static
+#endif /* MY_ABC_HERE */
+inline int dentry_string_cmp(const unsigned char *cs, const unsigned char *ct, unsigned tcount)
 {
 	do {
 		if (*cs != *ct)
@@ -227,8 +238,15 @@ static inline int dentry_string_cmp(const unsigned char *cs, const unsigned char
 }
 
 #endif
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL(dentry_string_cmp);
+#endif /* MY_ABC_HERE */
 
-static inline int dentry_cmp(const struct dentry *dentry, const unsigned char *ct, unsigned tcount)
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
+static
+#endif /* MY_ABC_HERE */
+inline int dentry_cmp(const struct dentry *dentry, const unsigned char *ct, unsigned tcount)
 {
 	/*
 	 * Be careful about RCU walk racing with rename:
@@ -250,6 +268,9 @@ static inline int dentry_cmp(const struct dentry *dentry, const unsigned char *c
 
 	return dentry_string_cmp(cs, ct, tcount);
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL(dentry_cmp);
+#endif /* MY_ABC_HERE */
 
 struct external_name {
 	union {
@@ -308,6 +329,48 @@ void release_dentry_name_snapshot(struct name_snapshot *name)
 	}
 }
 EXPORT_SYMBOL(release_dentry_name_snapshot);
+
+#ifdef MY_ABC_HERE
+/*
+ * It would modify dentry's name, so caller should
+ * care about not only the race-condition issue
+ * and the rcu mode lookup mechanism.  Then get
+ * appropriate lock.
+ */
+int dentry_replace_name(struct dentry *dentry, const char *new_name, u32 name_len)
+{
+	char *real_name = NULL;
+	struct external_name *old_ex_name = NULL;
+	struct external_name *new_ex_name = NULL;
+
+	if (unlikely(dname_external(dentry)))
+		old_ex_name = external_name(dentry);
+
+	if (unlikely(name_len > (DNAME_INLINE_LEN - 1))) {
+		const size_t size = offsetof(struct external_name, name[1]);
+		new_ex_name = kmalloc(size + name_len,
+				      GFP_KERNEL_ACCOUNT | __GFP_RECLAIMABLE);
+		if (!new_ex_name)
+			return -ENOMEM;
+
+		atomic_set(&new_ex_name->u.count, 1);
+		real_name = new_ex_name->name;
+	} else {
+		real_name = dentry->d_iname;
+	}
+
+	memcpy(real_name, new_name, name_len);
+	real_name[name_len] = 0;
+	dentry->d_name.len = name_len;
+	/* Make sure we always see the terminating NUL character */
+	smp_store_release(&dentry->d_name.name, real_name); /* ^^^ */
+	if (old_ex_name && likely(atomic_dec_and_test(&old_ex_name->u.count)))
+		kfree_rcu(old_ex_name, u.head);
+	return 0;
+}
+EXPORT_SYMBOL(dentry_replace_name);
+
+#endif /* MY_ABC_HERE */
 
 static inline void __d_set_inode_and_type(struct dentry *dentry,
 					  struct inode *inode,
@@ -1285,8 +1348,13 @@ enum d_walk_ret {
  *
  * The @enter() callbacks are called with d_lock held.
  */
+#ifdef MY_ABC_HERE
+void d_walk(struct dentry *parent, void *data,
+		   enum d_walk_ret (*enter)(void *, struct dentry *))
+#else
 static void d_walk(struct dentry *parent, void *data,
 		   enum d_walk_ret (*enter)(void *, struct dentry *))
+#endif /* MY_ABC_HERE */
 {
 	struct dentry *this_parent;
 	struct list_head *next;
@@ -1390,6 +1458,9 @@ rename_retry:
 	seq = 1;
 	goto again;
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL_GPL(d_walk);
+#endif /* MY_ABC_HERE */
 
 struct check_mount {
 	struct vfsmount *mnt;
@@ -1867,6 +1938,10 @@ void d_set_d_op(struct dentry *dentry, const struct dentry_operations *op)
 		dentry->d_flags |= DCACHE_OP_HASH;
 	if (op->d_compare)
 		dentry->d_flags |= DCACHE_OP_COMPARE;
+#ifdef MY_ABC_HERE
+	if (op->d_compare_case)
+		dentry->d_flags |= DCACHE_OP_COMPARE_CASE;
+#endif /* MY_ABC_HERE */
 	if (op->d_revalidate)
 		dentry->d_flags |= DCACHE_OP_REVALIDATE;
 	if (op->d_weak_revalidate)
@@ -2189,8 +2264,21 @@ EXPORT_SYMBOL(d_add_ci);
 
 static inline bool d_same_name(const struct dentry *dentry,
 				const struct dentry *parent,
-				const struct qstr *name)
+				const struct qstr *name
+#ifdef MY_ABC_HERE
+				, const int caseless
+#endif /* MY_ABC_HERE */
+				)
 {
+#ifdef MY_ABC_HERE
+	if (likely(parent->d_flags & DCACHE_OP_COMPARE_CASE))
+		return parent->d_op->d_compare_case(dentry,
+						    dentry->d_name.len,
+						    dentry->d_name.name,
+						    name,
+						    caseless) == 0;
+	else
+#endif /* MY_ABC_HERE */
 	if (likely(!(parent->d_flags & DCACHE_OP_COMPARE))) {
 		if (dentry->d_name.len != name->len)
 			return false;
@@ -2232,13 +2320,20 @@ static inline bool d_same_name(const struct dentry *dentry,
  */
 struct dentry *__d_lookup_rcu(const struct dentry *parent,
 				const struct qstr *name,
-				unsigned *seqp)
+				unsigned *seqp
+#ifdef MY_ABC_HERE
+				, const int caseless
+#endif /* MY_ABC_HERE */
+				)
 {
 	u64 hashlen = name->hash_len;
 	const unsigned char *str = name->name;
 	struct hlist_bl_head *b = d_hash(hashlen_hash(hashlen));
 	struct hlist_bl_node *node;
 	struct dentry *dentry;
+#ifdef MY_ABC_HERE
+	struct dentry *found = NULL;
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * Note: There is significant duplication with __d_lookup_rcu which is
@@ -2287,7 +2382,11 @@ seqretry:
 		if (d_unhashed(dentry))
 			continue;
 
+#ifdef MY_ABC_HERE
+		if (likely(parent->d_flags & (DCACHE_OP_COMPARE | DCACHE_OP_COMPARE_CASE))) {
+#else /* MY_ABC_HERE */
 		if (unlikely(parent->d_flags & DCACHE_OP_COMPARE)) {
+#endif /* MY_ABC_HERE */
 			int tlen;
 			const char *tname;
 			if (dentry->d_name.hash != hashlen_hash(hashlen))
@@ -2299,6 +2398,33 @@ seqretry:
 				cpu_relax();
 				goto seqretry;
 			}
+#ifdef MY_ABC_HERE
+			if (likely(parent->d_flags & DCACHE_OP_COMPARE_CASE)) {
+				if (parent->d_op->d_compare_case(dentry,
+								 tlen,
+								 tname,
+								 name,
+								 caseless) != 0) {
+					continue;
+				} else if (caseless && !dentry->d_inode) {
+					/* inode is null means file not in disk.
+					 * we return the negative dentry which is case sensitive.
+					*/
+					if (parent->d_op->d_compare_case(dentry,
+									tlen,
+									tname,
+									name,
+									0) != 0) {
+						continue;
+					}
+					if (!found) {
+						*seqp = seq;
+						found = dentry;
+					}
+					continue;
+				}
+			} else
+#endif /* MY_ABC_HERE */
 			if (parent->d_op->d_compare(dentry,
 						    tlen, tname, name) != 0)
 				continue;
@@ -2311,7 +2437,11 @@ seqretry:
 		*seqp = seq;
 		return dentry;
 	}
+#ifdef MY_ABC_HERE
+	return found;
+#else /* MY_ABC_HERE */
 	return NULL;
+#endif /* MY_ABC_HERE */
 }
 
 /**
@@ -2332,7 +2462,11 @@ struct dentry *d_lookup(const struct dentry *parent, const struct qstr *name)
 
 	do {
 		seq = read_seqbegin(&rename_lock);
+#ifdef MY_ABC_HERE
+		dentry = __d_lookup(parent, name, 0);
+#else /* MY_ABC_HERE */
 		dentry = __d_lookup(parent, name);
+#endif /* MY_ABC_HERE */
 		if (dentry)
 			break;
 	} while (read_seqretry(&rename_lock, seq));
@@ -2355,13 +2489,20 @@ EXPORT_SYMBOL(d_lookup);
  *
  * __d_lookup callers must be commented.
  */
-struct dentry *__d_lookup(const struct dentry *parent, const struct qstr *name)
+struct dentry *__d_lookup(const struct dentry *parent, const struct qstr *name
+#ifdef MY_ABC_HERE
+			  , const int caseless
+#endif /* MY_ABC_HERE */
+			  )
 {
 	unsigned int hash = name->hash;
 	struct hlist_bl_head *b = d_hash(hash);
 	struct hlist_bl_node *node;
 	struct dentry *found = NULL;
 	struct dentry *dentry;
+#ifdef MY_ABC_HERE
+	struct dentry *negative_dentry = NULL;
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * Note: There is significant duplication with __d_lookup_rcu which is
@@ -2396,16 +2537,51 @@ struct dentry *__d_lookup(const struct dentry *parent, const struct qstr *name)
 		if (d_unhashed(dentry))
 			goto next;
 
+#ifdef MY_ABC_HERE
+		if (!d_same_name(dentry, parent, name, caseless))
+#else /* MY_ABC_HERE */
 		if (!d_same_name(dentry, parent, name))
+#endif /* MY_ABC_HERE */
 			goto next;
+
+#ifdef MY_ABC_HERE
+		if (likely(parent->d_flags & DCACHE_OP_COMPARE_CASE)
+				&& caseless
+				&& !dentry->d_inode) {
+			/*
+			 * inode is null means file not in disk.
+			 * we only return the negative dentry which is case sensitive.
+			 */
+			if (!d_same_name(dentry, parent, name, 0)) {
+				goto next;
+			}
+			if (!negative_dentry) {
+				dentry->d_lockref.count++;
+				negative_dentry = dentry;
+			}
+			goto next;
+		}
+#endif /* MY_ABC_HERE */
 
 		dentry->d_lockref.count++;
 		found = dentry;
 		spin_unlock(&dentry->d_lock);
+#ifdef MY_ABC_HERE
+		if (negative_dentry) {
+			spin_lock(&negative_dentry->d_lock);
+			negative_dentry->d_lockref.count--;
+			spin_unlock(&negative_dentry->d_lock);
+			negative_dentry = NULL;
+		}
+#endif /* MY_ABC_HERE */
 		break;
 next:
 		spin_unlock(&dentry->d_lock);
  	}
+#ifdef MY_ABC_HERE
+	if (!found && negative_dentry)
+		found = negative_dentry;
+#endif /* MY_ABC_HERE */
  	rcu_read_unlock();
 
  	return found;
@@ -2530,9 +2706,16 @@ static void d_wait_lookup(struct dentry *dentry)
 	}
 }
 
+#ifdef MY_ABC_HERE
+struct dentry *__d_alloc_parallel(struct dentry *parent,
+				const struct qstr *name,
+				wait_queue_head_t *wq,
+				const int caseless)
+#else /* MY_ABC_HERE */
 struct dentry *d_alloc_parallel(struct dentry *parent,
 				const struct qstr *name,
 				wait_queue_head_t *wq)
+#endif /* MY_ABC_HERE */
 {
 	unsigned int hash = name->hash;
 	struct hlist_bl_head *b = in_lookup_hash(parent, hash);
@@ -2548,7 +2731,11 @@ retry:
 	rcu_read_lock();
 	seq = smp_load_acquire(&parent->d_inode->i_dir_seq);
 	r_seq = read_seqbegin(&rename_lock);
+#ifdef MY_ABC_HERE
+	dentry = __d_lookup_rcu(parent, name, &d_seq, caseless);
+#else /* MY_ABC_HERE */
 	dentry = __d_lookup_rcu(parent, name, &d_seq);
+#endif /* MY_ABC_HERE */
 	if (unlikely(dentry)) {
 		if (!lockref_get_not_dead(&dentry->d_lockref)) {
 			rcu_read_unlock();
@@ -2591,7 +2778,11 @@ retry:
 			continue;
 		if (dentry->d_parent != parent)
 			continue;
+#ifdef MY_ABC_HERE
+		if (!d_same_name(dentry, parent, name, caseless))
+#else /* MY_ABC_HERE */
 		if (!d_same_name(dentry, parent, name))
+#endif /* MY_ABC_HERE */
 			continue;
 		hlist_bl_unlock(b);
 		/* now we can try to grab a reference */
@@ -2619,7 +2810,11 @@ retry:
 			goto mismatch;
 		if (unlikely(d_unhashed(dentry)))
 			goto mismatch;
+#ifdef MY_ABC_HERE
+		if (unlikely(!d_same_name(dentry, parent, name, caseless)))
+#else /* MY_ABC_HERE */
 		if (unlikely(!d_same_name(dentry, parent, name)))
+#endif /* MY_ABC_HERE */
 			goto mismatch;
 		/* OK, it *is* a hashed match; return it */
 		spin_unlock(&dentry->d_lock);
@@ -2638,7 +2833,11 @@ mismatch:
 	dput(dentry);
 	goto retry;
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL(__d_alloc_parallel);
+#else /* MY_ABC_HERE */
 EXPORT_SYMBOL(d_alloc_parallel);
+#endif /* MY_ABC_HERE */
 
 void __d_lookup_done(struct dentry *dentry)
 {
@@ -2729,7 +2928,11 @@ struct dentry *d_exact_alias(struct dentry *entry, struct inode *inode)
 			continue;
 		if (alias->d_parent != entry->d_parent)
 			continue;
+#ifdef MY_ABC_HERE
+		if (!d_same_name(alias, entry->d_parent, &entry->d_name, 0))
+#else /* MY_ABC_HERE */
 		if (!d_same_name(alias, entry->d_parent, &entry->d_name))
+#endif /* MY_ABC_HERE */
 			continue;
 		spin_lock(&alias->d_lock);
 		if (!d_unhashed(alias)) {
@@ -2935,6 +3138,9 @@ void d_exchange(struct dentry *dentry1, struct dentry *dentry2)
 
 	write_sequnlock(&rename_lock);
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL_GPL(d_exchange);
+#endif /* MY_ABC_HERE */
 
 /**
  * d_ancestor - search for an ancestor

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Central processing for nfsd.
@@ -28,6 +31,10 @@
 #include "vfs.h"
 #include "netns.h"
 #include "filecache.h"
+
+#ifdef MY_ABC_HERE
+#include "syno_io_stat.h"
+#endif /* MY_ABC_HERE */
 
 #define NFSDDBG_FACILITY	NFSDDBG_SVC
 
@@ -427,6 +434,9 @@ static void nfsd_shutdown_net(struct net *net)
 	struct nfsd_net *nn = net_generic(net, nfsd_net_id);
 
 	nfsd_file_cache_shutdown_net(net);
+#ifdef MY_ABC_HERE
+	syno_nfsd_clients_destroy_all();
+#endif /* MY_ABC_HERE */
 	nfs4_state_shutdown_net(net);
 	if (nn->lockd_up) {
 		lockd_down(net);

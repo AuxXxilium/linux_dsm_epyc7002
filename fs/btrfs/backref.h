@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2011 STRATO.  All rights reserved.
@@ -17,8 +20,33 @@ struct inode_fs_paths {
 	struct btrfs_data_container	*fspath;
 };
 
+#ifdef MY_ABC_HERE
+/*
+ * This mode will check whether EXTENT_ITEM is referenced prior to
+ * an offset in an inode of a desiganted subvolume.
+ * If offset is provided with (u64)-1, all the file is checked.
+ * This mode is currently used by quota accounting for
+ * 1. clone range
+ * 2. remove extents
+ * 3. usrquota chown.
+ * The offset of file should be passed to check_root_inode_ref for usrquota
+ * chown or (u64)-1 for the other two cases.
+ */
+struct quota_check {
+	u64 bytenr;
+	u64 root_objectid;
+	u64 ino;
+	u64 offset;
+	bool in_run_delayed;
+};
+#endif /* MY_ABC_HERE */
+
 typedef int (iterate_extent_inodes_t)(u64 inum, u64 offset, u64 root,
-		void *ctx);
+				      void *ctx
+#ifdef MY_ABC_HERE
+				      , int extent_type
+#endif /* MY_ABC_HERE */
+				      );
 
 int extent_from_logical(struct btrfs_fs_info *fs_info, u64 logical,
 			struct btrfs_path *path, struct btrfs_key *found_key,
@@ -48,6 +76,9 @@ int btrfs_find_all_leafs(struct btrfs_trans_handle *trans,
 int btrfs_find_all_roots(struct btrfs_trans_handle *trans,
 			 struct btrfs_fs_info *fs_info, u64 bytenr,
 			 u64 time_seq, struct ulist **roots, bool ignore_offset);
+#ifdef MY_ABC_HERE
+int check_root_inode_ref(struct btrfs_trans_handle *trans, struct quota_check *qc);
+#endif /* MY_ABC_HERE */
 char *btrfs_ref_to_path(struct btrfs_root *fs_root, struct btrfs_path *path,
 			u32 name_len, unsigned long name_off,
 			struct extent_buffer *eb_in, u64 parent,
@@ -64,6 +95,13 @@ int btrfs_find_one_extref(struct btrfs_root *root, u64 inode_objectid,
 			  u64 *found_off);
 int btrfs_check_shared(struct btrfs_root *root, u64 inum, u64 bytenr,
 		struct ulist *roots, struct ulist *tmp_ulist);
+#ifdef MY_ABC_HERE
+int btrfs_check_shared_inlist(struct btrfs_fs_info *fs_info,
+			      u64 root_objectid, u64 inum, u64 file_offset,
+			      u64 datao, u64 bytenr,
+			      struct ulist *shared_roots, u64 parent_bytenr,
+			      u64 *owner_id);
+#endif /* MY_ABC_HERE */
 
 int __init btrfs_prelim_ref_init(void);
 void __cold btrfs_prelim_ref_exit(void);

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * kernel/lockdep.c
@@ -188,7 +191,11 @@ static
 struct lock_class lock_classes[MAX_LOCKDEP_KEYS];
 static DECLARE_BITMAP(lock_classes_in_use, MAX_LOCKDEP_KEYS);
 
+#ifdef MY_ABC_HERE
+inline struct lock_class *lockdep_hlock_class(struct held_lock *hlock)
+#else
 static inline struct lock_class *hlock_class(struct held_lock *hlock)
+#endif /* MY_ABC_HERE */
 {
 	unsigned int class_idx = hlock->class_idx;
 
@@ -209,6 +216,10 @@ static inline struct lock_class *hlock_class(struct held_lock *hlock)
 	 */
 	return lock_classes + class_idx;
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL_GPL(lockdep_hlock_class);
+#define hlock_class(hlock) lockdep_hlock_class(hlock)
+#endif /* MY_ABC_HERE */
 
 #ifdef CONFIG_LOCK_STAT
 static DEFINE_PER_CPU(struct lock_class_stats[MAX_LOCKDEP_KEYS], cpu_lock_stats);

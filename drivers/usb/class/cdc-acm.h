@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  *
@@ -128,6 +131,12 @@ struct acm {
 	u8 bInterval;
 	struct usb_anchor delayed;			/* writes queued for a device about to be woken */
 	unsigned long quirks;
+#ifdef MY_DEF_HERE
+	rwlock_t status_lock;                 /* prevent reading and updating expstatus at same time */
+	char **cached_expstatus;              /* for key-value table of each eunit status */
+	char **latest_expstatus;              /* saves new fetch status in this table, then updates to expstatus */
+	struct list_head syno_device_list;    /* for disk name in an eunit controlled by this acm microP */
+#endif /* MY_DEF_HERE */
 };
 
 /* constants describing various quirks and errors */

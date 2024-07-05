@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * USB device quirk handling logic and table
@@ -9,6 +12,9 @@
 #include <linux/moduleparam.h>
 #include <linux/usb.h>
 #include <linux/usb/quirks.h>
+#ifdef MY_ABC_HERE
+#include <linux/usb/syno_quirks.h>
+#endif /* MY_ABC_HERE */
 #include <linux/usb/hcd.h>
 #include "usb.h"
 
@@ -217,6 +223,12 @@ static const struct usb_device_id usb_quirk_list[] = {
 	/* Microsoft LifeCam-VX700 v2.0 */
 	{ USB_DEVICE(0x045e, 0x0770), .driver_info = USB_QUIRK_RESET_RESUME },
 
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_USB_PATCH_ON_RTK
+	/* Microsoft Wireless Mouse 5000 */
+	{ USB_DEVICE(0x045e, 0x0745), .driver_info = USB_QUIRK_RESET },
+#endif // CONFIG_USB_PATCH_ON_RTK
+#endif /* MY_DEF_HERE */
 	/* Microsoft Surface Dock Ethernet (RTL8153 GigE) */
 	{ USB_DEVICE(0x045e, 0x07c6), .driver_info = USB_QUIRK_NO_LPM },
 
@@ -264,6 +276,13 @@ static const struct usb_device_id usb_quirk_list[] = {
 	/* Logitech Harmony 700-series */
 	{ USB_DEVICE(0x046d, 0xc122), .driver_info = USB_QUIRK_DELAY_INIT },
 
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_USB_PATCH_ON_RTK
+	/* Logitech Wireless Mouse M705 */
+	{ USB_DEVICE(0x046d, 0xc52b), .driver_info = USB_QUIRK_RESET },
+#endif // CONFIG_USB_PATCH_ON_RTK
+
+#endif /* MY_DEF_HERE */
 	/* Philips PSC805 audio device */
 	{ USB_DEVICE(0x0471, 0x0155), .driver_info = USB_QUIRK_RESET_RESUME },
 
@@ -488,6 +507,19 @@ static const struct usb_device_id usb_quirk_list[] = {
 	/* Blackmagic Design UltraStudio SDI */
 	{ USB_DEVICE(0x1edb, 0xbd4f), .driver_info = USB_QUIRK_NO_LPM },
 
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_USB_PATCH_ON_RTK
+	/* Kingston DataTraveler 3.0 G4 */
+	{ USB_DEVICE_VER(0x0951, 0x1666, 0, 0x1100), .driver_info = USB_QUIRK_RESET_RESUME },
+
+	/* Kingston DataTraveler 3.0 G4 no support lpm */
+	{ USB_DEVICE(0x0951, 0x1666), .driver_info = USB_QUIRK_NO_LPM },
+
+	/* Toshiba no support lpm */
+	{ USB_DEVICE(0x0930, 0x6545), .driver_info = USB_QUIRK_NO_LPM },
+#endif // CONFIG_USB_PATCH_ON_RTK
+
+#endif /* MY_DEF_HERE */
 	/* Hauppauge HVR-950q */
 	{ USB_DEVICE(0x2040, 0x7200), .driver_info =
 			USB_QUIRK_CONFIG_INTF_STRINGS },
@@ -531,6 +563,48 @@ static const struct usb_device_id usb_amd_resume_quirk_list[] = {
 
 	{ }  /* terminating entry must be last */
 };
+
+#ifdef MY_ABC_HERE
+/*
+ * List of quirky USB devices which should be applied with Synology USB quirks
+ */
+static const struct usb_device_id syno_usb_quirk_list[] = {
+	/* Cyper Power UPSes */
+	{ USB_DEVICE(0x0764, 0x0005), .driver_info =
+		SYNO_USB_QUIRK_UPS_DISCONNECT_FILTER },
+
+	/* Cyper Power UPSes, e.g. CP1500 AVR UPS */
+	{ USB_DEVICE(0x0764, 0x0501), .driver_info =
+		SYNO_USB_QUIRK_UPS_DISCONNECT_FILTER },
+
+	/* Cyper Power UPSes, e.g. PR1500LCDRT2U UPS */
+	{ USB_DEVICE(0x0764, 0x0601), .driver_info =
+		SYNO_USB_QUIRK_UPS_DISCONNECT_FILTER },
+
+	/* MGE UPSes, e.g. EATON Ellipse PRO 650 IEC */
+	{ USB_DEVICE(0x0463, 0xffff), .driver_info =
+		SYNO_USB_QUIRK_UPS_DISCONNECT_FILTER },
+
+	/* UPSes, e.g. FT-BS 500VA */
+	{ USB_DEVICE(0x0665, 0x5161), .driver_info =
+		SYNO_USB_QUIRK_UPS_DISCONNECT_FILTER |
+		SYNO_USB_QUIRK_LIMITED_UPS_DISCONNECT_FILTERING },
+
+	/* APC UPSes, e.g. APC BR550GI */
+	{ USB_DEVICE(0x051d, 0x0002), .driver_info =
+		SYNO_USB_QUIRK_UPS_DISCONNECT_FILTER },
+
+	/* iStorage Pro series */
+	{ USB_DEVICE(0x0984, 0x1403), .driver_info =
+		SYNO_USB_QUIRK_SYNCHRONIZE_CACHE_FILTER },
+
+	/* EPSON C1100 */
+	{ USB_DEVICE(0x04b8, 0x0007), .driver_info =
+		SYNO_USB_QUIRK_HC_MORE_TRANSACTION_TRIES },
+
+	{ }  /* terminating entry must be last */
+};
+#endif /* MY_ABC_HERE */
 
 /*
  * Entries for endpoints that should be ignored when parsing configuration
@@ -651,6 +725,9 @@ static u32 usb_detect_dynamic_quirks(struct usb_device *udev)
 void usb_detect_quirks(struct usb_device *udev)
 {
 	udev->quirks = usb_detect_static_quirks(udev, usb_quirk_list);
+#ifdef MY_ABC_HERE
+	udev->syno_quirks = usb_detect_static_quirks(udev, syno_usb_quirk_list);
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * Pixart-based mice would trigger remote wakeup issue on AMD

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/hfsplus/inode.c
@@ -286,6 +289,13 @@ int hfsplus_getattr(const struct path *path, struct kstat *stat,
 	stat->attributes_mask |= STATX_ATTR_APPEND | STATX_ATTR_IMMUTABLE |
 				 STATX_ATTR_NODUMP;
 
+#ifdef MY_ABC_HERE
+	if (request_mask & STATX_BTIME) {
+		stat->result_mask |= STATX_BTIME;
+		stat->btime = hfsp_mt2ut(hip->create_date);
+	}
+#endif /* MY_ABC_HERE */
+
 	generic_fillattr(inode, stat);
 	return 0;
 }
@@ -351,6 +361,11 @@ static const struct inode_operations hfsplus_file_inode_operations = {
 	.setattr	= hfsplus_setattr,
 	.getattr	= hfsplus_getattr,
 	.listxattr	= hfsplus_listxattr,
+#ifdef MY_ABC_HERE
+	.syno_getattr	= hfsplus_syno_getattr,
+	.syno_get_crtime= hfsplus_syno_get_crtime,
+	.syno_set_crtime= hfsplus_syno_set_crtime,
+#endif /* MY_ABC_HERE */
 };
 
 static const struct file_operations hfsplus_file_operations = {
@@ -585,6 +600,9 @@ int hfsplus_cat_write_inode(struct inode *inode)
 		folder->access_date = hfsp_ut2mt(inode->i_atime);
 		folder->content_mod_date = hfsp_ut2mt(inode->i_mtime);
 		folder->attribute_mod_date = hfsp_ut2mt(inode->i_ctime);
+#ifdef MY_ABC_HERE
+		folder->create_date = HFSPLUS_I(inode)->create_date;
+#endif /* MY_ABC_HERE */
 		folder->valence = cpu_to_be32(inode->i_size - 2);
 		if (folder->flags & cpu_to_be16(HFSPLUS_HAS_FOLDER_COUNT)) {
 			folder->subfolders =
@@ -617,6 +635,9 @@ int hfsplus_cat_write_inode(struct inode *inode)
 		file->access_date = hfsp_ut2mt(inode->i_atime);
 		file->content_mod_date = hfsp_ut2mt(inode->i_mtime);
 		file->attribute_mod_date = hfsp_ut2mt(inode->i_ctime);
+#ifdef MY_ABC_HERE
+		file->create_date = HFSPLUS_I(inode)->create_date;
+#endif /* MY_ABC_HERE */
 		hfs_bnode_write(fd.bnode, &entry, fd.entryoffset,
 					 sizeof(struct hfsplus_cat_file));
 	}
@@ -626,3 +647,31 @@ out:
 	hfs_find_exit(&fd);
 	return 0;
 }
+
+#ifdef MY_ABC_HERE
+int hfsplus_syno_getattr(struct dentry *dentry, struct kstat *kst,
+			 unsigned int syno_flags)
+{
+	struct inode *inode = d_inode(dentry);
+
+	if (syno_flags & SYNOST_CREATE_TIME)
+		kst->syno_create_time = hfsp_mt2ut(HFSPLUS_I(inode)->create_date);
+
+	return 0;
+}
+
+int hfsplus_syno_get_crtime(struct inode *inode, struct timespec64 *crtime)
+{
+	*crtime = hfsp_mt2ut(HFSPLUS_I(inode)->create_date);
+
+	return 0;
+}
+
+int hfsplus_syno_set_crtime(struct inode *inode, struct timespec64 *crtime)
+{
+	HFSPLUS_I(inode)->create_date = hfsp_ut2mt(*crtime);
+	hfsplus_mark_inode_dirty(inode, HFSPLUS_I_CAT_DIRTY);
+
+	return 0;
+}
+#endif /* MY_ABC_HERE */

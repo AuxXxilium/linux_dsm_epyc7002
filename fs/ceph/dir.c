@@ -9,6 +9,9 @@
 
 #include "super.h"
 #include "mds_client.h"
+#ifdef CONFIG_SYNO_CEPH_WINACL
+#include "syno_acl.h"
+#endif /* CONFIG_SYNO_CEPH_WINACL */
 
 /*
  * Directory operations: readdir, lookup, create, link, unlink,
@@ -478,8 +481,11 @@ more:
 					2 : (fpos_off(rde->offset) + 1);
 			err = note_last_dentry(dfi, rde->name, rde->name_len,
 					       next_offset);
-			if (err)
+			if (err) {
+				ceph_mdsc_put_request(dfi->last_readdir);
+				dfi->last_readdir = NULL;
 				return err;
+			}
 		} else if (req->r_reply_info.dir_end) {
 			dfi->next_offset = 2;
 			/* keep last name */
@@ -520,6 +526,12 @@ more:
 		if (!dir_emit(ctx, rde->name, rde->name_len,
 			      ceph_present_ino(inode->i_sb, le64_to_cpu(rde->inode.in->ino)),
 			      le32_to_cpu(rde->inode.in->mode) >> 12)) {
+			/*
+			 * NOTE: Here no need to put the 'dfi->last_readdir',
+			 * because when dir_emit stops us it's most likely
+			 * doesn't have enough memory, etc. So for next readdir
+			 * it will continue.
+			 */
 			dout("filldir stopping us...\n");
 			return 0;
 		}
@@ -631,10 +643,12 @@ static loff_t ceph_dir_llseek(struct file *file, loff_t offset, int whence)
 	switch (whence) {
 	case SEEK_CUR:
 		offset += file->f_pos;
+		break;
 	case SEEK_SET:
 		break;
 	case SEEK_END:
 		retval = -EOPNOTSUPP;
+		goto out;
 	default:
 		goto out;
 	}
@@ -665,25 +679,25 @@ out:
 /*
  * Handle lookups for the hidden .snap directory.
  */
-int ceph_handle_snapdir(struct ceph_mds_request *req,
-			struct dentry *dentry, int err)
+struct dentry *ceph_handle_snapdir(struct ceph_mds_request *req,
+				   struct dentry *dentry)
 {
 	struct ceph_fs_client *fsc = ceph_sb_to_client(dentry->d_sb);
 	struct inode *parent = d_inode(dentry->d_parent); /* we hold i_mutex */
 
 	/* .snap dir? */
-	if (err == -ENOENT &&
-	    ceph_snap(parent) == CEPH_NOSNAP &&
-	    strcmp(dentry->d_name.name,
-		   fsc->mount_options->snapdir_name) == 0) {
+	if (ceph_snap(parent) == CEPH_NOSNAP &&
+	    strcmp(dentry->d_name.name, fsc->mount_options->snapdir_name) == 0) {
+		struct dentry *res;
 		struct inode *inode = ceph_get_snapdir(parent);
-		dout("ENOENT on snapdir %p '%pd', linking to snapdir %p\n",
-		     dentry, dentry, inode);
-		BUG_ON(!d_unhashed(dentry));
-		d_add(dentry, inode);
-		err = 0;
+
+		res = d_splice_alias(inode, dentry);
+		dout("ENOENT on snapdir %p '%pd', linking to snapdir %p. Spliced dentry %p\n",
+		     dentry, dentry, inode, res);
+		if (res)
+			dentry = res;
 	}
-	return err;
+	return dentry;
 }
 
 /*
@@ -785,11 +799,26 @@ static struct dentry *ceph_lookup(struct inode *dir, struct dentry *dentry,
 	if (ceph_security_xattr_wanted(dir))
 		mask |= CEPH_CAP_XATTR_SHARED;
 	req->r_args.getattr.mask = cpu_to_le32(mask);
+#ifdef CONFIG_SYNO_CEPH_CASELESS_STAT
+	if (flags & LOOKUP_CASELESS_COMPARE)
+		req->r_args.getattr.flags = cpu_to_le32(CEPH_GETATTR_CASELESS);
+#endif /* CONFIG_SYNO_CEPH_CASELESS_STAT */
 
+	ihold(dir);
 	req->r_parent = dir;
 	set_bit(CEPH_MDS_R_PARENT_LOCKED, &req->r_req_flags);
 	err = ceph_mdsc_do_request(mdsc, NULL, req);
-	err = ceph_handle_snapdir(req, dentry, err);
+	if (err == -ENOENT) {
+		struct dentry *res;
+
+		res = ceph_handle_snapdir(req, dentry);
+		if (IS_ERR(res)) {
+			err = PTR_ERR(res);
+		} else {
+			dentry = res;
+			err = 0;
+		}
+	}
 	dentry = ceph_finish_lookup(req, dentry, err);
 	ceph_mdsc_put_request(req);  /* will dput(dentry) */
 	dout("lookup result=%p\n", dentry);
@@ -823,6 +852,54 @@ int ceph_handle_notrace_create(struct inode *dir, struct dentry *dentry)
 	return PTR_ERR(result);
 }
 
+#ifdef CONFIG_SYNO_CEPH_ARCHIVE_BIT
+int ceph_pre_init_archive_bit(struct ceph_acl_sec_ctx *as_ctx)
+{
+	int err;
+	__le32 archive_bit = cpu_to_le32(ALL_SYNO_ARCHIVE);
+	struct ceph_pagelist *pagelist = as_ctx->pagelist;
+	size_t len = strlen(XATTR_SYNO_ARCHIVE_BIT);
+
+	err = -ENOMEM;
+	if (!pagelist) {
+		pagelist = ceph_pagelist_alloc(GFP_KERNEL);
+		if (!pagelist)
+			goto out_err;
+		err = ceph_pagelist_reserve(pagelist, PAGE_SIZE);
+		if (err)
+			goto out_err;
+		ceph_pagelist_encode_32(pagelist, 1);
+	}
+	err = ceph_pagelist_reserve(pagelist, 4 + len + 4 + 4);
+	if (err)
+		goto out_err;
+	if (as_ctx->pagelist) {
+		/* update count of KV pairs */
+		if (list_is_singular(&pagelist->head)) {
+			le32_add_cpu((__le32*)pagelist->mapped_tail, 1);
+		} else {
+			struct page *page = list_first_entry(&pagelist->head,
+							     struct page, lru);
+			void *addr = kmap_atomic(page);
+			le32_add_cpu((__le32*)addr, 1);
+			kunmap_atomic(addr);
+		}
+	} else {
+		as_ctx->pagelist = pagelist;
+	}
+	ceph_pagelist_encode_32(pagelist, len);
+	ceph_pagelist_append(pagelist, XATTR_SYNO_ARCHIVE_BIT, len);
+	ceph_pagelist_encode_32(pagelist, sizeof(__le32));
+	ceph_pagelist_append(pagelist, &archive_bit, sizeof(__le32));
+
+	err = 0;
+out_err:
+	if (pagelist && !as_ctx->pagelist)
+		ceph_pagelist_release(pagelist);
+	return err;
+}
+#endif /* CONFIG_SYNO_CEPH_ARCHIVE_BIT */
+
 static int ceph_mknod(struct inode *dir, struct dentry *dentry,
 		      umode_t mode, dev_t rdev)
 {
@@ -845,6 +922,11 @@ static int ceph_mknod(struct inode *dir, struct dentry *dentry,
 	err = ceph_security_init_secctx(dentry, mode, &as_ctx);
 	if (err < 0)
 		goto out;
+#ifdef CONFIG_SYNO_CEPH_ARCHIVE_BIT
+	err = ceph_pre_init_archive_bit(&as_ctx);
+	if (err < 0)
+		goto out;
+#endif /* CONFIG_SYNO_CEPH_ARCHIVE_BIT */
 
 	dout("mknod in dir %p dentry %p mode 0%ho rdev %d\n",
 	     dir, dentry, mode, rdev);
@@ -856,6 +938,7 @@ static int ceph_mknod(struct inode *dir, struct dentry *dentry,
 	req->r_dentry = dget(dentry);
 	req->r_num_caps = 2;
 	req->r_parent = dir;
+	ihold(dir);
 	set_bit(CEPH_MDS_R_PARENT_LOCKED, &req->r_req_flags);
 	req->r_args.mknod.mode = cpu_to_le32(mode);
 	req->r_args.mknod.rdev = cpu_to_le32(rdev);
@@ -917,6 +1000,8 @@ static int ceph_symlink(struct inode *dir, struct dentry *dentry,
 		goto out;
 	}
 	req->r_parent = dir;
+	ihold(dir);
+
 	set_bit(CEPH_MDS_R_PARENT_LOCKED, &req->r_req_flags);
 	req->r_dentry = dget(dentry);
 	req->r_num_caps = 2;
@@ -970,6 +1055,11 @@ static int ceph_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	err = ceph_security_init_secctx(dentry, mode, &as_ctx);
 	if (err < 0)
 		goto out;
+#ifdef CONFIG_SYNO_CEPH_ARCHIVE_BIT
+	err = ceph_pre_init_archive_bit(&as_ctx);
+	if (err < 0)
+		goto out;
+#endif /* CONFIG_SYNO_CEPH_ARCHIVE_BIT */
 
 	req = ceph_mdsc_create_request(mdsc, op, USE_AUTH_MDS);
 	if (IS_ERR(req)) {
@@ -980,6 +1070,7 @@ static int ceph_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	req->r_dentry = dget(dentry);
 	req->r_num_caps = 2;
 	req->r_parent = dir;
+	ihold(dir);
 	set_bit(CEPH_MDS_R_PARENT_LOCKED, &req->r_req_flags);
 	req->r_args.mkdir.mode = cpu_to_le32(mode);
 	req->r_dentry_drop = CEPH_CAP_FILE_SHARED | CEPH_CAP_AUTH_EXCL;
@@ -1024,6 +1115,7 @@ static int ceph_link(struct dentry *old_dentry, struct inode *dir,
 	req->r_num_caps = 2;
 	req->r_old_dentry = dget(old_dentry);
 	req->r_parent = dir;
+	ihold(dir);
 	set_bit(CEPH_MDS_R_PARENT_LOCKED, &req->r_req_flags);
 	req->r_dentry_drop = CEPH_CAP_FILE_SHARED;
 	req->r_dentry_unless = CEPH_CAP_FILE_EXCL;
@@ -1145,6 +1237,7 @@ retry:
 	req->r_dentry = dget(dentry);
 	req->r_num_caps = 2;
 	req->r_parent = dir;
+	ihold(dir);
 	req->r_dentry_drop = CEPH_CAP_FILE_SHARED;
 	req->r_dentry_unless = CEPH_CAP_FILE_EXCL;
 	req->r_inode_drop = ceph_drop_caps_for_unlink(inode);
@@ -1202,12 +1295,11 @@ static int ceph_rename(struct inode *old_dir, struct dentry *old_dentry,
 			op = CEPH_MDS_OP_RENAMESNAP;
 		else
 			return -EROFS;
-	} else if (old_dir != new_dir) {
-		err = ceph_quota_check_rename(mdsc, d_inode(old_dentry),
-					      new_dir);
-		if (err)
-			return err;
 	}
+	/* don't allow cross-quota renames */
+	if ((old_dir != new_dir) &&
+	    (!ceph_quota_is_same_realm(old_dir, new_dir)))
+		return -EXDEV;
 
 	dout("rename dir %p dentry %p to dir %p dentry %p\n",
 	     old_dir, old_dentry, new_dir, new_dentry);
@@ -1220,6 +1312,7 @@ static int ceph_rename(struct inode *old_dir, struct dentry *old_dentry,
 	req->r_old_dentry = dget(old_dentry);
 	req->r_old_dentry_dir = old_dir;
 	req->r_parent = new_dir;
+	ihold(new_dir);
 	set_bit(CEPH_MDS_R_PARENT_LOCKED, &req->r_req_flags);
 	req->r_old_dentry_drop = CEPH_CAP_FILE_SHARED;
 	req->r_old_dentry_unless = CEPH_CAP_FILE_EXCL;
@@ -1536,10 +1629,8 @@ static bool __dentry_lease_is_valid(struct ceph_dentry_info *di)
 		u32 gen;
 		unsigned long ttl;
 
-		spin_lock(&session->s_gen_ttl_lock);
-		gen = session->s_cap_gen;
+		gen = atomic_read(&session->s_cap_gen);
 		ttl = session->s_cap_ttl;
-		spin_unlock(&session->s_gen_ttl_lock);
 
 		if (di->lease_gen == gen &&
 		    time_before(jiffies, ttl) &&
@@ -1718,6 +1809,7 @@ static int ceph_d_revalidate(struct dentry *dentry, unsigned int flags)
 			req->r_dentry = dget(dentry);
 			req->r_num_caps = 2;
 			req->r_parent = dir;
+			ihold(dir);
 
 			mask = CEPH_STAT_CAP_INODE | CEPH_CAP_AUTH_SHARED;
 			if (ceph_security_xattr_wanted(dir))
@@ -1797,8 +1889,7 @@ static void ceph_d_release(struct dentry *dentry)
 	dentry->d_fsdata = NULL;
 	spin_unlock(&dentry->d_lock);
 
-	if (di->lease_session)
-		ceph_put_mds_session(di->lease_session);
+	ceph_put_mds_session(di->lease_session);
 	kmem_cache_free(ceph_dentry_cachep, di);
 }
 
@@ -1894,8 +1985,44 @@ static ssize_t ceph_read_dir(struct file *file, char __user *buf, size_t size,
 	return size - left;
 }
 
+#ifdef CONFIG_SYNO_CEPH_CASELESS_STAT
+inline int ceph_upper_full_name_hash(const struct dentry *parent, const char *name, int len, u32 *hash)
+{
+	/*
+	 * hash_buf need to add 1 byte for syno_utf8_toupper,
+	 * because it will append 0 to last byte.
+	 */
+	char hash_buf[NAME_MAX+1];
+	unsigned int upperlen;
 
+	if (len > NAME_MAX)
+		return -ENAMETOOLONG;
 
+	upperlen = syno_utf8_toupper(hash_buf, name, NAME_MAX, len, NULL);
+	*hash = full_name_hash(parent, hash_buf, upperlen);
+
+	return 0;
+}
+
+static int ceph_d_hash(const struct dentry *dentry, struct qstr *this)
+{
+	return ceph_upper_full_name_hash(dentry, this->name, this->len, &this->hash);
+}
+
+/* return 1 on failure and 0 on success */
+static int ceph_d_compare_case(const struct dentry *dentry, unsigned int len,
+				const char *str, const struct qstr *name,
+				int caseless)
+{
+	if (caseless) {
+		return syno_utf8_strcmp(str, name->name, len, name->len, NULL);
+	} else {
+		if (len != name->len)
+			return 1;
+		return dentry_cmp(dentry, name->name, name->len);
+	}
+}
+#endif /* CONFIG_SYNO_CEPH_CASELESS_STAT */
 /*
  * Return name hash for a given dentry.  This is dependent on
  * the parent directory's hash function.
@@ -1912,8 +2039,13 @@ unsigned ceph_dentry_hash(struct inode *dir, struct dentry *dn)
 
 	default:
 		spin_lock(&dn->d_lock);
+#ifdef CONFIG_SYNO_CEPH_CASELESS_STAT
+		hash = ceph_str_upper_hash(dci->i_dir_layout.dl_dir_hash,
+				     dn->d_name.name, dn->d_name.len);
+#else
 		hash = ceph_str_hash(dci->i_dir_layout.dl_dir_hash,
 				     dn->d_name.name, dn->d_name.len);
+#endif /* CONFIG_SYNO_CEPH_CASELESS_STAT */
 		spin_unlock(&dn->d_lock);
 		return hash;
 	}
@@ -1940,6 +2072,17 @@ const struct file_operations ceph_snapdir_fops = {
 };
 
 const struct inode_operations ceph_dir_iops = {
+#ifdef CONFIG_SYNO_CEPH_STAT
+	.syno_getattr	= ceph_syno_getattr,
+#endif /* CONFIG_SYNO_CEPH_STAT */
+#ifdef CONFIG_SYNO_CEPH_CREATE_TIME
+	.syno_get_crtime = ceph_syno_get_crtime,
+	.syno_set_crtime = ceph_syno_set_crtime,
+#endif /* CONFIG_SYNO_CEPH_CREATE_TIME */
+#ifdef CONFIG_SYNO_CEPH_ARCHIVE_BIT
+	.syno_get_archive_bit = ceph_syno_get_archive_bit,
+	.syno_set_archive_bit = ceph_syno_set_archive_bit,
+#endif /* CONFIG_SYNO_CEPH_ARCHIVE_BIT */
 	.lookup = ceph_lookup,
 	.permission = ceph_permission,
 	.getattr = ceph_getattr,
@@ -1947,6 +2090,11 @@ const struct inode_operations ceph_dir_iops = {
 	.listxattr = ceph_listxattr,
 	.get_acl = ceph_get_acl,
 	.set_acl = ceph_set_acl,
+#ifdef CONFIG_SYNO_CEPH_WINACL
+	.syno_get_acl = ceph_get_syno_acl,
+	.syno_set_acl = ceph_set_syno_acl,
+	.syno_permission = ceph_syno_permission,
+#endif /* CONFIG_SYNO_CEPH_WINACL */
 	.mknod = ceph_mknod,
 	.symlink = ceph_symlink,
 	.mkdir = ceph_mkdir,
@@ -1959,6 +2107,17 @@ const struct inode_operations ceph_dir_iops = {
 };
 
 const struct inode_operations ceph_snapdir_iops = {
+#ifdef CONFIG_SYNO_CEPH_STAT
+	.syno_getattr	= ceph_syno_getattr,
+#endif /* CONFIG_SYNO_CEPH_STAT */
+#ifdef CONFIG_SYNO_CEPH_CREATE_TIME
+	.syno_get_crtime = ceph_syno_get_crtime,
+	.syno_set_crtime = ceph_syno_set_crtime,
+#endif /* CONFIG_SYNO_CEPH_CREATE_TIME */
+#ifdef CONFIG_SYNO_CEPH_ARCHIVE_BIT
+	.syno_get_archive_bit = ceph_syno_get_archive_bit,
+	.syno_set_archive_bit = ceph_syno_set_archive_bit,
+#endif /* CONFIG_SYNO_CEPH_ARCHIVE_BIT */
 	.lookup = ceph_lookup,
 	.permission = ceph_permission,
 	.getattr = ceph_getattr,
@@ -1973,4 +2132,8 @@ const struct dentry_operations ceph_dentry_ops = {
 	.d_release = ceph_d_release,
 	.d_prune = ceph_d_prune,
 	.d_init = ceph_d_init,
+#ifdef CONFIG_SYNO_CEPH_CASELESS_STAT
+	.d_hash = ceph_d_hash,
+	.d_compare_case = ceph_d_compare_case,
+#endif /* CONFIG_SYNO_CEPH_CASELESS_STAT */
 };

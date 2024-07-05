@@ -1,0 +1,10 @@
+#!/bin/bash
+# Copyright (c) 2000-2020 Synology Inc. All rights reserved.
+
+. ${ScriptsDir}/include/exports
+
+make install InstallPath="$TmpInstDir/lib/modules"
+
+if [ "x$NOSTRIP" != "xNOSTRIP" ]; then
+	$STRIP --strip-debug ${TmpInstDir}/lib/modules/exfat.ko
+fi

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_SCHED_SYSCTL_H
 #define _LINUX_SCHED_SYSCTL_H
@@ -19,6 +22,10 @@ extern unsigned int  sysctl_hung_task_panic;
 extern unsigned long sysctl_hung_task_timeout_secs;
 extern unsigned long sysctl_hung_task_check_interval_secs;
 extern int sysctl_hung_task_warnings;
+#ifdef MY_ABC_HERE
+extern int sysctl_hung_task_warnings_default;
+extern int sysctl_hung_task_warnings_reset_period;
+#endif /* MY_ABC_HERE */
 int proc_dohung_task_timeout_secs(struct ctl_table *table, int write,
 		void *buffer, size_t *lenp, loff_t *ppos);
 #else

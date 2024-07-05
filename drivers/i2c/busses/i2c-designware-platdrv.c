@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Synopsys DesignWare I2C adapter driver.
@@ -32,6 +35,9 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/suspend.h>
+#ifdef MY_ABC_HERE
+#include <linux/synobios.h>
+#endif /* MY_ABC_HERE */
 
 #include "i2c-designware-core.h"
 
@@ -241,7 +247,23 @@ static int dw_i2c_plat_probe(struct platform_device *pdev)
 	else
 		i2c_parse_fw_timings(&pdev->dev, t, false);
 
+#ifdef MY_ABC_HERE
+	/* FIXME: Don't use these model customize code
+	 *        They should be customized in dts or acpi
+	 */
+	if (syno_is_hw_version(HW_DS1621p) || syno_is_hw_version(HW_DS1821p)) {
+		t->bus_freq_hz = I2C_MAX_FAST_MODE_FREQ;
+	} else {
+		t->bus_freq_hz = I2C_MAX_STANDARD_MODE_FREQ;
+	}
+
+	if (syno_is_hw_version(HW_RS822p) || syno_is_hw_version(HW_RS822rpp) 
+			|| syno_is_hw_version(HW_SA6400) || syno_is_hw_version(HW_SA6200) || syno_is_hw_version(HW_FS6410) || syno_is_hw_version(HW_SC6200)) {
+		t->sda_hold_ns = 100;
+	}
+#else /* MY_ABC_HERE */
 	i2c_dw_adjust_bus_speed(dev);
+#endif /* MY_ABC_HERE */
 
 	if (pdev->dev.of_node)
 		dw_i2c_of_configure(pdev);
@@ -282,6 +304,10 @@ static int dw_i2c_plat_probe(struct platform_device *pdev)
 	adap->owner = THIS_MODULE;
 	adap->class = dmi_check_system(dw_i2c_hwmon_class_dmi) ?
 					I2C_CLASS_HWMON : I2C_CLASS_DEPRECATED;
+#ifdef MY_ABC_HERE
+	/* override class to use this driver directly */
+	adap->class = I2C_CLASS_HWMON | I2C_CLASS_SPD;
+#endif /* MY_ABC_HERE */
 	ACPI_COMPANION_SET(&adap->dev, ACPI_COMPANION(&pdev->dev));
 	adap->dev.of_node = pdev->dev.of_node;
 	adap->nr = -1;

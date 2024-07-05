@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
     Copyright (c) 1998 - 2002  Frodo Looijaard <frodol@dds.nl>,
@@ -107,6 +110,11 @@
 #include <linux/platform_data/itco_wdt.h>
 #include <linux/pm_runtime.h>
 
+#ifdef MY_DEF_HERE
+#include <linux/seq_file.h>
+#include <linux/proc_fs.h>
+#endif /* MY_DEF_HERE */
+
 #if IS_ENABLED(CONFIG_I2C_MUX_GPIO) && defined CONFIG_DMI
 #include <linux/gpio/machine.h>
 #include <linux/platform_data/i2c-mux-gpio.h>
@@ -123,6 +131,10 @@
 #define SMBPEC(p)	(8 + (p)->smba)		/* ICH3 and later */
 #define SMBAUXSTS(p)	(12 + (p)->smba)	/* ICH4 and later */
 #define SMBAUXCTL(p)	(13 + (p)->smba)	/* ICH4 and later */
+#ifdef MY_DEF_HERE
+// SMBUS_PIN_CTL Register (SMBC)—Offset Fh
+#define SMBPINCTL(p)    (15 + (p)->smba)
+#endif /* MY_DEF_HERE */
 #define SMBSLVSTS(p)	(16 + (p)->smba)	/* ICH3 and later */
 #define SMBSLVCMD(p)	(17 + (p)->smba)	/* ICH3 and later */
 #define SMBNTFDADD(p)	(20 + (p)->smba)	/* ICH3 and later */
@@ -149,6 +161,9 @@
 #define SMBHSTCFG_HST_EN	BIT(0)
 #define SMBHSTCFG_SMB_SMI_EN	BIT(1)
 #define SMBHSTCFG_I2C_EN	BIT(2)
+#ifdef MY_DEF_HERE
+#define SMBHSTCFG_SSRESET	BIT(3)
+#endif /* MY_DEF_HERE */
 #define SMBHSTCFG_SPD_WD	BIT(4)
 
 /* TCO configuration bits for TCOCTL */
@@ -191,6 +206,13 @@
 #define SMBHSTSTS_DEV_ERR	BIT(2)
 #define SMBHSTSTS_INTR		BIT(1)
 #define SMBHSTSTS_HOST_BUSY	BIT(0)
+
+#ifdef MY_DEF_HERE
+/* I801 Pin Control register bits*/
+#define SMBPINCTL_SCL_CTL   BIT(2)
+#define SMBPINCTL_SDATA_STS BIT(1)
+#define SMBPINCTL_SCL_STS   BIT(0)
+#endif /* MY_DEF_HERE */
 
 /* Host Notify Status register bits */
 #define SMBSLVSTS_HST_NTFY_STS	BIT(0)
@@ -320,6 +342,330 @@ MODULE_PARM_DESC(disable_features, "Disable selected driver features:\n"
 	"\t\t  0x10  don't use interrupts\n"
 	"\t\t  0x20  disable SMBus Host Notify ");
 
+#ifdef MY_DEF_HERE
+static int i801_i2c_get_sda(struct i2c_adapter *adap)
+{
+	struct i801_priv *priv = NULL;
+	int result = 0;
+	if (adap) {
+		priv = i2c_get_adapdata(adap);
+	} else {
+		printk("adap should not be null\n");
+		goto out;
+	}
+
+	if (priv) {
+		result = inb_p(SMBPINCTL(priv)) & SMBPINCTL_SDATA_STS;
+	} else {
+		printk("priv should not be null\n");
+		goto out;
+	}
+
+out:
+	return result;
+}
+
+static int i801_i2c_get_scl(struct i2c_adapter *adap)
+{
+	struct i801_priv *priv = NULL;
+	int result = 0;
+	if (adap) {
+		priv = i2c_get_adapdata(adap);
+	} else {
+		printk("adap should not be null\n");
+		goto out;
+	}
+
+	if (priv) {
+		result = inb_p(SMBPINCTL(priv)) & SMBPINCTL_SCL_STS;
+	} else {
+		printk("priv should not be null\n");
+		goto out;
+	}
+
+out:
+	return result;
+}
+
+static void i801_i2c_set_scl(struct i2c_adapter *adap, int val)
+{
+	struct i801_priv *priv = NULL;
+
+	if (adap) {
+		priv = i2c_get_adapdata(adap);
+	} else {
+		printk("adap should not be null\n");
+		goto out;
+	}
+
+	if (priv) {
+		if (val) {
+			outb_p(SMBPINCTL_SCL_CTL, SMBPINCTL(priv));
+		} else {
+			outb_p(0, SMBPINCTL(priv));
+		}
+	} else {
+		printk("priv should not be null\n");
+		goto out;
+	}
+
+out:
+	return;
+}
+
+#define SMB_CLK_DELAY_TIME_MS 42
+
+static int i801_delay_recovery(struct i2c_adapter *adap)
+{
+	int ret = -1;
+
+	if (NULL == adap) {
+		printk("adap should not be null\n");
+		goto out;
+	}
+
+	i801_i2c_set_scl(adap, 0);
+	mdelay(SMB_CLK_DELAY_TIME_MS);
+	i801_i2c_set_scl(adap, 1);
+
+	if (i801_i2c_get_sda(adap))
+		ret = 0;
+
+out:
+	return ret;
+}
+
+static unsigned long delay_try_cnt = 0;
+static unsigned long delay_suc_cnt = 0;
+static unsigned long pulse_try_cnt = 0;
+static unsigned long pulse_suc_cnt = 0;
+static unsigned long i801_reset_count = 0;
+static int i801_smbusbusy = 0;
+
+static int i801_recovery_proc_show(struct seq_file *m, void *v)
+{
+	struct i801_priv *priv = (struct i801_priv *)m->private;
+
+	pulse_try_cnt++;
+	if (0 == i2c_recover_bus(&priv->adapter)) {
+		pulse_suc_cnt++;
+		printk("i2c recover work\n");
+		goto out;
+	}
+
+	delay_try_cnt++;
+	if (0 == i801_delay_recovery(&priv->adapter)) {
+		delay_suc_cnt++;
+		printk("smbus recover work\n");
+		goto out;
+	}
+
+out:
+
+	seq_printf(m, "Force i2c recoery\n");
+
+	return 0;
+}
+
+static int i801_recovery_proc_open(struct inode *inode, struct file *file)
+{
+        return single_open(file, i801_recovery_proc_show, PDE_DATA(inode));
+}
+
+static const struct proc_ops i801_recovery_proc_fops = {
+        .proc_open          = i801_recovery_proc_open,
+        .proc_read          = seq_read,
+        .proc_lseek         = seq_lseek,
+        .proc_release       = single_release,
+};
+
+static int i801_recovery_cnt_proc_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "42ms delay try cnt : %lu\n", delay_try_cnt);
+	seq_printf(m, "42ms delay suc cnt : %lu\n", delay_suc_cnt);
+	seq_printf(m, "more pulse try cnt : %lu\n", pulse_try_cnt);
+	seq_printf(m, "more pulse suc cnt : %lu\n", pulse_suc_cnt);
+
+	return 0;
+}
+
+static int i801_recovery_cnt_proc_open(struct inode *inode, struct file *file)
+{
+        return single_open(file, i801_recovery_cnt_proc_show, PDE_DATA(inode));
+}
+
+static const struct proc_ops i801_recovery_cnt_proc_fops = {
+        .proc_open          = i801_recovery_cnt_proc_open,
+        .proc_read          = seq_read,
+        .proc_lseek         = seq_lseek,
+        .proc_release       = single_release,
+};
+
+static int proc_i801_recovery_cnt_init(struct i801_priv *priv)
+{
+	int iResult = 0;
+	struct proc_dir_entry *p;
+	p = proc_create_data("i801_recovery_cnt", 0, NULL, &i801_recovery_cnt_proc_fops, priv);
+	if (NULL == p) {
+		printk("Fail to cat i801_recovery_cnt proc\n");
+		iResult = -1;
+	}
+
+	return iResult;
+}
+
+static int proc_i801_recovery_init(struct i801_priv *priv)
+{
+	int iResult = 0;
+	struct proc_dir_entry *p;
+	p = proc_create_data("i801_recovery", 0, NULL, &i801_recovery_proc_fops, priv);
+	if (NULL == p) {
+		printk("Fail to create i801_recovery proc\n");
+		iResult = -1;
+	}
+
+	return iResult;
+}
+static struct i2c_bus_recovery_info i801_i2c_recovery_info = {
+	.recover_bus = i2c_generic_scl_recovery,
+	.get_scl = i801_i2c_get_scl,
+	.set_scl = i801_i2c_set_scl,
+	.get_sda = i801_i2c_get_sda,
+};
+
+#define BUS_BUSY_COUT_TO_RESET 3
+#define BUS_BUSY_TIMEWINDOW_TO_RESET 1 * HZ
+static void syno_i801_softreset(struct i801_priv *priv)
+{
+	static int smbus_busy_count = 1;
+	static unsigned long gulSmbus_busy_first_timestamp = 0;
+	unsigned char hostc;
+
+	if (time_before(jiffies, gulSmbus_busy_first_timestamp + BUS_BUSY_TIMEWINDOW_TO_RESET)) {
+		if (smbus_busy_count >= BUS_BUSY_COUT_TO_RESET) {
+			// Soft reset SMBus controller due to multiple BUSBUSY in a preiod of time
+			pci_read_config_byte(priv->pci_dev, SMBHSTCFG, &hostc);
+			pci_write_config_byte(priv->pci_dev, SMBHSTCFG,
+					      hostc | SMBHSTCFG_SSRESET);
+
+			printk("i801 softreset\n");
+			smbus_busy_count = 0;
+			i801_reset_count++;
+		} else {
+			smbus_busy_count++;
+		}
+	} else {
+		gulSmbus_busy_first_timestamp = jiffies;
+		smbus_busy_count = 1;
+	}
+}
+
+//
+// sysfs to i801 soft reset
+//
+static int i801_softreset_proc_show(struct seq_file *m, void *v)
+{
+	struct i801_priv *priv = (struct i801_priv *)m->private;
+	unsigned char hostc;
+
+	pci_read_config_byte(priv->pci_dev, SMBHSTCFG, &hostc);
+	pci_write_config_byte(priv->pci_dev, SMBHSTCFG,
+			hostc | SMBHSTCFG_SSRESET);
+
+	i801_reset_count++;
+	seq_printf(m, "i801 soft reset\n");
+
+	return 0;
+}
+static int i801_softreset_proc_open(struct inode *inode, struct file *file)
+{
+        return single_open(file, i801_softreset_proc_show, PDE_DATA(inode));
+}
+static const struct proc_ops i801_softreset_proc_fops = {
+        .proc_open          = i801_softreset_proc_open,
+        .proc_read          = seq_read,
+        .proc_lseek         = seq_lseek,
+        .proc_release       = single_release,
+};
+static int proc_i801_softreset_init(struct i801_priv *priv)
+{
+	int iResult = 0;
+	struct proc_dir_entry *p;
+	p = proc_create_data("i801_softreset", 0, NULL, &i801_softreset_proc_fops, priv);
+	if (NULL == p) {
+		printk("Fail to create i801_softreset proc\n");
+		iResult = -1;
+	}
+
+	return iResult;
+}
+
+//
+// sysfs to print i801 soft reset count
+//
+static int i801_softreset_cnt_proc_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "i801 soft reset count: %lu\n", i801_reset_count);
+
+	return 0;
+}
+static int i801_softreset_cnt_proc_open(struct inode *inode, struct file *file)
+{
+        return single_open(file, i801_softreset_cnt_proc_show, PDE_DATA(inode));
+}
+static const struct proc_ops i801_softreset_cnt_proc_fops = {
+        .proc_open          = i801_softreset_cnt_proc_open,
+        .proc_read          = seq_read,
+        .proc_lseek         = seq_lseek,
+        .proc_release       = single_release,
+};
+static int proc_i801_softreset_cnt_init(struct i801_priv *priv)
+{
+	int iResult = 0;
+	struct proc_dir_entry *p;
+	p = proc_create_data("i801_softreset_cnt", 0, NULL, &i801_softreset_cnt_proc_fops, priv);
+	if (NULL == p) {
+		printk("Fail to create i801_softreset_cnt proc\n");
+		iResult = -1;
+	}
+
+	return iResult;
+}
+
+//
+// sysfs to force smbus busy only once
+//
+static int i801_smbusbusy_proc_show(struct seq_file *m, void *v)
+{
+	i801_smbusbusy = 1;
+	seq_printf(m, "force i801 smbusbusy\n");
+
+	return 0;
+}
+static int i801_smbusbusy_proc_open(struct inode *inode, struct file *file)
+{
+        return single_open(file, i801_smbusbusy_proc_show, PDE_DATA(inode));
+}
+static const struct proc_ops i801_smbusbusy_proc_fops = {
+        .proc_open          = i801_smbusbusy_proc_open,
+        .proc_read          = seq_read,
+        .proc_lseek         = seq_lseek,
+        .proc_release       = single_release,
+};
+static int proc_i801_smbusbusy_init(struct i801_priv *priv)
+{
+	int iResult = 0;
+	struct proc_dir_entry *p;
+	p = proc_create_data("i801_smbusbusy", 0, NULL, &i801_smbusbusy_proc_fops, priv);
+	if (NULL == p) {
+		printk("Fail to create i801_smbusbusy proc\n");
+		iResult = -1;
+	}
+
+	return iResult;
+}
+#endif /* MY_DEF_HERE */
+
 /* Make sure the SMBus host is ready to start transmitting.
    Return 0 if it is, -EBUSY if it is not. */
 static int i801_check_pre(struct i801_priv *priv)
@@ -327,7 +673,13 @@ static int i801_check_pre(struct i801_priv *priv)
 	int status;
 
 	status = inb_p(SMBHSTSTS(priv));
+#ifdef MY_DEF_HERE
+	if (i801_smbusbusy || (status & SMBHSTSTS_HOST_BUSY)) {
+		syno_i801_softreset(priv);
+		i801_smbusbusy = 0;
+#else /* MY_DEF_HERE */
 	if (status & SMBHSTSTS_HOST_BUSY) {
+#endif /* MY_DEF_HERE */
 		dev_err(&priv->pci_dev->dev, "SMBus is busy, can't use it!\n");
 		return -EBUSY;
 	}
@@ -851,6 +1203,9 @@ static s32 i801_access(struct i2c_adapter *adap, u16 addr,
 	int block = 0;
 	int ret = 0, xact = 0;
 	struct i801_priv *priv = i2c_get_adapdata(adap);
+#ifdef MY_DEF_HERE
+	int iRunTimes = 0;
+#endif /* MY_DEF_HERE */
 
 	mutex_lock(&priv->acpi_lock);
 	if (priv->acpi_reserved) {
@@ -859,6 +1214,10 @@ static s32 i801_access(struct i2c_adapter *adap, u16 addr,
 	}
 
 	pm_runtime_get_sync(&priv->pci_dev->dev);
+
+#ifdef MY_DEF_HERE
+redo:
+#endif /* MY_DEF_HERE */
 
 	hwpec = (priv->features & FEATURE_SMBUS_PEC) && (flags & I2C_CLIENT_PEC)
 		&& size != I2C_SMBUS_QUICK
@@ -979,6 +1338,31 @@ out:
 
 	pm_runtime_mark_last_busy(&priv->pci_dev->dev);
 	pm_runtime_put_autosuspend(&priv->pci_dev->dev);
+
+#ifdef MY_DEF_HERE
+	//Only first run and SDA low we do recover,
+	//We run i2c recovery first, then SMBUS recover if needed
+	if ((-ENXIO == ret) && !(i801_i2c_get_sda(adap))) {
+		iRunTimes++;
+		delay_try_cnt++;
+		if ((10 >= iRunTimes) && (0 == i801_delay_recovery(adap))) {
+			delay_suc_cnt++;
+			goto redo;
+		}
+		pulse_try_cnt++;
+		if ((20 >= iRunTimes ) && (0 == i2c_recover_bus(adap))) {
+			pulse_suc_cnt++;
+			goto redo;
+		}
+
+		if (20 < iRunTimes) {
+			printk("Fail to recover i801 \n");
+		} else {
+			goto redo;
+		}
+	}
+#endif /* MY_DEF_HERE */
+
 	mutex_unlock(&priv->acpi_lock);
 	return ret;
 }
@@ -1816,6 +2200,10 @@ static int i801_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	}
 	priv->features &= ~disable_features;
 
+#ifdef MY_ABC_HERE
+	priv->features &= ~FEATURE_IRQ;
+#endif /* MY_ABC_HERE */
+
 	err = pcim_enable_device(dev);
 	if (err) {
 		dev_err(&dev->dev, "Failed to enable SMBus PCI device (%d)\n",
@@ -1929,6 +2317,15 @@ static int i801_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	pm_runtime_put_autosuspend(&dev->dev);
 	pm_runtime_allow(&dev->dev);
 
+#ifdef MY_DEF_HERE
+	proc_i801_recovery_init(priv);
+	priv->adapter.bus_recovery_info = &i801_i2c_recovery_info;
+	proc_i801_recovery_cnt_init(priv);
+	proc_i801_softreset_init(priv);
+	proc_i801_softreset_cnt_init(priv);
+	proc_i801_smbusbusy_init(priv);
+#endif /* MY_DEF_HERE */
+
 	return 0;
 }
 
@@ -1947,6 +2344,13 @@ static void i801_remove(struct pci_dev *dev)
 
 	platform_device_unregister(priv->tco_pdev);
 
+#ifdef MY_DEF_HERE
+	remove_proc_entry("i801_recovery", NULL);
+	remove_proc_entry("i801_recovery_cnt", NULL);
+	remove_proc_entry("i801_smbusbusy", NULL);
+	remove_proc_entry("i801_softreset", NULL);
+	remove_proc_entry("i801_softreset_cnt", NULL);
+#endif /* MY_DEF_HERE */
 	/*
 	 * do not call pci_disable_device(dev) since it can cause hard hangs on
 	 * some systems during power-off (eg. Fujitsu-Siemens Lifebook E8010)

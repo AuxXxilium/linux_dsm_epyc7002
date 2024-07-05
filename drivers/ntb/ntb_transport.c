@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  *   redistributing this file, you may do so under either license.
@@ -116,6 +119,10 @@ struct ntb_queue_entry {
 	int errors;
 	unsigned int tx_index;
 	unsigned int rx_index;
+#ifdef MY_DEF_HERE
+	// the entry is used for which round of an qp.
+	u16 num_qp_round;
+#endif /* MY_DEF_HERE */
 
 	struct ntb_transport_qp *qp;
 	union {
@@ -194,6 +201,15 @@ struct ntb_transport_qp {
 	u64 tx_err_no_buf;
 	u64 tx_memcpy;
 	u64 tx_async;
+#ifdef MY_DEF_HERE
+	// record which round the qp is. This will plus 1 when qp link is down.
+	unsigned int ucRound;
+	// used for the entry data to indicate which round the entry is creatd
+	// this counter will be plused one after link up. This is also used for
+	// ntb_queue_entry->num_qp_round to remaind which round the entry is c-
+	// alled.
+	unsigned int ucRoundForEntry;
+#endif /* MY_DEF_HERE */
 
 	bool use_msi;
 	int msi_irq;
@@ -251,7 +267,13 @@ enum {
 struct ntb_payload_header {
 	unsigned int ver;
 	unsigned int len;
+#ifdef MY_DEF_HERE
+	u16 flags;
+	// Indicates which qp round creates the ntb payload.
+	u16 num_qp_round;
+#else /* MY_DEF_HERE */
 	unsigned int flags;
+#endif /* MY_DEF_HERE */
 };
 
 enum {
@@ -261,7 +283,35 @@ enum {
 	NUM_MWS,
 	MW0_SZ_HIGH,
 	MW0_SZ_LOW,
+#ifdef MY_DEF_HERE
+	QP_DATA_VERSION = 12,
+	// every 4 bit is used for a queue to record the number of link down (ucRound in qp struct)
+	QP_NUM_ROUND = 13,
+#endif /* MY_DEF_HERE */
 };
+
+#ifdef MY_DEF_HERE
+// the version of QP_DATA
+// if this does not match, MY_DEF_HERE will not work.
+#define SYNO_QP_DATA_VER 1
+// mask to get the QP data from a 32-bit register (key: QP_NUM_ROUND)
+unsigned int gSynoQPRoundMask[8] = {
+        0x0000000f,     // qp0
+        0x000000f0,     // qp1
+        0x00000f00,     // qp2
+        0x0000f000,     // qp3
+        0x000f0000,     // qp4
+        0x00f00000,     // qp5
+        0x0f000000,     // qp6
+        0xf0000000,     // qp7
+};
+// SYNO_QP_ROUND_MOD = 2 ^ SYNO_QP_ROUND_SHIFT_BIT
+#define SYNO_QP_ROUND_SHIFT_BIT 4
+#define SYNO_QP_ROUND_MOD 16
+// consistency of qp data version between local and remote
+// true means that versions are the same.
+static bool gblQPDataVersionConsistency = true;
+#endif /* MY_DEF_HERE */
 
 #define dev_client_dev(__dev) \
 	container_of((__dev), struct ntb_transport_client_dev, dev)
@@ -281,7 +331,9 @@ static int ntb_async_tx_submit(struct ntb_transport_qp *qp,
 static void ntb_memcpy_tx(struct ntb_queue_entry *entry, void __iomem *offset);
 static int ntb_async_rx_submit(struct ntb_queue_entry *entry, void *offset);
 static void ntb_memcpy_rx(struct ntb_queue_entry *entry, void *offset);
-
+#ifdef MY_DEF_HERE
+static unsigned int SYNONtbQPGetLinkdownNum(struct ntb_dev *ndev, u8 qp_num);
+#endif /* MY_DEF_HERE */
 
 static int ntb_transport_bus_match(struct device *dev,
 				   struct device_driver *drv)
@@ -471,7 +523,7 @@ static ssize_t debugfs_read(struct file *filp, char __user *ubuf, size_t count,
 
 	qp = filp->private_data;
 
-	if (!qp || !qp->link_is_up)
+	if (!qp)
 		return 0;
 
 	out_count = 1000;
@@ -481,9 +533,24 @@ static ssize_t debugfs_read(struct file *filp, char __user *ubuf, size_t count,
 		return -ENOMEM;
 
 	out_offset = 0;
-	out_offset += scnprintf(buf + out_offset, out_count - out_offset,
+	out_offset += snprintf(buf + out_offset, out_count - out_offset,
 			       "\nNTB QP stats:\n\n");
-	out_offset += scnprintf(buf + out_offset, out_count - out_offset,
+#ifdef MY_DEF_HERE
+	if (!qp->link_is_up){
+		out_offset += scnprintf(buf + out_offset, out_count - out_offset,
+						"qp data version consistency - \t%s\n",
+						gblQPDataVersionConsistency ? "Yes" : "No");
+		out_offset += scnprintf(buf + out_offset, out_count - out_offset,
+						"num round - \t%u\n", qp->ucRound);
+		out_offset += scnprintf(buf + out_offset, out_count - out_offset,
+						"num round for entry - \t%u\n", qp->ucRoundForEntry);
+		out_offset += scnprintf(buf + out_offset, out_count - out_offset,
+						"num round on register (remote) - \t%u\n",
+						SYNONtbQPGetLinkdownNum(qp->ndev, qp->qp_num));
+		goto END;
+	}
+#endif /* MY_DEF_HERE */
+	out_offset += snprintf(buf + out_offset, out_count - out_offset,
 			       "rx_bytes - \t%llu\n", qp->rx_bytes);
 	out_offset += scnprintf(buf + out_offset, out_count - out_offset,
 			       "rx_pkts - \t%llu\n", qp->rx_pkts);
@@ -544,6 +611,19 @@ static ssize_t debugfs_read(struct file *filp, char __user *ubuf, size_t count,
 	out_offset += scnprintf(buf + out_offset, out_count - out_offset,
 			       "QP Link - \t%s\n",
 			       qp->link_is_up ? "Up" : "Down");
+#ifdef MY_DEF_HERE
+	out_offset += scnprintf(buf + out_offset, out_count - out_offset,
+					"qp data version consistency - \t%s\n",
+					gblQPDataVersionConsistency ? "Yes" : "No");
+	out_offset += scnprintf(buf + out_offset, out_count - out_offset,
+					"num round - \t%u\n", qp->ucRound);
+	out_offset += scnprintf(buf + out_offset, out_count - out_offset,
+					"num round for entry - \t%u\n", qp->ucRoundForEntry);
+	out_offset += scnprintf(buf + out_offset, out_count - out_offset,
+					"num round on register (remote) - \t%u\n",
+					SYNONtbQPGetLinkdownNum(qp->ndev, qp->qp_num));
+END:
+#endif /* MY_DEF_HERE */
 	out_offset += scnprintf(buf + out_offset, out_count - out_offset,
 			       "\n");
 
@@ -1026,6 +1106,10 @@ static void ntb_transport_link_work(struct work_struct *work)
 	resource_size_t size;
 	u32 val;
 	int rc = 0, i, spad;
+#ifdef MY_DEF_HERE
+	/* initialized QP_DATA_VERSION */
+	ntb_peer_spad_write(ndev, PIDX, QP_DATA_VERSION, SYNO_QP_DATA_VER);
+#endif /* MY_DEF_HERE */
 
 	/* send the local info, in the opposite order of the way we read it */
 
@@ -1121,6 +1205,44 @@ out:
 				      msecs_to_jiffies(NTB_LINK_DOWN_TIMEOUT));
 }
 
+#ifdef MY_DEF_HERE
+/**
+* This function is used to get the number of round for a specific qp.
+* First, get register result from spad.
+* Second, process the result by qp_num (qp index). Currently, each qp has 4 bits.
+*
+* @param nt the ntb_transport_ctx, used to read register.
+* @param qp_num the index of qp
+*
+* @return unsigned int of the qp.
+*/
+static unsigned int SYNONtbQPGetLinkdownNum(struct ntb_dev *ndev, u8 qp_num)
+{
+	unsigned int remote_num_round = 0;			// the qp rounds from spad register
+	remote_num_round = ntb_spad_read(ndev, QP_NUM_ROUND);
+	return (gSynoQPRoundMask[qp_num] & remote_num_round) >> (qp_num * SYNO_QP_ROUND_SHIFT_BIT);
+}
+
+/**
+* This function is used to set the number of link down count to spad register.
+*
+* @param nt the ntb_transport_ctx, used to read register.
+* @param qp_num the index of qp
+* @param num_round the number of qp rounds
+*
+* @return unsigned int of the qp.
+*/
+static void SYNONtbQPSetLinkdownNum(struct ntb_dev *ndev, u8 qp_num, unsigned int num_round)
+{
+	unsigned int processed_num_round = (num_round << (qp_num * SYNO_QP_ROUND_SHIFT_BIT));
+	unsigned int original_num_round = ntb_peer_spad_read(ndev, PIDX, QP_NUM_ROUND);
+	// remove the original result but keep other qp's results
+	original_num_round = (~gSynoQPRoundMask[qp_num]) & original_num_round;
+	// merge the orignal number and the processed number
+	ntb_peer_spad_write(ndev, PIDX, QP_NUM_ROUND, processed_num_round | original_num_round);
+}
+#endif /* MY_DEF_HERE */
+
 static void ntb_qp_link_work(struct work_struct *work)
 {
 	struct ntb_transport_qp *qp = container_of(work,
@@ -1129,6 +1251,11 @@ static void ntb_qp_link_work(struct work_struct *work)
 	struct pci_dev *pdev = qp->ndev->pdev;
 	struct ntb_transport_ctx *nt = qp->transport;
 	int val;
+#ifdef MY_DEF_HERE
+	unsigned int remote_qp_num_round = 0;
+	bool blLinkdownFlag = true;
+	int cReLinkCount = 0;		// if this is not zero, reschedule the down up and update ucRound
+#endif /* MY_DEF_HERE */
 
 	WARN_ON(!nt->link_is_up);
 
@@ -1140,8 +1267,52 @@ static void ntb_qp_link_work(struct work_struct *work)
 	dev_dbg_ratelimited(&pdev->dev, "Remote QP link status = %x\n", val);
 
 	/* See if the remote side is up */
+#ifdef MY_DEF_HERE
+	// check the num of round of remote and local
+	gblQPDataVersionConsistency = (SYNO_QP_DATA_VER == ntb_spad_read(nt->ndev, QP_DATA_VERSION));
+	remote_qp_num_round = SYNONtbQPGetLinkdownNum(nt->ndev, qp->qp_num);
+	if (qp->ucRound == -1) {		// reset the qp->ucRound first
+		qp->ucRound = remote_qp_num_round;
+		SYNONtbQPSetLinkdownNum(nt->ndev, qp->qp_num, qp->ucRound);
+	}
+	if (false == gblQPDataVersionConsistency) {
+		// reset the ucRound if qp version mismatches.
+		qp->ucRound = 0;
+	}
+	if (gblQPDataVersionConsistency
+		&& remote_qp_num_round != qp->ucRound) {
+		blLinkdownFlag = false;
+		SYNONtbQPSetLinkdownNum(nt->ndev, qp->qp_num, qp->ucRound);
+		// determine which one will have less steps to follow up
+		if (remote_qp_num_round == 15 && qp->ucRound == 0) {
+			cReLinkCount = 0;
+		} else if (remote_qp_num_round == 0 && qp->ucRound == 15) {
+			cReLinkCount = 1;
+		} else if (remote_qp_num_round > qp->ucRound) {
+			cReLinkCount = remote_qp_num_round - qp->ucRound;
+		}
+		if(cReLinkCount) {
+			// re-schedule a linkdown without notifying the remote device
+			qp->ucRound += cReLinkCount;
+			qp->ucRound %= SYNO_QP_ROUND_MOD;
+			if (cReLinkCount > 1) {
+				printk("Re-schedule down/up more than one time. Num of rounds (mod 16), Remote: %u, Local: %u\n",
+					remote_qp_num_round, qp->ucRound
+				);
+			}
+			SYNONtbQPSetLinkdownNum(nt->ndev, qp->qp_num, qp->ucRound);
+			ntb_qp_link_down(qp);
+		}
+	}
+	if ((val & BIT(qp->qp_num)) && blLinkdownFlag) {
+#else /* MY_DEF_HERE */
 	if (val & BIT(qp->qp_num)) {
+#endif /* MY_DEF_HERE */
 		dev_info(&pdev->dev, "qp %d: Link Up\n", qp->qp_num);
+#ifdef MY_DEF_HERE
+		// update the ucRoundForEntry by qp->ucRound
+		qp->ucRoundForEntry = qp->ucRound;
+#endif /* MY_DEF_HERE */
 		qp->link_is_up = true;
 		qp->active = true;
 
@@ -1236,6 +1407,10 @@ static int ntb_transport_init_queue(struct ntb_transport_ctx *nt,
 
 	tasklet_init(&qp->rxc_db_work, ntb_transport_rxc_db,
 		     (unsigned long)qp);
+#ifdef MY_DEF_HERE
+	qp->ucRound = -1;
+	qp->ucRoundForEntry = -1;
+#endif /* MY_DEF_HERE */
 
 	return 0;
 }
@@ -1622,17 +1797,44 @@ static int ntb_process_rxc(struct ntb_transport_qp *qp)
 	offset = qp->rx_buff + qp->rx_max_frame * qp->rx_index;
 	hdr = offset + qp->rx_max_frame - sizeof(struct ntb_payload_header);
 
+#ifdef MY_DEF_HERE
+	dev_dbg(&qp->ndev->pdev->dev, "qp %d: RX ver %u len %d flags %x num of round: %d\n",
+		qp->qp_num, hdr->ver, hdr->len, hdr->flags, hdr->num_qp_round);
+	if (!qp->link_is_up){
+		// link is not up, don't process any rx
+		return -EAGAIN;
+	}
+#else /* MY_DEF_HERE */
 	dev_dbg(&qp->ndev->pdev->dev, "qp %d: RX ver %u len %d flags %x\n",
 		qp->qp_num, hdr->ver, hdr->len, hdr->flags);
+#endif /* MY_DEF_HERE */
 
 	if (!(hdr->flags & DESC_DONE_FLAG)) {
 		dev_dbg(&qp->ndev->pdev->dev, "done flag not set\n");
 		qp->rx_ring_empty++;
 		return -EAGAIN;
 	}
+#ifdef MY_DEF_HERE
+	// check the round count, if this does not match, it
+	// means this rx is came from other round, don't read it.
+	if (gblQPDataVersionConsistency
+	&& hdr->num_qp_round != (u16)qp->ucRoundForEntry) {
+		dev_dbg(&qp->ndev->pdev->dev, "round count mismatch, expected %u - got %u\n",
+			qp->ucRoundForEntry, hdr->num_qp_round);
+		return -EAGAIN;
+	}
+#endif /* MY_DEF_HERE */
 
 	if (hdr->flags & LINK_DOWN_FLAG) {
 		dev_dbg(&qp->ndev->pdev->dev, "link down flag set\n");
+#ifdef MY_DEF_HERE
+		if (gblQPDataVersionConsistency) {
+			// update qp->ucRound when receive a LINK_DOWN_FLAG
+			qp->ucRound++;
+			qp->ucRound %= SYNO_QP_ROUND_MOD;;
+			SYNONtbQPSetLinkdownNum(qp->ndev, qp->qp_num, qp->ucRound);
+		}
+#endif /* MY_DEF_HERE */
 		ntb_qp_link_down(qp);
 		hdr->flags = 0;
 		return -EAGAIN;
@@ -1758,7 +1960,11 @@ static void ntb_tx_copy_callback(void *data,
 		}
 	}
 
+#ifdef MY_DEF_HERE
+	iowrite16(entry->flags | DESC_DONE_FLAG, &hdr->flags);
+#else /* MY_DEF_HERE */
 	iowrite32(entry->flags | DESC_DONE_FLAG, &hdr->flags);
+#endif /* MY_DEF_HERE */
 
 	if (qp->use_msi)
 		ntb_msi_peer_trigger(qp->ndev, PIDX, &qp->peer_msi_desc);
@@ -1871,6 +2077,9 @@ static void ntb_async_tx(struct ntb_transport_qp *qp,
 	entry->tx_hdr = hdr;
 
 	iowrite32(entry->len, &hdr->len);
+#ifdef MY_DEF_HERE
+	iowrite16(entry->num_qp_round, &hdr->num_qp_round);
+#endif /* MY_DEF_HERE */
 	iowrite32((u32)qp->tx_pkts, &hdr->ver);
 
 	if (!chan)
@@ -1896,6 +2105,12 @@ err:
 static int ntb_process_tx(struct ntb_transport_qp *qp,
 			  struct ntb_queue_entry *entry)
 {
+#ifdef MY_DEF_HERE
+	// don't process tx if link is not up
+	if (!qp->link_is_up){
+		return -EAGAIN;
+	}
+#endif /* MY_DEF_HERE */
 	if (qp->tx_index == qp->remote_rx_info->entry) {
 		qp->tx_ring_full++;
 		return -EAGAIN;
@@ -1910,6 +2125,11 @@ static int ntb_process_tx(struct ntb_transport_qp *qp,
 		return 0;
 	}
 
+#ifdef MY_DEF_HERE
+	// assign ucRoundForEntry to an entry, this entry will be discarded if
+	// round idx mismatches in ntb_process_rxc
+	entry->num_qp_round = (u16)qp->ucRoundForEntry;
+#endif /* MY_DEF_HERE */
 	ntb_async_tx(qp, entry);
 
 	qp->tx_index++;
@@ -2158,6 +2378,9 @@ void ntb_transport_free_queue(struct ntb_transport_qp *qp)
 	ntb_db_set_mask(qp->ndev, qp_bit);
 	tasklet_kill(&qp->rxc_db_work);
 
+#ifdef MY_DEF_HERE
+	cancel_work_sync(&qp->link_cleanup);
+#endif /*SYNO_NTB_FIX_CLEANUP_WORK_PANIC*/
 	cancel_delayed_work_sync(&qp->link_work);
 
 	qp->cb_data = NULL;
@@ -2312,13 +2535,30 @@ EXPORT_SYMBOL_GPL(ntb_transport_tx_enqueue);
  */
 void ntb_transport_link_up(struct ntb_transport_qp *qp)
 {
+#ifdef MY_DEF_HERE
+	int val;
+#endif /* MY_DEF_HERE */
 	if (!qp)
 		return;
 
 	qp->client_ready = true;
 
-	if (qp->transport->link_is_up)
+	if (qp->transport->link_is_up) {
+#ifdef MY_DEF_HERE
+		if (qp->link_is_up) {
+			val = ntb_spad_read(qp->ndev, QP_LINKS);
+			ntb_peer_spad_write(qp->ndev, PIDX, QP_LINKS, val | BIT(qp->qp_num));
+			if (qp->event_handler)
+				qp->event_handler(qp->cb_data, qp->link_is_up);
+			if (qp->active)
+				tasklet_schedule(&qp->rxc_db_work);
+		} else {
+			schedule_delayed_work(&qp->link_work, 0);
+		}
+#else /* MY_DEF_HERE */
 		schedule_delayed_work(&qp->link_work, 0);
+#endif /* MY_DEF_HERE */
+	}
 }
 EXPORT_SYMBOL_GPL(ntb_transport_link_up);
 
@@ -2344,7 +2584,17 @@ void ntb_transport_link_down(struct ntb_transport_qp *qp)
 	ntb_peer_spad_write(qp->ndev, PIDX, QP_LINKS, val & ~BIT(qp->qp_num));
 
 	if (qp->link_is_up)
+	{
+#ifdef MY_DEF_HERE
+		if (gblQPDataVersionConsistency) {
+			// update qp's round when ntb_transport calls link down
+			qp->ucRound++;
+			qp->ucRound %= SYNO_QP_ROUND_MOD;
+			SYNONtbQPSetLinkdownNum(qp->ndev, qp->qp_num, qp->ucRound);
+		}
+#endif /* MY_DEF_HERE */
 		ntb_send_link_down(qp);
+	}
 	else
 		cancel_delayed_work_sync(&qp->link_work);
 }

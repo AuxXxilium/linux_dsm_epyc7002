@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2011 STRATO AG
@@ -50,6 +53,10 @@ void ulist_free(struct ulist *ulist);
 int ulist_add(struct ulist *ulist, u64 val, u64 aux, gfp_t gfp_mask);
 int ulist_add_merge(struct ulist *ulist, u64 val, u64 aux,
 		    u64 *old_aux, gfp_t gfp_mask);
+#ifdef MY_ABC_HERE
+int ulist_add_for_prealloc(struct ulist *ulist, u64 val, u64 aux, gfp_t gfp_mask, struct ulist_node **prealloc_ulist_node);
+int ulist_add_merge_for_prealloc(struct ulist *ulist, u64 val, u64 aux, u64 *old_aux, gfp_t gfp_mask, struct ulist_node **prealloc_ulist_node);
+#endif /* MY_ABC_HERE */
 int ulist_del(struct ulist *ulist, u64 val, u64 aux);
 
 /* just like ulist_add_merge() but take a pointer for the aux data */
@@ -70,5 +77,19 @@ struct ulist_node *ulist_next(struct ulist *ulist,
 			      struct ulist_iterator *uiter);
 
 #define ULIST_ITER_INIT(uiter) ((uiter)->cur_list = NULL)
+
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+#define ULIST_NODES_MAX 65536 // 256MiB / 4KiB = 65536; 65536 ulist_node = 3.5MiB
+int ulist_add_lru_adjust(struct ulist *ulist, u64 val, u64 aux, gfp_t gfp_mask);
+void ulist_remove_first(struct ulist *ulist);
+#endif /* MY_ABC_HERE || MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+struct ulist_node * ulist_search(struct ulist *ulist, u64 val);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+struct ulist_node * ulist_search_with_prev(struct ulist *ulist, u64 val);
+#endif /* MY_ABC_HERE */
 
 #endif

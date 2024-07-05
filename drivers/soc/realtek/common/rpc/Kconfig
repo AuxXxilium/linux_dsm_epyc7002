@@ -1,0 +1,12 @@
+config REALTEK_RPC
+	bool "Realtek RPC driver"
+	depends on REALTEK_SOC
+	default y
+	help
+	  Realtek RPC driver.
+
+config REALTEK_RPC_VE3
+	bool "Realtek VE3 RPC"
+	depends on REALTEK_RPC
+	help
+	  Enable Realtek VE3 RPC.

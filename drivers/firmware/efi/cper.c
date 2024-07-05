@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * UEFI Common Platform Error Record (CPER) support
@@ -403,6 +406,32 @@ static void cper_print_pcie(const char *pfx, const struct cper_sec_pcie *pcie,
 	"%s""bridge: secondary_status: 0x%04x, control: 0x%04x\n",
 	pfx, pcie->bridge.secondary_status, pcie->bridge.control);
 
+#ifdef MY_DEF_HERE
+    // Print AER register
+    if (pcie->validation_bits & CPER_PCIE_VALID_AER_INFO) {
+		struct aer_capability_regs *aer;
+		aer = (struct aer_capability_regs *)pcie->aer_info;
+
+        if (aer->uncor_status) {
+			printk("%saer_uncor_status:     0x%08x\n", pfx, aer->uncor_status);
+			printk("%saer_uncor_mask:       0x%08x\n", pfx, aer->uncor_mask);
+			printk("%saer_uncor_severity:   0x%08x\n", pfx, aer->uncor_severity);
+			printk("%saer_uncor_err_source: 0x%08x\n", pfx, aer->uncor_err_source);
+		} else {
+			printk("%saer_cor_status:       0x%08x\n", pfx, aer->cor_status);
+			printk("%saer_cor_mask:         0x%08x\n", pfx, aer->cor_mask);
+			printk("%saer_cor_err_source:   0x%08x\n", pfx, aer->cor_err_source);
+		}
+
+		printk("%saer_cap_control:      0x%08x\n", pfx, aer->cap_control);
+		printk("%sheader:               0x%08x\n", pfx, aer->header);
+		printk("%sroot_command:         0x%08x\n", pfx, aer->root_command);
+		printk("%sroot_status:          0x%08x\n", pfx, aer->root_status);
+		printk("%sTLP Header:           %08x %08x %08x %08x\n", pfx,
+			aer->header_log.dw0, aer->header_log.dw1,
+			aer->header_log.dw2, aer->header_log.dw3);
+    }
+#else // MY_DEF_HERE
 	/* Fatal errors call __ghes_panic() before AER handler prints this */
 	if ((pcie->validation_bits & CPER_PCIE_VALID_AER_INFO) &&
 	    (gdata->error_severity & CPER_SEV_FATAL)) {
@@ -417,6 +446,7 @@ static void cper_print_pcie(const char *pfx, const struct cper_sec_pcie *pcie,
 		       aer->header_log.dw0, aer->header_log.dw1,
 		       aer->header_log.dw2, aer->header_log.dw3);
 	}
+#endif // MY_DEF_HERE
 }
 
 static const char * const fw_err_rec_type_strs[] = {

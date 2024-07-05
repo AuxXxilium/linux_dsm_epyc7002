@@ -883,6 +883,7 @@ static void __rpc_execute(struct rpc_task *task)
 	for (;;) {
 		void (*do_action)(struct rpc_task *);
 
+		cond_resched();
 		/*
 		 * Perform the next FSM step or a pending callback.
 		 *

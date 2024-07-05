@@ -1,0 +1,28 @@
+#!/bin/bash
+# Copyright (c) 2000-2022 Synology Inc. All rights reserved.
+
+# shellcheck disable=SC2154
+
+build_turbostat()
+{
+    # shellcheck disable=SC2086
+    if [ "$PLATFORM_FAMILY" = "SYNOPLAT_F_X86_64" ]; then
+	    case "$MakeClean" in
+		    [Yy][Ee][Ss])
+			    make turbostat_clean -C tools
+			    ;;
+	    esac
+	    make $MAKE_FLAGS turbostat -C tools
+    fi
+}
+
+case "$CleanOnly" in
+    [Yy][Ee][Ss])
+        return
+        ;;
+esac
+
+env CC="$CC" CXX="$CXX" LD="$LD" AR="$AR" RANLIB="$RANLIB" NM="$NM" STRIP="$STRIP" \
+    CROSS_COMPILE="$ToolChainPrefix" LDFLAGS="$LDFLAGS" \
+
+build_turbostat

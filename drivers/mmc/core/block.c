@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  * Block driver for media (i.e., flash cards)
  *
@@ -57,6 +60,12 @@
 #include "quirks.h"
 #include "sd_ops.h"
 
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_ARCH_REALTEK
+#include "../../base/base.h"
+#endif /* CONFIG_ARCH_REALTEK */
+
+#endif /* MY_DEF_HERE */
 MODULE_ALIAS("mmc:block");
 #ifdef MODULE_PARAM_PREFIX
 #undef MODULE_PARAM_PREFIX
@@ -740,10 +749,64 @@ static int mmc_blk_check_blkdev(struct block_device *bdev)
 	return 0;
 }
 
+#if defined(MY_DEF_HERE)
+#if defined(CONFIG_MMC_REALTEK_RTD13XX)
+static int check_eod(struct block_device *bdev, unsigned int from, unsigned int nr)
+{
+	unsigned int maxsector;
+
+	if (!nr)
+		return 0;
+
+	maxsector = bdev->bd_inode->i_size >> 9;
+	if (maxsector && (maxsector < nr || maxsector - nr < from))
+		return 1;
+
+	return 0;
+}
+
+static int mmc_blk_erase(struct mmc_blk_data *md, unsigned int from, unsigned int nr)
+{
+	struct mmc_card *card = md->queue.card;
+	unsigned int n;
+	int err;
+
+
+
+	mmc_claim_host(card->host);
+
+	n = card->pref_erase - (from % card->pref_erase);
+	do {
+		if (n > nr)
+			n = nr;
+		err = mmc_erase(card, from, n, MMC_TRIM_ARG);
+		if (err)
+			break;
+		from += n;
+		nr -= n;
+		n = card->pref_erase;
+	} while (nr);
+
+	mmc_release_host(card->host);
+
+
+
+	return err;
+}
+
+void euda_gpp_setting(unsigned long size[], char type[], int gpp_num, unsigned long euda_start_addr, unsigned long euda_size);
+#endif
+#endif /* MY_DEF_HERE */
 static int mmc_blk_ioctl(struct block_device *bdev, fmode_t mode,
 	unsigned int cmd, unsigned long arg)
 {
 	struct mmc_blk_data *md;
+#if defined(MY_DEF_HERE)
+#if defined(CONFIG_MMC_REALTEK_RTD13XX)
+	struct mmc_blk_erase_args args;
+	struct mmc_euda_gpp_args paras;
+#endif
+#endif /* MY_DEF_HERE */
 	int ret;
 
 	switch (cmd) {
@@ -771,6 +834,42 @@ static int mmc_blk_ioctl(struct block_device *bdev, fmode_t mode,
 					NULL);
 		mmc_blk_put(md);
 		return ret;
+#if defined(MY_DEF_HERE)
+#if defined(CONFIG_MMC_REALTEK_RTD13XX)
+	case MMCERASE:
+		ret = mmc_blk_check_blkdev(bdev);
+		if (ret)
+			return ret;
+		md = mmc_blk_get(bdev->bd_disk);
+		if (!md)
+			return -EINVAL;
+		if (!(mode & FMODE_WRITE))
+			return -EBADF;
+		if (copy_from_user(&args, (void __user *)arg, sizeof(struct mmc_blk_erase_args)))
+			return -EFAULT;
+		if (check_eod(bdev, args.from, args.nr))
+			return -EINVAL;
+		if (bdev != bdev->bd_contains)
+			args.from += bdev->bd_part->start_sect;
+		ret = mmc_blk_erase(md, args.from, args.nr);
+		mmc_blk_put(md);
+		return ret;
+	case GPP_EUDA_SETTING:
+		ret = mmc_blk_check_blkdev(bdev);
+		if (ret)
+			return ret;
+		md = mmc_blk_get(bdev->bd_disk);
+		if (!md)
+			return -EINVAL;
+
+		if (copy_from_user(&paras, (void __user *)arg, sizeof(struct mmc_euda_gpp_args)))
+			return -EFAULT;
+
+		euda_gpp_setting(paras.size, paras.type, paras.gpp_num, paras.euda_start_addr, paras.euda_size);
+		mmc_blk_put(md);
+		return ret;
+#endif /* CONFIG_MMC_REALTEK_RTD13XX */
+#endif /* MY_DEF_HERE */
 	default:
 		return -EINVAL;
 	}
@@ -806,7 +905,9 @@ static int mmc_blk_part_switch_pre(struct mmc_card *card,
 			if (ret)
 				return ret;
 		}
+#if defined(MY_DEF_HERE)
 		mmc_retune_pause(card->host);
+#endif /* MY_DEF_HERE */
 	}
 
 	return ret;
@@ -818,7 +919,9 @@ static int mmc_blk_part_switch_post(struct mmc_card *card,
 	int ret = 0;
 
 	if (part_type == EXT_CSD_PART_CONFIG_ACC_RPMB) {
+#if defined(MY_DEF_HERE)
 		mmc_retune_unpause(card->host);
+#endif /* MY_DEF_HERE */
 		if (card->reenable_cmdq && !card->ext_csd.cmdq_en)
 			ret = mmc_cmdq_enable(card);
 	}
@@ -1643,31 +1746,31 @@ static void mmc_blk_read_single(struct mmc_queue *mq, struct request *req)
 	struct mmc_card *card = mq->card;
 	struct mmc_host *host = card->host;
 	blk_status_t error = BLK_STS_OK;
-	int retries = 0;
 
 	do {
 		u32 status;
 		int err;
+		int retries = 0;
 
-		mmc_blk_rw_rq_prep(mqrq, card, 1, mq);
+		while (retries++ <= MMC_READ_SINGLE_RETRIES) {
+			mmc_blk_rw_rq_prep(mqrq, card, 1, mq);
 
-		mmc_wait_for_req(host, mrq);
+			mmc_wait_for_req(host, mrq);
 
-		err = mmc_send_status(card, &status);
-		if (err)
-			goto error_exit;
-
-		if (!mmc_host_is_spi(host) &&
-		    !mmc_ready_for_data(status)) {
-			err = mmc_blk_fix_state(card, req);
+			err = mmc_send_status(card, &status);
 			if (err)
 				goto error_exit;
+
+			if (!mmc_host_is_spi(host) &&
+			    !mmc_ready_for_data(status)) {
+				err = mmc_blk_fix_state(card, req);
+				if (err)
+					goto error_exit;
+			}
+
+			if (!mrq->cmd->error)
+				break;
 		}
-
-		if (mrq->cmd->error && retries++ < MMC_READ_SINGLE_RETRIES)
-			continue;
-
-		retries = 0;
 
 		if (mrq->cmd->error ||
 		    mrq->data->error ||
@@ -2273,6 +2376,23 @@ static inline int mmc_blk_readonly(struct mmc_card *card)
 	       !(card->csd.cmdclass & CCC_BLOCK_WRITE);
 }
 
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_ARCH_REALTEK
+void mmc_blk_set_ro(struct mmc_card *card)
+{
+	struct mmc_blk_data *md=NULL, *part_md=NULL;
+	md = card->dev.driver_data;
+	if(md!=NULL) {
+		md->read_only = mmc_blk_readonly(card);
+		set_disk_ro(md->disk, md->read_only);
+		list_for_each_entry(part_md, &md->part, part)
+			set_disk_ro(part_md->disk, md->read_only);
+	}
+}
+EXPORT_SYMBOL(mmc_blk_set_ro);
+#endif /* CONFIG_ARCH_REALTEK */
+
+#endif /* MY_DEF_HERE */
 static struct mmc_blk_data *mmc_blk_alloc_req(struct mmc_card *card,
 					      struct device *parent,
 					      sector_t size,

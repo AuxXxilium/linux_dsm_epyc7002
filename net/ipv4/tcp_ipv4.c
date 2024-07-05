@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * INET		An implementation of the TCP/IP protocol suite for the LINUX
@@ -2890,8 +2893,13 @@ static int __net_init tcp_sk_init(struct net *net)
 	 * which are too large can cause TCP streams to be bursty.
 	 */
 	net->ipv4.sysctl_tcp_tso_win_divisor = 3;
+#if defined(MY_DEF_HERE)
+	/* Default TSQ limit of four TSO segments */
+	net->ipv4.sysctl_tcp_limit_output_bytes = 262144;
+#else /* MY_DEF_HERE */
 	/* Default TSQ limit of 16 TSO segments */
 	net->ipv4.sysctl_tcp_limit_output_bytes = 16 * 65536;
+#endif /* MY_DEF_HERE */
 	/* rfc5961 challenge ack rate limiting */
 	net->ipv4.sysctl_tcp_challenge_ack_limit = 1000;
 	net->ipv4.sysctl_tcp_min_tso_segs = 2;

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  *  Server-side types for NFSv4.
  *
@@ -550,7 +553,11 @@ struct nfsd4_copy {
 	u64			cp_src_pos;
 	u64			cp_dst_pos;
 	u64			cp_count;
+#ifdef MY_ABC_HERE
+	struct nl4_server	*cp_src;
+#else /* MY_ABC_HERE */
 	struct nl4_server	cp_src;
+#endif /* MY_ABC_HERE */
 	bool			cp_intra;
 
 	/* both */
@@ -605,13 +612,21 @@ struct nfsd4_offload_status {
 struct nfsd4_copy_notify {
 	/* request */
 	stateid_t		cpn_src_stateid;
+#ifdef MY_ABC_HERE
+	struct nl4_server	*cpn_dst;
+#else /* MY_ABC_HERE */
 	struct nl4_server	cpn_dst;
+#endif /* MY_ABC_HERE */
 
 	/* response */
 	stateid_t		cpn_cnr_stateid;
 	u64			cpn_sec;
 	u32			cpn_nsec;
+#ifdef MY_ABC_HERE
+	struct nl4_server	*cpn_src;
+#else /* MY_ABC_HERE */
 	struct nl4_server	cpn_src;
+#endif /* MY_ABC_HERE */
 };
 
 struct nfsd4_op {

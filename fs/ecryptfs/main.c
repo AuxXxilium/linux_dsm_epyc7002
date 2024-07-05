@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * eCryptfs: Linux filesystem encryption layer
@@ -161,6 +164,9 @@ enum { ecryptfs_opt_sig, ecryptfs_opt_ecryptfs_sig,
        ecryptfs_opt_fn_cipher, ecryptfs_opt_fn_cipher_key_bytes,
        ecryptfs_opt_unlink_sigs, ecryptfs_opt_mount_auth_tok_only,
        ecryptfs_opt_check_dev_ruid,
+#ifdef MY_ABC_HERE
+       ecryptfs_opt_no_fast_lookup,
+#endif /* MY_ABC_HERE */
        ecryptfs_opt_err };
 
 static const match_table_t tokens = {
@@ -178,6 +184,9 @@ static const match_table_t tokens = {
 	{ecryptfs_opt_unlink_sigs, "ecryptfs_unlink_sigs"},
 	{ecryptfs_opt_mount_auth_tok_only, "ecryptfs_mount_auth_tok_only"},
 	{ecryptfs_opt_check_dev_ruid, "ecryptfs_check_dev_ruid"},
+#ifdef MY_ABC_HERE
+	{ecryptfs_opt_no_fast_lookup, "no_fast_lookup"},
+#endif /* MY_ABC_HERE */
 	{ecryptfs_opt_err, NULL}
 };
 
@@ -216,6 +225,9 @@ static void ecryptfs_init_mount_crypt_stat(
 	       sizeof(struct ecryptfs_mount_crypt_stat));
 	INIT_LIST_HEAD(&mount_crypt_stat->global_auth_tok_list);
 	mutex_init(&mount_crypt_stat->global_auth_tok_list_mutex);
+#ifdef MY_ABC_HERE
+	mount_crypt_stat->flags |= ECRYPTFS_GLOBAL_FAST_LOOKUP_ENABLED;
+#endif /* MY_ABC_HERE */
 	mount_crypt_stat->flags |= ECRYPTFS_MOUNT_CRYPT_STAT_INITIALIZED;
 }
 
@@ -375,6 +387,11 @@ static int ecryptfs_parse_options(struct ecryptfs_sb_info *sbi, char *options,
 		case ecryptfs_opt_check_dev_ruid:
 			*check_ruid = 1;
 			break;
+#ifdef MY_ABC_HERE
+		case ecryptfs_opt_no_fast_lookup:
+			mount_crypt_stat->flags &= (~ECRYPTFS_GLOBAL_FAST_LOOKUP_ENABLED);
+			break;
+#endif /* MY_ABC_HERE */
 		case ecryptfs_opt_err:
 		default:
 			printk(KERN_WARNING
@@ -382,6 +399,14 @@ static int ecryptfs_parse_options(struct ecryptfs_sb_info *sbi, char *options,
 			       __func__, p);
 		}
 	}
+#ifdef MY_ABC_HERE
+	if (mount_crypt_stat->flags &
+			(ECRYPTFS_XATTR_METADATA_ENABLED | ECRYPTFS_ENCRYPTED_VIEW_ENABLED)) {
+		printk(KERN_WARNING
+		       "eCryptfs: disable fast_lookup_feature when enabled xattr-meta or ecrypted-view\n");
+		mount_crypt_stat->flags &= (~ECRYPTFS_GLOBAL_FAST_LOOKUP_ENABLED);
+	}
+#endif /* MY_ABC_HERE */
 	if (!sig_set) {
 		rc = -EINVAL;
 		ecryptfs_printk(KERN_ERR, "You must supply at least one valid "
@@ -463,6 +488,24 @@ out:
 	return rc;
 }
 
+#ifdef MY_ABC_HERE
+static int ecryptfs_test_super(struct super_block *s, void *data)
+{
+	const struct ecryptfs_sb_info *p = data;
+	const struct ecryptfs_sb_info *sb_info = ecryptfs_superblock_to_private(s);
+
+	return sb_info->dentry == p->dentry;
+}
+
+static int ecryptfs_set_super(struct super_block *s, void *data)
+{
+	int err = set_anon_super(s, data);
+	if (!err)
+		ecryptfs_set_superblock_private(s, (struct ecryptfs_sb_info *)data);
+	return err;
+}
+#endif /* MY_ABC_HERE */
+
 struct kmem_cache *ecryptfs_sb_info_cache;
 static struct file_system_type ecryptfs_fs_type;
 
@@ -498,22 +541,59 @@ static struct dentry *ecryptfs_mount(struct file_system_type *fs_type, int flags
 		goto out;
 	}
 
+#ifdef MY_ABC_HERE
+	rc = kern_path(dev_name, LOOKUP_FOLLOW | LOOKUP_DIRECTORY, &path);
+	if (rc) {
+		ecryptfs_printk(KERN_WARNING, "kern_path() failed\n");
+		goto out;
+	}
+
+	sbi->dentry = path.dentry;
+	s = sget(fs_type, ecryptfs_test_super, ecryptfs_set_super, flags, sbi);
+	if (IS_ERR(s)) {
+		rc = PTR_ERR(s);
+		goto out1;
+	}
+
+	if (s->s_root) {
+		kmem_cache_free(ecryptfs_sb_info_cache, sbi);
+		path_put(&path);
+		return dget(s->s_root);
+	}
+
+#endif /* MY_ABC_HERE */
+
 	rc = ecryptfs_parse_options(sbi, raw_data, &check_ruid);
 	if (rc) {
 		err = "Error parsing options";
+#ifdef MY_ABC_HERE
+		goto out_free;
+#else /* MY_ABC_HERE */
 		goto out;
+#endif /* MY_ABC_HERE */
 	}
 	mount_crypt_stat = &sbi->mount_crypt_stat;
 
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 	s = sget(fs_type, NULL, set_anon_super, flags, NULL);
 	if (IS_ERR(s)) {
 		rc = PTR_ERR(s);
 		goto out;
 	}
+#endif /* MY_ABC_HERE */
 
 	rc = super_setup_bdi(s);
 	if (rc)
+#ifdef MY_ABC_HERE
+		goto out_free;
+#else /* MY_ABC_HERE */
 		goto out1;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	s->s_bdi->ra_pages = 0;
+	s->s_bdi->io_pages = 0;
+#endif /* MY_ABC_HERE */
 
 	ecryptfs_set_superblock_private(s, sbi);
 
@@ -522,13 +602,19 @@ static struct dentry *ecryptfs_mount(struct file_system_type *fs_type, int flags
 	s->s_op = &ecryptfs_sops;
 	s->s_xattr = ecryptfs_xattr_handlers;
 	s->s_d_op = &ecryptfs_dops;
+#ifdef MY_ABC_HERE
+	s->s_export_op = &ecryptfs_export_ops;
+#endif /* MY_ABC_HERE */
 
 	err = "Reading sb failed";
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 	rc = kern_path(dev_name, LOOKUP_FOLLOW | LOOKUP_DIRECTORY, &path);
 	if (rc) {
 		ecryptfs_printk(KERN_WARNING, "kern_path() failed\n");
 		goto out1;
 	}
+#endif /* MY_ABC_HERE */
 	if (path.dentry->d_sb->s_type == &ecryptfs_fs_type) {
 		rc = -EINVAL;
 		printk(KERN_ERR "Mount on filesystem of type "
@@ -554,6 +640,11 @@ static struct dentry *ecryptfs_mount(struct file_system_type *fs_type, int flags
 	 */
 	s->s_flags = flags & ~SB_POSIXACL;
 	s->s_flags |= path.dentry->d_sb->s_flags & SB_POSIXACL;
+
+#ifdef MY_ABC_HERE
+	if (IS_FS_SYNOACL(d_inode(path.dentry)))
+		s->s_flags |= SB_SYNOACL;
+#endif /* MY_ABC_HERE */
 
 	/**
 	 * Force a read-only eCryptfs mount when:
@@ -597,10 +688,17 @@ static struct dentry *ecryptfs_mount(struct file_system_type *fs_type, int flags
 	s->s_flags |= SB_ACTIVE;
 	return dget(s->s_root);
 
+#ifdef MY_ABC_HERE
+out_free:
+	deactivate_locked_super(s);
+out1:
+	path_put(&path);
+#else /* MY_ABC_HERE */
 out_free:
 	path_put(&path);
 out1:
 	deactivate_locked_super(s);
+#endif /* MY_ABC_HERE */
 out:
 	if (sbi) {
 		ecryptfs_destroy_mount_crypt_stat(&sbi->mount_crypt_stat);

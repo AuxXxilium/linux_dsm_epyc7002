@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  * Internal header file _only_ for device mapper core
  *
@@ -90,6 +93,10 @@ struct mapped_device {
 	 */
 	struct bio_set io_bs;
 	struct bio_set bs;
+#ifdef MY_ABC_HERE
+	/* used for noclone bio */
+	mempool_t syno_noclone_pool;
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * Processing queue (flush)
@@ -120,6 +127,9 @@ struct mapped_device {
 	bool init_tio_pdu:1;
 
 	struct srcu_struct io_barrier;
+#ifdef MY_ABC_HERE
+	struct syno_md_fast_wakeup_info syno_fast_wakeup_info;
+#endif /* MY_ABC_HERE */
 };
 
 void disable_discard(struct mapped_device *md);

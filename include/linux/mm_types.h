@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_MM_TYPES_H
 #define _LINUX_MM_TYPES_H
@@ -282,6 +285,9 @@ struct vm_region {
 	unsigned long	vm_top;		/* region allocated to here */
 	unsigned long	vm_pgoff;	/* the offset in vm_file corresponding to vm_start */
 	struct file	*vm_file;	/* the backing file or NULL */
+#ifdef MY_ABC_HERE
+	struct file	*vm_prfile;	/* the virtual backing file or NULL */
+#endif /* MY_ABC_HERE */
 
 	int		vm_usage;	/* region usage count (access under nommu_region_sem) */
 	bool		vm_icache_flushed : 1; /* true if the icache has been flushed for
@@ -361,6 +367,9 @@ struct vm_area_struct {
 	unsigned long vm_pgoff;		/* Offset (within vm_file) in PAGE_SIZE
 					   units */
 	struct file * vm_file;		/* File we map to (can be NULL). */
+#ifdef MY_ABC_HERE
+	struct file *vm_prfile;		/* shadow of vm_file */
+#endif /* MY_ABC_HERE */
 	void * vm_private_data;		/* was vm_pte (shared mem) */
 
 #ifdef CONFIG_SWAP

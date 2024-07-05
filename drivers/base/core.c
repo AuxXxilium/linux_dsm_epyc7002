@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * drivers/base/core.c - core driver model code (device registration, etc)
@@ -31,6 +34,12 @@
 
 #include "base.h"
 #include "power/power.h"
+
+#ifdef MY_ABC_HERE
+#include <linux/delay.h>
+#include <linux/of.h>
+#include <linux/syno_gpio.h>
+#endif /* MY_ABC_HERE */
 
 #ifdef CONFIG_SYSFS_DEPRECATED
 #ifdef CONFIG_SYSFS_DEPRECATED_V2
@@ -1919,12 +1928,51 @@ static int dev_uevent(struct kset *kset, struct kobject *kobj,
 			kfree(tmp);
 		}
 	}
+#ifdef MY_ABC_HERE
+	/* host with dev->devt 0, if we want to get hotplug of CABLE_CONNECT/CABLE_DISCONNECT
+	 * we must add DEVNAME in env to pass it to hotplug.
+	 **/
+	else {
+		add_uevent_var(env, "DEVNAME=%s", dev_name(dev));
+	}
+#endif /* MY_ABC_HERE */
 
 	if (dev->type && dev->type->name)
 		add_uevent_var(env, "DEVTYPE=%s", dev->type->name);
 
 	if (dev->driver)
 		add_uevent_var(env, "DRIVER=%s", dev->driver->name);
+
+#if defined(CONFIG_SYSFS_DEPRECATED) || defined(MY_ABC_HERE)
+	if (dev->class) {
+		struct device *parent = dev->parent;
+
+		/* find first bus device in parent chain */
+		while (parent && !parent->bus)
+			parent = parent->parent;
+		if (parent && parent->bus) {
+			const char *path;
+
+			path = kobject_get_path(&parent->kobj, GFP_KERNEL);
+			if (path) {
+				add_uevent_var(env, "PHYSDEVPATH=%s", path);
+				kfree(path);
+			}
+
+			add_uevent_var(env, "PHYSDEVBUS=%s", parent->bus->name);
+
+			if (parent->driver)
+				add_uevent_var(env, "PHYSDEVDRIVER=%s",
+								 parent->driver->name);
+		}
+	} else if (dev->bus) {
+		add_uevent_var(env, "PHYSDEVBUS=%s", dev->bus->name);
+
+		if (dev->driver)
+			add_uevent_var(env, "PHYSDEVDRIVER=%s",
+							 dev->driver->name);
+	}
+#endif /* CONFIG_SYSFS_DEPRECATED || MY_ABC_HERE */
 
 	/* Add common DT information about the device */
 	of_device_uevent(dev, env);
@@ -4026,6 +4074,108 @@ out:
 }
 EXPORT_SYMBOL_GPL(device_change_owner);
 
+#ifdef MY_ABC_HERE
+static void syno_turnoff_usb_vbus_gpio(const unsigned vbus_gpio_pin, const unsigned vbus_gpio_polarity)
+{
+	int gpio_off_value = 0;
+
+	if (UINT_MAX == vbus_gpio_pin || UINT_MAX == vbus_gpio_polarity) {
+		return;
+	}
+
+	SYNO_GPIO_WRITE(vbus_gpio_pin, !(gpio_off_value ^ vbus_gpio_polarity));
+	msleep(500);
+
+	printk(KERN_INFO "Turned off USB vbus gpio %u (%s)\n", vbus_gpio_pin,
+		vbus_gpio_polarity ? "ACTIVE_HIGH" : "ACTIVE_LOW");
+
+	return;
+}
+
+static void syno_turnoff_all_usb_vbus_gpio(void)
+{
+	int index;
+	struct device_node *pUSBNode = NULL, *pVbusNode = NULL;
+	u32 vbusGpioPin = U32_MAX, vbusGpioPolarity = U32_MAX;
+
+	for_each_child_of_node(of_root, pUSBNode) {
+		// TODO: corrently the index of usb is not well defined, so the index is read but not used.
+		// get index number of usb_slot, e.g. usb_slot@4 --> 4
+		if (pUSBNode->full_name && 1 != sscanf(pUSBNode->full_name, DT_USB_SLOT"@%d", &index)) {
+			pVbusNode = of_get_child_by_name(pUSBNode, DT_VBUS);
+			if (NULL == pVbusNode) {
+				goto USB_PUT_NODE;
+			}
+
+			if (0 != of_property_read_u32_index(pVbusNode, DT_SYNO_GPIO, SYNO_GPIO_PIN, &vbusGpioPin)) {
+				printk(KERN_ERR "%s reading vbus vbusGpioPin failed.\n", __func__);
+				goto USB_PUT_NODE;
+			}
+			if (0 != of_property_read_u32_index(pVbusNode, DT_SYNO_GPIO, SYNO_POLARITY_PIN, &vbusGpioPolarity)) {
+				printk(KERN_ERR "%s reading vbus vbusGpioPolarity failed.\n", __func__);
+				goto USB_PUT_NODE;
+			}
+
+			syno_turnoff_usb_vbus_gpio(vbusGpioPin, vbusGpioPolarity);
+USB_PUT_NODE:
+			if (pVbusNode) {
+				of_node_put(pVbusNode);
+			}
+		}
+	}
+
+	for_each_child_of_node(of_root, pUSBNode) {
+		// TODO: corrently the index of usb is not well defined, so the index is read but not used.
+		// get index number of usb_slot, e.g. usb_slot@4 --> 4
+		if (pUSBNode->full_name && 1 != sscanf(pUSBNode->full_name, DT_HUB_SLOT"@%d", &index)) {
+			pVbusNode = of_get_child_by_name(pUSBNode, DT_VBUS);
+			if (NULL == pVbusNode) {
+				goto HUB_PUT_NODE;
+			}
+
+			if (0 != of_property_read_u32_index(pVbusNode, DT_SYNO_GPIO, SYNO_GPIO_PIN, &vbusGpioPin)) {
+				printk(KERN_ERR "%s reading vbus vbusGpioPin failed.\n", __func__);
+				goto HUB_PUT_NODE;
+			}
+			if (0 != of_property_read_u32_index(pVbusNode, DT_SYNO_GPIO, SYNO_POLARITY_PIN, &vbusGpioPolarity)) {
+				printk(KERN_ERR "%s reading vbus vbusGpioPolarity failed.\n", __func__);
+				goto HUB_PUT_NODE;
+			}
+
+			syno_turnoff_usb_vbus_gpio(vbusGpioPin, vbusGpioPolarity);
+HUB_PUT_NODE:
+			if (pVbusNode) {
+				of_node_put(pVbusNode);
+			}
+		}
+	}
+
+#ifdef CONFIG_SYNO_USB_POWER_OFF_TIME
+	mdelay(CONFIG_SYNO_USB_POWER_OFF_TIME);
+#endif /* CONFIG_SYNO_USB_POWER_OFF_TIME */
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+int (*funcSYNOShutdownHook) (void) = NULL;
+EXPORT_SYMBOL(funcSYNOShutdownHook);
+static void syno_custom_shutdown_prepare(void)
+{
+
+#ifdef MY_ABC_HERE
+       if (SYSTEM_POWER_OFF == system_state || SYSTEM_RESTART == system_state) {
+               syno_turnoff_all_usb_vbus_gpio();
+       }
+#endif /* MY_ABC_HERE */
+
+       if(NULL != funcSYNOShutdownHook) {
+               funcSYNOShutdownHook();
+       }
+
+       return;
+}
+#endif /* MY_ABC_HERE */
+
 /**
  * device_shutdown - call ->shutdown() on each device to shutdown.
  */
@@ -4096,6 +4246,10 @@ void device_shutdown(void)
 		spin_lock(&devices_kset->list_lock);
 	}
 	spin_unlock(&devices_kset->list_lock);
+
+#ifdef MY_ABC_HERE
+	syno_custom_shutdown_prepare();
+#endif /* MY_ABC_HERE */
 }
 
 /*

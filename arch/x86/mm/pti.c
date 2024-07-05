@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright(c) 2017 Intel Corporation. All rights reserved.
@@ -79,9 +82,24 @@ void __init pti_check_boottime_disable(void)
 {
 	char arg[5];
 	int ret;
+#ifdef MY_ABC_HERE
+	/* Assume mode is off unless overridden. */
+	pti_mode = PTI_FORCE_OFF;
 
+	if (cmdline_find_option_bool(boot_command_line, "SpectreAll_on") ||
+		cmdline_find_option_bool(boot_command_line, "KPTI_on")) {
+		if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD) {
+			pti_print_if_insecure("disabled on command line.");
+			return;
+		} else {
+			pti_mode = PTI_FORCE_ON;
+			goto enable;
+		}
+	}
+#else /* MY_ABC_HERE */
 	/* Assume mode is auto unless overridden. */
 	pti_mode = PTI_AUTO;
+#endif /* MY_ABC_HERE */
 
 	if (hypervisor_is_type(X86_HYPER_XEN_PV)) {
 		pti_mode = PTI_FORCE_OFF;
@@ -107,12 +125,16 @@ void __init pti_check_boottime_disable(void)
 		}
 	}
 
+#ifdef MY_ABC_HERE
+	return;
+#else /* MY_ABC_HERE */
 	if (cmdline_find_option_bool(boot_command_line, "nopti") ||
 	    cpu_mitigations_off()) {
 		pti_mode = PTI_FORCE_OFF;
 		pti_print_if_insecure("disabled on command line.");
 		return;
 	}
+#endif /* MY_ABC_HERE */
 
 autosel:
 	if (!boot_cpu_has_bug(X86_BUG_CPU_MELTDOWN))

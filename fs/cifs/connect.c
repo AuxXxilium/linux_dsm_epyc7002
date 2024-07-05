@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  *   fs/cifs/connect.c
  *
@@ -459,7 +462,19 @@ cifs_reconnect(struct TCP_Server_Info *server)
 		list_for_each(tmp2, &ses->tcon_list) {
 			tcon = list_entry(tmp2, struct cifs_tcon, tcon_list);
 			tcon->need_reconnect = true;
+#ifdef MY_ABC_HERE
+			// initialize SMB2 encryption flags
+			// it prevent the fail when server disable encryption
+			tcon->share_flags = 0;
+#endif /* MY_ABC_HERE */
 		}
+#ifdef MY_ABC_HERE
+		if (ses->tcon_ipc) {
+			// initialize SMB2 encryption flags
+			// it prevent the fail when server disable encryption
+			ses->tcon_ipc->share_flags = 0;
+		}
+#endif /* MY_ABC_HERE */
 		if (ses->tcon_ipc)
 			ses->tcon_ipc->need_reconnect = true;
 	}
@@ -673,6 +688,23 @@ server_unresponsive(struct TCP_Server_Info *server)
 
 	return false;
 }
+#ifdef MY_ABC_HERE
+static bool
+server_nego_unresponsive(struct TCP_Server_Info *server, unsigned long when_start_recv_nego)
+{
+	if (server->tcpStatus == CifsNeedNegotiate &&
+	    need_nego_timeout != 0 &&
+	    time_after(jiffies, when_start_recv_nego + need_nego_timeout * HZ)) {
+		cifs_dbg(FYI, "Server %s has not responded at need nego stage in %d seconds. "
+			  "Reconnecting...\n", server->hostname, need_nego_timeout);
+		cifs_reconnect(server);
+		wake_up(&server->response_q);
+		return true;
+	}
+
+	return false;
+}
+#endif /* MY_ABC_HERE */
 
 static inline bool
 zero_credits(struct TCP_Server_Info *server)
@@ -694,10 +726,16 @@ cifs_readv_from_socket(struct TCP_Server_Info *server, struct msghdr *smb_msg)
 {
 	int length = 0;
 	int total_read;
+#ifdef MY_ABC_HERE
+	unsigned long when_start_recv_nego;
+#endif /* MY_ABC_HERE */
 
 	smb_msg->msg_control = NULL;
 	smb_msg->msg_controllen = 0;
 
+#ifdef MY_ABC_HERE
+	when_start_recv_nego = jiffies;
+#endif /* MY_ABC_HERE */
 	for (total_read = 0; msg_data_left(smb_msg); total_read += length) {
 		try_to_freeze();
 
@@ -707,6 +745,11 @@ cifs_readv_from_socket(struct TCP_Server_Info *server, struct msghdr *smb_msg)
 			return -ECONNABORTED;
 		}
 
+#ifdef MY_ABC_HERE
+		if (server_nego_unresponsive(server, when_start_recv_nego)) {
+			return -ECONNABORTED;
+		}
+#endif /* MY_ABC_HERE */
 		if (server_unresponsive(server))
 			return -ECONNABORTED;
 		if (cifs_rdma_enabled(server) && server->smbd_conn)
@@ -1594,6 +1637,9 @@ cifs_parse_mount_options(const char *mountdata, const char *devname,
 			vol->linux_ext = 1;
 			break;
 		case Opt_nocase:
+#ifdef MY_ABC_HERE
+			SynoPosixSemanticsEnabled = 0;
+#endif /* MY_ABC_HERE */
 			vol->nocase = 1;
 			break;
 		case Opt_brl:
@@ -1702,7 +1748,11 @@ cifs_parse_mount_options(const char *mountdata, const char *devname,
 			cifs_dbg(VFS, "FS-Cache support needs CONFIG_CIFS_FSCACHE kernel config option set\n");
 			goto cifs_parse_mount_err;
 #endif
+#if defined(MY_ABC_HERE) && !defined(CONFIG_CIFS_FSCACHE)
+			// CID 45467: dead code after goto.
+#else /* MY_ABC_HERE */
 			vol->fsc = true;
+#endif /* MY_ABC_HERE */
 			break;
 		case Opt_mfsymlinks:
 			vol->mfsymlinks = true;
@@ -1966,6 +2016,12 @@ cifs_parse_mount_options(const char *mountdata, const char *devname,
 			 * starts with a delimiter
 			 */
 			tmp_end = strchr(data, '=');
+#ifdef MY_ABC_HERE
+			// CID 45506: dereference null return value
+			if (NULL == tmp_end) {
+				goto cifs_parse_mount_err;
+			}
+#endif /* MY_ABC_HERE */
 			tmp_end++;
 			if (!(tmp_end < end && tmp_end[1] == delim)) {
 				/* No it is not. Set the password to NULL */
@@ -1977,6 +2033,12 @@ cifs_parse_mount_options(const char *mountdata, const char *devname,
 		case Opt_pass:
 			/* Obtain the value string */
 			value = strchr(data, '=');
+#ifdef MY_ABC_HERE
+			// CID 45506: dereference null return value
+			if (NULL == value) {
+				goto cifs_parse_mount_err;
+			}
+#endif /* MY_ABC_HERE */
 			value++;
 
 			/* Set tmp_end to end of the string */
@@ -2415,8 +2477,15 @@ static int match_server(struct TCP_Server_Info *server, struct smb_vol *vol)
 		   SMBDEFAULT_VERSION_STRING) == 0) {
 		if (server->vals->protocol_id < SMB21_PROT_ID)
 			return 0;
+#ifdef MY_ABC_HERE
+	} else if ((server->vals != vol->vals && server->values != vol->vals) ||
+		   (server->ops != vol->ops)) {
+		return 0;
+	}
+#else /* MY_ABC_HERE */
 	} else if ((server->vals != vol->vals) || (server->ops != vol->ops))
 		return 0;
+#endif /* MY_ABC_HERE */
 
 	if (!net_eq(cifs_net_ns(server), current->nsproxy->net_ns))
 		return 0;
@@ -2535,6 +2604,9 @@ cifs_get_tcp_session(struct smb_vol *volume_info)
 
 	tcp_ses->ops = volume_info->ops;
 	tcp_ses->vals = volume_info->vals;
+#ifdef MY_ABC_HERE
+	init_syno_operations(tcp_ses, volume_info);
+#endif /* MY_ABC_HERE */
 	cifs_set_net_ns(tcp_ses, get_net(current->nsproxy->net_ns));
 	tcp_ses->hostname = extract_hostname(volume_info->UNC);
 	if (IS_ERR(tcp_ses->hostname)) {

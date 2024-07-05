@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * f_sourcesink.c - USB peripheral source/sink configuration driver
@@ -48,6 +51,11 @@ struct f_sourcesink {
 	unsigned buflen;
 	unsigned bulk_qlen;
 	unsigned iso_qlen;
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_USB_PATCH_ON_RTK
+	unsigned bulk_maxburst;
+#endif /* CONFIG_USB_PATCH_ON_RTK */
+#endif /* MY_DEF_HERE */
 };
 
 static inline struct f_sourcesink *func_to_ss(struct usb_function *f)
@@ -430,6 +438,16 @@ no_iso:
 		(ss->isoc_mult + 1) * (ss->isoc_maxburst + 1);
 	ss_iso_sink_desc.bEndpointAddress = fs_iso_sink_desc.bEndpointAddress;
 
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_USB_PATCH_ON_RTK
+	if (ss->bulk_maxburst > 15)
+		ss->bulk_maxburst = 15;
+
+	ss_source_comp_desc.bMaxBurst = ss->bulk_maxburst;
+	ss_sink_comp_desc.bMaxBurst = ss->bulk_maxburst;
+#endif /* CONFIG_USB_PATCH_ON_RTK */
+ 
+#endif /* MY_DEF_HERE */
 	ret = usb_assign_descriptors(f, fs_source_sink_descs,
 			hs_source_sink_descs, ss_source_sink_descs,
 			ss_source_sink_descs);
@@ -855,6 +873,11 @@ static struct usb_function *source_sink_alloc_func(
 	ss->buflen = ss_opts->bulk_buflen;
 	ss->bulk_qlen = ss_opts->bulk_qlen;
 	ss->iso_qlen = ss_opts->iso_qlen;
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_USB_PATCH_ON_RTK
+	ss->bulk_maxburst = ss_opts->bulk_maxburst;
+#endif /* CONFIG_USB_PATCH_ON_RTK */
+#endif /* MY_DEF_HERE */
 
 	ss->function.name = "source/sink";
 	ss->function.bind = sourcesink_bind;
@@ -1215,6 +1238,53 @@ end:
 
 CONFIGFS_ATTR(f_ss_opts_, iso_qlen);
 
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_USB_PATCH_ON_RTK
+static ssize_t f_ss_opts_bulk_maxburst_show(struct config_item *item, char *page)
+{
+	struct f_ss_opts *opts = to_f_ss_opts(item);
+	int result;
+
+	mutex_lock(&opts->lock);
+	result = sprintf(page, "%u\n", opts->bulk_maxburst);
+	mutex_unlock(&opts->lock);
+
+	return result;
+}
+
+static ssize_t f_ss_opts_bulk_maxburst_store(struct config_item *item,
+				       const char *page, size_t len)
+{
+	struct f_ss_opts *opts = to_f_ss_opts(item);
+	int ret;
+	u8 num;
+
+	mutex_lock(&opts->lock);
+	if (opts->refcnt) {
+		ret = -EBUSY;
+		goto end;
+	}
+
+	ret = kstrtou8(page, 0, &num);
+	if (ret)
+		goto end;
+
+	if (num > 15) {
+		ret = -EINVAL;
+		goto end;
+	}
+
+	opts->bulk_maxburst = num;
+	ret = len;
+end:
+	mutex_unlock(&opts->lock);
+	return ret;
+}
+
+CONFIGFS_ATTR(f_ss_opts_, bulk_maxburst);
+#endif /* CONFIG_USB_PATCH_ON_RTK */
+
+#endif /* MY_DEF_HERE */
 static struct configfs_attribute *ss_attrs[] = {
 	&f_ss_opts_attr_pattern,
 	&f_ss_opts_attr_isoc_interval,
@@ -1224,6 +1294,11 @@ static struct configfs_attribute *ss_attrs[] = {
 	&f_ss_opts_attr_bulk_buflen,
 	&f_ss_opts_attr_bulk_qlen,
 	&f_ss_opts_attr_iso_qlen,
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_USB_PATCH_ON_RTK
+	&f_ss_opts_attr_bulk_maxburst,
+#endif /* CONFIG_USB_PATCH_ON_RTK */
+#endif /* MY_DEF_HERE */
 	NULL,
 };
 

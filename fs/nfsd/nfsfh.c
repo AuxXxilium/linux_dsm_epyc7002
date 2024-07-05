@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * NFS server file handle treatment.
@@ -15,6 +18,10 @@
 #include "vfs.h"
 #include "auth.h"
 #include "trace.h"
+
+#ifdef MY_ABC_HERE
+#include <linux/magic.h>
+#endif /* MY_ABC_HERE */
 
 #define NFSDDBG_FACILITY		NFSDDBG_FH
 
@@ -40,7 +47,14 @@ static int nfsd_acceptable(void *expv, struct dentry *dentry)
 		/* make sure parents give x permission to user */
 		int err;
 		parent = dget_parent(tdentry);
+#ifdef MY_ABC_HERE
+		if (IS_SYNOACL(parent))
+			err = synoacl_op_permission(parent, MAY_EXEC);
+		else
+			err = inode_permission(d_inode(parent), MAY_EXEC);
+#else /* MY_ABC_HERE */
 		err = inode_permission(d_inode(parent), MAY_EXEC);
+#endif /* MY_ABC_HERE */
 		if (err < 0) {
 			dput(parent);
 			break;
@@ -420,6 +434,16 @@ static void _fh_update(struct svc_fh *fhp, struct svc_export *exp,
 			(fhp->fh_handle.fh_fsid + fhp->fh_handle.fh_size/4 - 1);
 		int maxsize = (fhp->fh_maxsize - fhp->fh_handle.fh_size)/4;
 		int subtreecheck = !(exp->ex_flags & NFSEXP_NOSUBTREECHECK);
+
+#ifdef MY_ABC_HERE
+		// ESXi nfs client cannot handle FILEID_BTRFS_WITH_PARENT properly,
+		// such that we can't enable subtreecheck to solve WINACL inheritance problem
+		if (dentry->d_sb->s_magic != BTRFS_SUPER_MAGIC) {
+			// in order to let fh have parent ino for ACL inherit
+			// We need force encode fh to add parent ino into fid
+			subtreecheck = 1;
+		}
+#endif
 
 		fhp->fh_handle.fh_fileid_type =
 			exportfs_encode_fh(dentry, fid, &maxsize, subtreecheck);

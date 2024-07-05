@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Block multiqueue core code
@@ -301,6 +304,10 @@ static struct request *blk_mq_rq_ctx_init(struct blk_mq_alloc_data *data,
 	RB_CLEAR_NODE(&rq->rb_node);
 	rq->rq_disk = NULL;
 	rq->part = NULL;
+#ifdef MY_ABC_HERE
+	rq->syno_seq = 0;
+#endif /* MY_ABC_HERE */
+
 #ifdef CONFIG_BLK_RQ_ALLOC_TIME
 	rq->alloc_time_ns = alloc_time_ns;
 #endif
@@ -730,8 +737,17 @@ static void hctx_lock(struct blk_mq_hw_ctx *hctx, int *srcu_idx)
 void blk_mq_start_request(struct request *rq)
 {
 	struct request_queue *q = rq->q;
+#ifdef MY_ABC_HERE
+	sector_t rq_pos = 0;
+	sector_t end_sector = 0;
+#endif /* MY_ABC_HERE */
 
 	trace_block_rq_issue(q, rq);
+#ifdef MY_ABC_HERE
+	if  (rq->rq_disk) {
+		rq->u64IssueTime = cpu_clock(0);
+	}
+#endif /* MY_ABC_HERE */
 
 	if (test_bit(QUEUE_FLAG_STATS, &q->queue_flags)) {
 		rq->io_start_time_ns = ktime_get_ns();
@@ -749,6 +765,23 @@ void blk_mq_start_request(struct request *rq)
 	if (blk_integrity_rq(rq) && req_op(rq) == REQ_OP_WRITE)
 		q->integrity.profile->prepare_fn(rq);
 #endif
+
+#ifdef MY_ABC_HERE
+	if (blk_do_io_stat(rq)) {
+		rq_pos = blk_rq_pos(rq);
+		end_sector = rq->rq_disk->end_sector;
+
+		if (end_sector == rq_pos) {
+			rq->syno_seq |= (1 << SYNO_DISK_SEQ_STAT_NEAR_SEQ);
+			rq->syno_seq |= (1 << SYNO_DISK_SEQ_STAT_SEQ);
+		} else if (end_sector < rq_pos
+				&& end_sector + 256 >= rq_pos) {
+			rq->syno_seq |= (1 << SYNO_DISK_SEQ_STAT_NEAR_SEQ);
+		}
+		rq->rq_disk->end_sector = rq_end_sector(rq);
+	}
+#endif /* MY_ABC_HERE */
+
 }
 EXPORT_SYMBOL(blk_mq_start_request);
 
@@ -929,7 +962,7 @@ static bool blk_mq_req_expired(struct request *rq, unsigned long *next)
 
 void blk_mq_put_rq_ref(struct request *rq)
 {
-	if (is_flush_rq(rq, rq->mq_hctx))
+	if (is_flush_rq(rq))
 		rq->end_io(rq, 0);
 	else if (refcount_dec_and_test(&rq->ref))
 		__blk_mq_free_request(rq);
@@ -3246,7 +3279,11 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 		goto err_hctxs;
 
 	INIT_WORK(&q->timeout_work, blk_mq_timeout_work);
+#ifdef CONFIG_SYNO_KVMX64_MQ_TIMEOUT
+	blk_queue_rq_timeout(q, set->timeout ? set->timeout : CONFIG_SYNO_KVMX64_MQ_TIMEOUT * HZ);
+#else
 	blk_queue_rq_timeout(q, set->timeout ? set->timeout : 30 * HZ);
+#endif /* CONFIG_SYNO_KVMX64_MQ_TIMEOUT */
 
 	q->tag_set = set;
 

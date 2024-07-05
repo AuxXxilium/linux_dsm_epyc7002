@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  *  Block device elevator/IO-scheduler.
@@ -624,7 +627,11 @@ static struct elevator_type *elevator_get_default(struct request_queue *q)
 	if (q->nr_hw_queues != 1)
 		return NULL;
 
+#ifdef MY_ABC_HERE
+	return elevator_get(q, "bfq", false);
+#else /* MY_ABC_HERE */
 	return elevator_get(q, "mq-deadline", false);
+#endif /* MY_ABC_HERE */
 }
 
 /*

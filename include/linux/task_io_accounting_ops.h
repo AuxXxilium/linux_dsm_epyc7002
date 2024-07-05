@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Task I/O accounting operations
@@ -6,11 +9,19 @@
 #define __TASK_IO_ACCOUNTING_OPS_INCLUDED
 
 #include <linux/sched.h>
+#ifdef MY_ABC_HERE
+#include <linux/workqueue.h>
+#endif
 
 #ifdef CONFIG_TASK_IO_ACCOUNTING
 static inline void task_io_account_read(size_t bytes)
 {
 	current->ioac.read_bytes += bytes;
+
+#ifdef MY_ABC_HERE
+	if (current->workacct)
+		update_kwork_io_stat_ratelimited(current, GFP_NOWAIT);
+#endif /* MY_ABC_HERE */
 }
 
 /*
@@ -25,6 +36,11 @@ static inline unsigned long task_io_get_inblock(const struct task_struct *p)
 static inline void task_io_account_write(size_t bytes)
 {
 	current->ioac.write_bytes += bytes;
+
+#ifdef MY_ABC_HERE
+	if (current->workacct)
+		update_kwork_io_stat_ratelimited(current, GFP_NOWAIT);
+#endif /* MY_ABC_HERE */
 }
 
 /*

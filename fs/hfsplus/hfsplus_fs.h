@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  *  linux/include/linux/hfsplus_fs.h
@@ -446,8 +449,13 @@ int hfsplus_cat_case_cmp_key(const hfsplus_btree_key *k1,
 			     const hfsplus_btree_key *k2);
 int hfsplus_cat_bin_cmp_key(const hfsplus_btree_key *k1,
 			    const hfsplus_btree_key *k2);
+#ifdef MY_ABC_HERE
+int hfsplus_cat_build_key(struct super_block *sb, hfsplus_btree_key *key,
+			   u32 parent, const struct qstr *str, bool nfc);
+#else
 int hfsplus_cat_build_key(struct super_block *sb, hfsplus_btree_key *key,
 			   u32 parent, const struct qstr *str);
+#endif /* MY_ABC_HERE */
 void hfsplus_cat_build_key_with_cnid(struct super_block *sb,
 				     hfsplus_btree_key *key, u32 parent);
 void hfsplus_cat_set_perms(struct inode *inode, struct hfsplus_perm *perms);
@@ -492,6 +500,12 @@ int hfsplus_getattr(const struct path *path, struct kstat *stat,
 		    u32 request_mask, unsigned int query_flags);
 int hfsplus_file_fsync(struct file *file, loff_t start, loff_t end,
 		       int datasync);
+#ifdef MY_ABC_HERE
+int hfsplus_syno_getattr(struct dentry *dentry, struct kstat *kst,
+		unsigned int syno_flags);
+int hfsplus_syno_get_crtime(struct inode *inode, struct timespec64 *crtime);
+int hfsplus_syno_set_crtime(struct inode *inode, struct timespec64 *crtime);
+#endif /* MY_ABC_HERE */
 
 /* ioctl.c */
 long hfsplus_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
@@ -523,7 +537,26 @@ int hfsplus_strcmp(const struct hfsplus_unistr *s1,
 int hfsplus_uni2asc(struct super_block *sb, const struct hfsplus_unistr *ustr,
 		    char *astr, int *len_p);
 int hfsplus_asc2uni(struct super_block *sb, struct hfsplus_unistr *ustr,
-		    int max_unistr_len, const char *astr, int len);
+		    int max_unistr_len, const char *astr, int len
+#ifdef MY_ABC_HERE
+		    , bool convert
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+		    , bool nfc
+#endif /* MY_ABC_HERE */
+		    );
+#ifdef MY_ABC_HERE
+int hfsplus_attr_uni2asc(struct super_block *sb,
+			 const struct hfsplus_unistr *ustr, char *astr,
+			 int *len_p);
+int hfsplus_attr_asc2uni(struct super_block *sb, struct hfsplus_unistr *ustr,
+			 int max_unistr_len, const char *astr, int len);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+int hfsplus_nfc_asc2uni(struct super_block *sb, struct hfsplus_unistr *ustr,
+			int max_unistr_len, const char *astr, int len,
+			bool nfc);
+#endif /* MY_ABC_HERE */
 int hfsplus_hash_dentry(const struct dentry *dentry, struct qstr *str);
 int hfsplus_compare_dentry(const struct dentry *dentry, unsigned int len,
 			   const char *str, const struct qstr *name);

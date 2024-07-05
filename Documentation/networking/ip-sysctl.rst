@@ -907,7 +907,11 @@ tcp_limit_output_bytes - INTEGER
 	limits the number of bytes on qdisc or device to reduce artificial
 	RTT/cwnd and reduce bufferbloat.
 
+#if defined(CONFIG_SYNO_LSP_RTD1619B)
+	Default: 262144
+#else /* CONFIG_SYNO_LSP_RTD1619B */
 	Default: 1048576 (16 * 65536)
+#endif /* CONFIG_SYNO_LSP_RTD1619B */
 
 tcp_challenge_ack_limit - INTEGER
 	Limits number of Challenge ACK sent per second, as recommended

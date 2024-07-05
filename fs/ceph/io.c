@@ -83,12 +83,30 @@ ceph_end_io_read(struct inode *inode)
  * Declare that a buffered write operation is about to start, and ensure
  * that we block all direct I/O.
  */
+#ifdef CONFIG_SYNO_CEPH_RECVFILE
+static void __ceph_start_io_write(struct inode *inode, int nolock)
+{
+	if (!nolock) {
+		down_write(&inode->i_rwsem);
+		ceph_block_o_direct(ceph_inode(inode), inode);
+	}
+}
+void ceph_start_io_write(struct inode *inode)
+{
+	return __ceph_start_io_write(inode, 0);
+}
+void ceph_start_io_write_nolock(struct inode *inode)
+{
+	return __ceph_start_io_write(inode, 1);
+}
+#else
 void
 ceph_start_io_write(struct inode *inode)
 {
 	down_write(&inode->i_rwsem);
 	ceph_block_o_direct(ceph_inode(inode), inode);
 }
+#endif /* CONFIG_SYNO_CEPH_RECVFILE */
 
 /**
  * ceph_end_io_write - declare that the buffered write operation is done
@@ -97,9 +115,24 @@ ceph_start_io_write(struct inode *inode)
  * Declare that a buffered write operation is done, and release the
  * lock on inode->i_rwsem.
  */
+#ifdef CONFIG_SYNO_CEPH_RECVFILE
+static void __ceph_end_io_write(struct inode *inode, int nolock);
+void ceph_end_io_write(struct inode *inode)
+{
+	return __ceph_end_io_write(inode, 0);
+}
+void ceph_end_io_write_nolock(struct inode *inode)
+{
+	return __ceph_end_io_write(inode, 1);
+}
+static void __ceph_end_io_write(struct inode *inode, int nolock)
+{
+	if (!nolock)
+#else
 void
 ceph_end_io_write(struct inode *inode)
 {
+#endif /* CONFIG_SYNO_CEPH_RECVFILE */
 	up_write(&inode->i_rwsem);
 }
 
@@ -118,7 +151,7 @@ static void ceph_block_buffered(struct ceph_inode_info *ci, struct inode *inode)
 }
 
 /**
- * ceph_end_io_direct - declare the file is being used for direct i/o
+ * ceph_start_io_direct - declare the file is being used for direct i/o
  * @inode: file inode
  *
  * Declare that a direct I/O operation is about to start, and ensure

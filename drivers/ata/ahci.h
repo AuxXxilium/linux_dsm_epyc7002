@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  *  ahci.h - Common AHCI SATA definitions and declarations
@@ -320,6 +323,10 @@ struct ahci_port_priv {
 	/* enclosure management info per PM slot */
 	struct ahci_em_priv	em_priv[EM_MAX_SLOTS];
 	char			*irq_desc;	/* desc in /proc/interrupts */
+
+#ifdef MY_ABC_HERE
+	int			(*syno_set_blink)(struct ata_port* ap, u32 state);
+#endif /* MY_ABC_HERE */
 };
 
 struct ahci_host_priv {
@@ -443,5 +450,23 @@ static inline int ahci_nr_ports(u32 cap)
 {
 	return (cap & 0x1f) + 1;
 }
+
+#ifdef MY_ABC_HERE
+static inline void __iomem *ahci_host_base(struct ata_host *host)
+{
+	struct ahci_host_priv *hpriv = host->private_data;
+	return hpriv->mmio;
+}
+#endif /* MY_ABC_HERE */
+
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+/*
+ *	Check PCI vender and device for JMB585, JMB582
+ */
+static inline int syno_jmb58x_check(unsigned short vendor, unsigned short device)
+{
+	return (PCI_VENDOR_ID_JMICRON == vendor && ( 0x0585 == device || 0x0582 == device)) ? 0 : -1;
+}
+#endif /* MY_ABC_HERE || MY_ABC_HERE|| MY_ABC_HERE */
 
 #endif /* _AHCI_H */

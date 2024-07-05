@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /*
@@ -269,6 +272,12 @@ enum {
 	ATA_CMD_PMP_READ_DMA	= 0xE9,
 	ATA_CMD_PMP_WRITE	= 0xE8,
 	ATA_CMD_PMP_WRITE_DMA	= 0xEB,
+#ifdef MY_ABC_HERE
+	ATA_CMD_PMP_SYNO_POLLING = 0xE9,
+	ATA_CMD_PMP_SYNO_I2C		= 0xD0,
+	ATA_CMD_PMP_SYNO_LED_GPIO	= 0xD1,
+	ATA_CMD_PMP_GET_BOARD_INFO_JMB575 = 0xF0,
+#endif /* MY_ABC_HERE */
 	ATA_CMD_CONF_OVERLAY	= 0xB1,
 	ATA_CMD_SEC_SET_PASS	= 0xF1,
 	ATA_CMD_SEC_UNLOCK	= 0xF2,
@@ -467,10 +476,22 @@ enum {
 	SATA_PMP_GSCR_PROD_ID	= 0,
 	SATA_PMP_GSCR_REV	= 1,
 	SATA_PMP_GSCR_PORT_INFO	= 2,
+#ifdef MY_ABC_HERE
+	SATA_PMP_GSCR_SYNO	= 30,
+	SATA_PMP_GSCR_LOGY	= 31,
+#endif /* MY_ABC_HERE */
 	SATA_PMP_GSCR_ERROR	= 32,
 	SATA_PMP_GSCR_ERROR_EN	= 33,
 	SATA_PMP_GSCR_FEAT	= 64,
 	SATA_PMP_GSCR_FEAT_EN	= 96,
+#ifdef MY_ABC_HERE
+	SATA_PMP_GSCR_9705_GPI = 944,
+	SATA_PMP_GSCR_9705_GPO = 928,
+	SATA_PMP_GSCR_9705_GPO_EN = 932,			/* GPIO dataout enable */
+	SATA_PMP_GSCR_9705_GPI_POLARITY = 940,		/* GPIO datain polarity */
+	SATA_PMP_GSCR_9705_SATA_4_BLINK_RATE = 1000, /* Blink rate counter register for SATA 4 LED */
+	SATA_PMP_GSCR_9705_SATA_0_TO_3_BLINK_RATE = 1004, /* Blink rate counter register for SATA 0~3 LED*/
+#endif /* MY_ABC_HERE */
 
 	SATA_PMP_PSCR_STATUS	= 0,
 	SATA_PMP_PSCR_ERROR	= 1,
@@ -736,6 +757,16 @@ static inline bool ata_id_has_pm(const u16 *id)
 		return false;
 	return id[ATA_ID_COMMAND_SET_1] & (1 << 3);
 }
+
+#ifdef MY_ABC_HERE
+static inline bool ata_id_has_rahead(const u16 *id)
+{
+	/* Yes children, word 83 valid bits cover word 82 data */
+	if ((id[ATA_ID_COMMAND_SET_2] & 0xC000) != 0x4000)
+		return false;
+	return id[ATA_ID_COMMAND_SET_1] & (1 << 6);
+}
+#endif /* MY_ABC_HERE */
 
 static inline bool ata_id_rahead_enabled(const u16 *id)
 {
@@ -1132,9 +1163,27 @@ static inline bool lba_48_ok(u64 block, u32 n_block)
 	return ((block + n_block - 1) < ((u64)1 << 48)) && (n_block <= ATA_MAX_SECTORS_LBA48);
 }
 
+#ifdef MY_ABC_HERE
+static inline bool is_ata_read_write_cmd(u8 command)
+{
+	return (command == ATA_CMD_READ) ||
+		(command == ATA_CMD_READ_EXT) ||
+		(command == ATA_CMD_READ_QUEUED) ||
+		(command == ATA_CMD_FPDMA_READ) ||
+		(command == ATA_CMD_WRITE) ||
+		(command == ATA_CMD_WRITE_EXT) ||
+		(command == ATA_CMD_WRITE_QUEUED) ||
+		(command == ATA_CMD_FPDMA_WRITE);
+}
+#endif /* MY_ABC_HERE */
+
 #define sata_pmp_gscr_vendor(gscr)	((gscr)[SATA_PMP_GSCR_PROD_ID] & 0xffff)
 #define sata_pmp_gscr_devid(gscr)	((gscr)[SATA_PMP_GSCR_PROD_ID] >> 16)
 #define sata_pmp_gscr_rev(gscr)		(((gscr)[SATA_PMP_GSCR_REV] >> 8) & 0xff)
 #define sata_pmp_gscr_ports(gscr)	((gscr)[SATA_PMP_GSCR_PORT_INFO] & 0xf)
+#ifdef MY_ABC_HERE
+#define sata_pmp_gscr_syno(gscr)	((gscr)[SATA_PMP_GSCR_SYNO])
+#define sata_pmp_gscr_logy(gscr)	((gscr)[SATA_PMP_GSCR_LOGY])
+#endif /* MY_ABC_HERE */
 
 #endif /* __LINUX_ATA_H__ */

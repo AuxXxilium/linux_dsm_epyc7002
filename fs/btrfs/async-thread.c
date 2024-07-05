@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2007 Oracle.  All rights reserved.
@@ -156,6 +159,25 @@ struct btrfs_workqueue *btrfs_alloc_workqueue(struct btrfs_fs_info *fs_info,
 	}
 	return ret;
 }
+
+#ifdef MY_ABC_HERE
+struct btrfs_workqueue *btrfs_alloc_workqueue_with_sysfs(
+	struct btrfs_fs_info *fs_info,
+	const char *name,
+	unsigned int flags,
+	int limit_active,
+	int thresh)
+{
+	/* 32 for sid, 12 for prefix and postfix in __btrfs_alloc_workqueue */
+	char trimmed_name[21] = {0};
+	char name_sid[WQ_NAME_LEN] = {0};
+	BUILD_BUG_ON((WQ_NAME_LEN - 44) < 20);
+
+	snprintf(trimmed_name, sizeof(trimmed_name), "%s", name);
+	snprintf(name_sid, sizeof(name_sid), "%s-%s", trimmed_name, fs_info->sb->s_id);
+	return btrfs_alloc_workqueue(fs_info, name_sid, flags | WQ_SYSFS, limit_active, thresh);
+}
+#endif /* MY_ABC_HERE */
 
 /*
  * Hook for threshold which will be called in btrfs_queue_work.

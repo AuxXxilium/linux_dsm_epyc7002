@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# shellcheck disable=SC2154
+if [ -e "${KernelDir}/lib/synolib/syno_sata_signal_check.ko" ]; then
+install -Dm644 "${KernelDir}"/lib/synolib/syno_sata_signal_check.ko  "${TmpInstDir}"/lib/modules/syno_sata_signal_check.ko
+fi
+if [ -e "${KernelDir}/lib/synolib/syno_sata_signal_test.ko" ]; then
+install -Dm644 "${KernelDir}"/lib/synolib/syno_sata_signal_test.ko  "${TmpInstDir}"/lib/modules/syno_sata_signal_test.ko
+fi
+
+if [ -e "${KernelDir}/lib/synolib/syno_jmb585_update_spi.ko" ]; then
+	install -Dm644 "${KernelDir}"/lib/synolib/syno_jmb585_update_spi.ko  "${TmpInstDir}"/lib/modules/syno_jmb585_update_spi.ko
+fi
+
+if [ -e "${KernelDir}/lib/synolib/asm116xfwdl/asm116xfwdl.ko" ]; then
+	install -Dm644 "${KernelDir}"/lib/synolib/asm116xfwdl/asm116xfwdl.ko  "${TmpInstDir}"/lib/modules/asm116xfwdl.ko
+fi
+
+if [ -e "${KernelDir}/lib/synolib/syno_hddpwrctl_test.ko" ]; then
+	install -Dm644 "${KernelDir}"/lib/synolib/syno_hddpwrctl_test.ko  "${TmpInstDir}"/lib/modules/syno_hddpwrctl_test.ko
+fi
+
+if [ -e "${KernelDir}/lib/synolib/syno_ahci_reg_read_test.ko" ]; then
+	install -Dm644 "${KernelDir}"/lib/synolib/syno_ahci_reg_read_test.ko  "${TmpInstDir}"/lib/modules/syno_ahci_reg_read_test.ko
+fi
+
+exit 0

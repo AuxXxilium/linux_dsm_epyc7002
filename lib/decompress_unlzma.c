@@ -650,8 +650,17 @@ STATIC inline int INIT unlzma(unsigned char *buf, long in_len,
 			goto exit_3;
 	}
 
+#ifdef CONFIG_SYNO_RAMDISK_INTEGRITY_CHECK
+	if (posp) {
+		if (get_pos(&wr) == header.dst_size)
+			*posp = 0;
+		else
+			*posp = rc.ptr-rc.buffer;
+	}
+#else /* CONFIG_SYNO_RAMDISK_INTEGRITY_CHECK */
 	if (posp)
 		*posp = rc.ptr-rc.buffer;
+#endif /* CONFIG_SYNO_RAMDISK_INTEGRITY_CHECK */
 	if (!wr.flush || wr.flush(wr.buffer, wr.buffer_pos) == wr.buffer_pos)
 		ret = 0;
 exit_3:

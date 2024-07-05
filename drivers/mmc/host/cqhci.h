@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (c) 2015, The Linux Foundation. All rights reserved.
  */
@@ -208,6 +211,10 @@ struct cqhci_host_ops {
 				 u64 *data);
 	void (*pre_enable)(struct mmc_host *mmc);
 	void (*post_disable)(struct mmc_host *mmc);
+#if defined(MY_DEF_HERE)
+	void (*setup_tran_desc)(struct mmc_data *data,
+				    struct cqhci_host *cq_host, u8 *desc, int sg_count);
+#endif /* MY_DEF_HERE */
 };
 
 static inline void cqhci_writel(struct cqhci_host *host, u32 val, int reg)

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  * Copyright (C) 2001, 2002 Sistina Software (UK) Limited.
  * Copyright (C) 2004-2008 Red Hat, Inc. All rights reserved.
@@ -8,6 +11,12 @@
 #include "dm-core.h"
 #include "dm-rq.h"
 #include "dm-uevent.h"
+#ifdef MY_ABC_HERE
+#include "syno-md-fast-wakeup.h"
+#ifdef CONFIG_BLK_DEV_MD
+#include "md.h"
+#endif /* CONFIG_BLK_DEV_MD */
+#endif /* MY_ABC_HERE */
 
 #include <linux/init.h>
 #include <linux/module.h>
@@ -52,6 +61,15 @@ static void do_deferred_remove(struct work_struct *w);
 static DECLARE_WORK(deferred_remove_work, do_deferred_remove);
 
 static struct workqueue_struct *deferred_remove_workqueue;
+#ifdef MY_ABC_HERE
+static struct kmem_cache *_syno_noclone_cache;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+static void syno_dm_fast_wakeup_md(struct mapped_device *md, struct dm_table *map);
+#ifdef CONFIG_BLK_DEV_MD
+extern void syno_md_fast_wakeup_devices(void *md);
+#endif /* CONFIG_BLK_DEV_MD */
+#endif /* MY_ABC_HERE */
 
 atomic_t dm_global_event_nr = ATOMIC_INIT(0);
 DECLARE_WAIT_QUEUE_HEAD(dm_global_eventq);
@@ -104,6 +122,19 @@ struct dm_io {
 	/* last member of dm_target_io is 'struct bio' */
 	struct dm_target_io tio;
 };
+
+#ifdef MY_ABC_HERE
+/*
+ * One of these is allocated per noclone bio.
+ */
+struct syno_dm_noclone {
+	struct mapped_device *md;
+	bio_end_io_t *orig_bi_end_io;
+	void *orig_bi_private;
+	unsigned long start_time;
+	struct bvec_iter orig_bi_iter;
+};
+#endif /* MY_ABC_HERE */
 
 void *dm_per_bio_data(struct bio *bio, size_t data_size)
 {
@@ -164,6 +195,9 @@ static int get_swap_bios(void)
 struct dm_md_mempools {
 	struct bio_set bs;
 	struct bio_set io_bs;
+#ifdef MY_ABC_HERE
+	unsigned int syno_pool_size;
+#endif /* MY_ABC_HERE */
 };
 
 struct table_device {
@@ -245,16 +279,32 @@ static int __init local_init(void)
 		goto out_uevent_exit;
 	}
 
+#ifdef MY_ABC_HERE
+	_syno_noclone_cache = KMEM_CACHE(syno_dm_noclone, 0);
+	if (!_syno_noclone_cache) {
+		r = -ENOMEM;
+		goto out_free_workqueue;
+	}
+#endif /* MY_ABC_HERE */
+
 	_major = major;
 	r = register_blkdev(_major, _name);
 	if (r < 0)
+#ifdef MY_ABC_HERE
+		goto out_free_noclone_cache;
+#else
 		goto out_free_workqueue;
+#endif /* MY_ABC_HERE */
 
 	if (!_major)
 		_major = r;
 
 	return 0;
 
+#ifdef MY_ABC_HERE
+out_free_noclone_cache:
+	kmem_cache_destroy(_syno_noclone_cache);
+#endif /* MY_ABC_HERE */
 out_free_workqueue:
 	destroy_workqueue(deferred_remove_workqueue);
 out_uevent_exit:
@@ -267,6 +317,9 @@ static void local_exit(void)
 {
 	flush_scheduled_work();
 	destroy_workqueue(deferred_remove_workqueue);
+#ifdef MY_ABC_HERE
+	kmem_cache_destroy(_syno_noclone_cache);
+#endif /* MY_ABC_HERE */
 
 	unregister_blkdev(_major, _name);
 	dm_uevent_exit();
@@ -517,6 +570,69 @@ out:
 #define dm_blk_report_zones		NULL
 #endif /* CONFIG_BLK_DEV_ZONED */
 
+#ifdef MY_ABC_HERE
+/*
+ *  Refer to dm_prepare_ioctl() behavior
+ *  1: Extra ioctl doesn't exist or cmd is not supported
+ *  0: Found extra ioctl and invoked successfully
+ *	<0: Found extra ioctl but failed to invoke
+ */
+
+static int syno_dm_do_extra_ioctl(struct mapped_device *md, int *srcu_idx,
+		unsigned int cmd, unsigned long arg)
+{
+	struct dm_target *tgt = NULL;
+	struct dm_table *map = NULL;
+	int r = -ENOTTY;
+
+retry:
+	r = -ENOTTY;
+	map = dm_get_live_table(md, srcu_idx);
+	if (!map || !dm_table_get_size(map)) {
+		goto out;
+	}
+
+	/* We only support devices that have a single target */
+	if (dm_table_get_num_targets(map) != 1) {
+		goto out;
+	}
+
+	tgt = dm_table_get_target(map, 0);
+	if (!tgt->type->extra_ioctl) {
+		r = 1;
+		goto out;
+	}
+
+	if (dm_suspended_md(md)) {
+		r = -EAGAIN;
+		goto out;
+	}
+
+	/*
+	 * 0: Success
+	 * <0: Error
+	 * 1: Command is not within extra ioctl
+	 */
+	r = tgt->type->extra_ioctl(tgt, cmd, arg);
+	if (r < 0) {
+		printk(KERN_ERR "%s: Invoke extra ioctl failed, cmd=%d", __FUNCTION__, cmd);
+	}
+
+	if (r == -ENOTCONN && !fatal_signal_pending(current)) {
+		dm_put_live_table(md, *srcu_idx);
+		map = NULL;
+		msleep(10);
+		goto retry;
+	}
+out:
+	if (map) {
+		dm_put_live_table(md, *srcu_idx);
+	}
+
+	return r;
+}
+#endif /* MY_ABC_HERE */
+
 static int dm_prepare_ioctl(struct mapped_device *md, int *srcu_idx,
 			    struct block_device **bdev)
 {
@@ -562,6 +678,15 @@ static int dm_blk_ioctl(struct block_device *bdev, fmode_t mode,
 	struct mapped_device *md = bdev->bd_disk->private_data;
 	int r, srcu_idx;
 
+#ifdef MY_ABC_HERE
+	r = syno_dm_do_extra_ioctl(md, &srcu_idx, cmd, arg);
+	if (0 >= r) {
+		// Get error or Perform extra IOCTL successfully
+		goto out_extra_ioctl;
+	}
+	// No supported extra ioctl
+#endif /* MY_ABC_HERE */
+
 	r = dm_prepare_ioctl(md, &srcu_idx, &bdev);
 	if (r < 0)
 		goto out;
@@ -583,6 +708,9 @@ static int dm_blk_ioctl(struct block_device *bdev, fmode_t mode,
 	r =  __blkdev_driver_ioctl(bdev, mode, cmd, arg);
 out:
 	dm_unprepare_ioctl(md, srcu_idx);
+#ifdef MY_ABC_HERE
+out_extra_ioctl:
+#endif /* MY_ABC_HERE */
 	return r;
 }
 
@@ -624,6 +752,18 @@ static void end_io_acct(struct dm_io *io)
 	if (unlikely(wq_has_sleeper(&md->wait)))
 		wake_up(&md->wait);
 }
+
+#ifdef MY_ABC_HERE
+// Modified from end_io_acct()
+static void syno_noclone_end_io_acct(struct mapped_device *md, struct bio *bio, unsigned long start_time)
+{
+	bio_end_io_acct(bio, start_time);
+
+	/* nudge anyone waiting on suspend queue */
+	if (unlikely(wq_has_sleeper(&md->wait)))
+		wake_up(&md->wait);
+}
+#endif /* MY_ABC_HERE */
 
 static struct dm_io *alloc_io(struct mapped_device *md, struct bio *bio)
 {
@@ -976,6 +1116,13 @@ void disable_write_zeroes(struct mapped_device *md)
 	limits->max_write_zeroes_sectors = 0;
 }
 
+#ifdef MY_ABC_HERE
+static void disable_unused_hint(struct mapped_device *md)
+{
+	blk_queue_flag_clear(QUEUE_FLAG_UNUSED_HINT, md->queue);
+}
+#endif /* MY_ABC_HERE */
+
 static bool swap_bios_limit(struct dm_target *ti, struct bio *bio)
 {
 	return unlikely((bio->bi_opf & REQ_SWAP) != 0) && unlikely(ti->limit_swap_bios);
@@ -1001,6 +1148,11 @@ static void clone_endio(struct bio *bio)
 			 !bio->bi_disk->queue->limits.max_write_zeroes_sectors)
 			disable_write_zeroes(md);
 	}
+#ifdef MY_ABC_HERE
+	if (unlikely(error == BLK_STS_NOTSUPP) &&
+	    bio_op(bio) == REQ_OP_UNUSED_HINT)
+		disable_unused_hint(md);
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * For zone-append bios get offset in zone of the written
@@ -1013,6 +1165,11 @@ static void clone_endio(struct bio *bio)
 
 		orig_bio->bi_iter.bi_sector += written_sector & mask;
 	}
+
+#ifdef MY_ABC_HERE
+	if (unlikely(bio_flagged(bio, BIO_CORRECTION_ERR)))
+		bio_set_flag(orig_bio, BIO_CORRECTION_ERR);
+#endif /* MY_ABC_HERE */
 
 	if (endio) {
 		int r = endio(tio->ti, bio, &error);
@@ -1039,6 +1196,37 @@ static void clone_endio(struct bio *bio)
 	free_tio(tio);
 	dec_pending(io, error);
 }
+
+#ifdef MY_ABC_HERE
+static void syno_noclone_endio(struct bio *bio)
+{
+	struct syno_dm_noclone *noclone = bio->bi_private;
+	struct mapped_device *md = noclone->md;
+
+	bio->bi_end_io = noclone->orig_bi_end_io;
+	bio->bi_private = noclone->orig_bi_private;
+	/**
+	 * Restore bd_disk for complete event
+	 * Don't use bio_set_dev, since we don't want to
+	 * associate a completed bio with blkg
+	 */
+	bio->bi_disk = md->bdev->bd_disk;
+	bio->bi_partno = md->bdev->bd_partno;
+	bio->bi_iter = noclone->orig_bi_iter;
+
+	syno_noclone_end_io_acct(md, bio, noclone->start_time);
+
+	mempool_free(noclone, &md->syno_noclone_pool);
+
+#ifdef MY_ABC_HERE
+	/* If bio is no clone io, restore completion flag
+	 * when bio returns from the underlying block devices */
+	bio_set_flag(bio, BIO_TRACE_COMPLETION);
+#endif /* MY_ABC_HERE */
+
+	bio_endio(bio);
+}
+#endif /* MY_ABC_HERE */
 
 /*
  * Return maximum size of I/O possible at the supplied sector up to the current
@@ -1547,6 +1735,9 @@ static bool is_abnormal_io(struct bio *bio)
 	switch (bio_op(bio)) {
 	case REQ_OP_DISCARD:
 	case REQ_OP_SECURE_ERASE:
+#ifdef MY_ABC_HERE
+	case REQ_OP_UNUSED_HINT:
+#endif /* MY_ABC_HERE */
 	case REQ_OP_WRITE_SAME:
 	case REQ_OP_WRITE_ZEROES:
 		r = true;
@@ -1569,6 +1760,11 @@ static bool __process_abnormal_io(struct clone_info *ci, struct dm_target *ti,
 	case REQ_OP_SECURE_ERASE:
 		num_bios = ti->num_secure_erase_bios;
 		break;
+#ifdef MY_ABC_HERE
+	case REQ_OP_UNUSED_HINT:
+		num_bios = ti->num_unused_hint_bios;
+		break;
+#endif /* MY_ABC_HERE */
 	case REQ_OP_WRITE_SAME:
 		num_bios = ti->num_write_same_bios;
 		break;
@@ -1684,12 +1880,33 @@ static blk_qc_t __split_and_process_bio(struct mapped_device *md,
 	return ret;
 }
 
+#ifdef MY_ABC_HERE
+static bool syno_can_bio_use_noclone(struct bio *bio)
+{
+	if (is_abnormal_io(bio))
+		return false;
+	if (bio_integrity(bio))
+		return false;
+	if (bio->bi_opf & REQ_PREFLUSH)
+		return false;
+	if (op_is_zone_mgmt(bio_op(bio)))
+		return false;
+
+	return true;
+}
+#endif /* MY_ABC_HERE */
+
 static blk_qc_t dm_submit_bio(struct bio *bio)
 {
 	struct mapped_device *md = bio->bi_disk->private_data;
 	blk_qc_t ret = BLK_QC_T_NONE;
 	int srcu_idx;
 	struct dm_table *map;
+#ifdef MY_ABC_HERE
+	int r;
+	struct syno_dm_noclone *noclone;
+	struct dm_target *ti;
+#endif /* MY_ABC_HERE */
 
 	map = dm_get_live_table(md, &srcu_idx);
 	if (unlikely(!map)) {
@@ -1710,6 +1927,10 @@ static blk_qc_t dm_submit_bio(struct bio *bio)
 		goto out;
 	}
 
+#ifdef MY_ABC_HERE
+	if (syno_md_fast_wakeup_info_update(&md->syno_fast_wakeup_info))
+		syno_dm_fast_wakeup_md(md, map);
+#endif /* MY_ABC_HERE */
 	/*
 	 * Use blk_queue_split() for abnormal IO (e.g. discard, writesame, etc)
 	 * otherwise associated queue_limits won't be imposed.
@@ -1717,6 +1938,59 @@ static blk_qc_t dm_submit_bio(struct bio *bio)
 	if (is_abnormal_io(bio))
 		blk_queue_split(&bio);
 
+#ifdef MY_ABC_HERE
+	if (!syno_can_bio_use_noclone(bio))
+		goto no_fast_path;
+
+	if (unlikely(dm_stats_used(&md->stats)))
+		goto no_fast_path;
+
+	ti = dm_table_find_target(map, bio->bi_iter.bi_sector);
+	if (unlikely(!ti))
+		goto no_fast_path;
+
+	if (!ti->type->support_noclone ||
+	    !ti->type->support_noclone(ti) ||
+	    !ti->type->noclone_map)
+		goto no_fast_path;
+
+	if (unlikely(bio_sectors(bio) > max_io_len(ti, bio->bi_iter.bi_sector)))
+		goto no_fast_path;
+
+	noclone = mempool_alloc(&md->syno_noclone_pool, GFP_NOWAIT);
+	if (unlikely(!noclone))
+		goto no_fast_path;
+
+	noclone->md = md;
+	noclone->start_time = bio_start_io_acct(bio);
+	noclone->orig_bi_end_io = bio->bi_end_io;
+	noclone->orig_bi_private = bio->bi_private;
+	noclone->orig_bi_iter = bio->bi_iter;
+	bio->bi_end_io = syno_noclone_endio;
+	bio->bi_private = noclone;
+	r = ti->type->noclone_map(ti, bio);
+	switch (r) {
+	case DM_MAPIO_REMAPPED:
+		trace_block_bio_remap(bio->bi_disk->queue, bio,
+				      disk_devt(dm_disk(md)), noclone->orig_bi_iter.bi_sector);
+#ifdef MY_ABC_HERE
+		/* Clear the flag so the underlying block device gets queue events */
+		bio_clear_flag(bio, BIO_TRACE_COMPLETION);
+#endif /* MY_ABC_HERE */
+		ret = submit_bio_noacct(bio);
+		break;
+	case DM_MAPIO_SUBMITTED:
+		WARN_ON(1);
+		break;
+	case DM_MAPIO_REQUEUE:
+	case DM_MAPIO_KILL:
+	default:
+		DMWARN("unimplemented target noclone map return value: %d", r);
+		BUG();
+	}
+	goto out;
+no_fast_path:
+#endif /* MY_ABC_HERE */
 	ret = __split_and_process_bio(md, map, bio);
 out:
 	dm_put_live_table(md, srcu_idx);
@@ -1784,6 +2058,9 @@ static void cleanup_mapped_device(struct mapped_device *md)
 		destroy_workqueue(md->wq);
 	bioset_exit(&md->bs);
 	bioset_exit(&md->io_bs);
+#ifdef MY_ABC_HERE
+	mempool_exit(&md->syno_noclone_pool);
+#endif /* MY_ABC_HERE */
 
 	if (md->dax_dev) {
 		kill_dax(md->dax_dev);
@@ -1917,6 +2194,9 @@ static struct mapped_device *alloc_dev(int minor)
 	spin_unlock(&_minor_lock);
 
 	BUG_ON(old_md != MINOR_ALLOCED);
+#ifdef MY_ABC_HERE
+	syno_md_fast_wakeup_info_init(&md->syno_fast_wakeup_info);
+#endif /* MY_ABC_HERE */
 
 	return md;
 
@@ -1953,6 +2233,9 @@ static int __bind_mempools(struct mapped_device *md, struct dm_table *t)
 {
 	struct dm_md_mempools *p = dm_table_get_md_mempools(t);
 	int ret = 0;
+#ifdef MY_ABC_HERE
+	bool noclone_pool_inited = false;
+#endif /* MY_ABC_HERE */
 
 	if (dm_table_bio_based(t)) {
 		/*
@@ -1979,6 +2262,19 @@ static int __bind_mempools(struct mapped_device *md, struct dm_table *t)
 	       bioset_initialized(&md->bs) ||
 	       bioset_initialized(&md->io_bs));
 
+#ifdef MY_ABC_HERE
+	if (mempool_initialized(&md->syno_noclone_pool))
+		ret = mempool_resize(&md->syno_noclone_pool,
+		                     p->syno_pool_size);
+	else
+		ret = mempool_init_slab_pool(&md->syno_noclone_pool,
+		                             p->syno_pool_size,
+		                             _syno_noclone_cache);
+	if (ret)
+		goto out;
+	noclone_pool_inited = true;
+#endif /* MY_ABC_HERE */
+
 	ret = bioset_init_from_src(&md->bs, &p->bs);
 	if (ret)
 		goto out;
@@ -1986,6 +2282,10 @@ static int __bind_mempools(struct mapped_device *md, struct dm_table *t)
 	if (ret)
 		bioset_exit(&md->bs);
 out:
+#ifdef MY_ABC_HERE
+	if (ret && noclone_pool_inited)
+		mempool_exit(&md->syno_noclone_pool);
+#endif /* MY_ABC_HERE */
 	/* mempool bind completed, no longer need any mempools in the table */
 	dm_table_free_md_mempools(t);
 	return ret;
@@ -2956,6 +3256,10 @@ struct dm_md_mempools *dm_alloc_md_mempools(struct mapped_device *md, enum dm_qu
 	if (integrity && bioset_integrity_create(&pools->bs, pool_size))
 		goto out;
 
+#ifdef MY_ABC_HERE
+	pools->syno_pool_size = pool_size;
+#endif /* MY_ABC_HERE */
+
 	return pools;
 
 out:
@@ -3165,6 +3469,71 @@ static const struct dax_operations dm_dax_ops = {
 	.zero_page_range = dm_dax_zero_page_range,
 };
 
+#ifdef MY_ABC_HERE
+static void syno_dm_fast_wakeup_md(struct mapped_device *md, struct dm_table *map)
+{
+#ifdef CONFIG_BLK_DEV_MD
+	char b[BDEVNAME_SIZE];
+	struct mddev *mddev;
+	struct list_head *devices;
+	struct dm_dev_internal *dd;
+	struct syno_md_fast_wakeup_info *winfo;
+
+	if (!map)
+		return;
+
+	devices = dm_table_get_devices(map);
+	list_for_each_entry(dd, devices, list) {
+		if (dd && dd->dm_dev->bdev &&
+			strstr(bdevname(dd->dm_dev->bdev, b), "md")) {
+			if (dd->dm_dev->bdev->bd_disk) {
+				mddev = dd->dm_dev->bdev->bd_disk->private_data;
+				if (!mddev)
+					continue;
+
+				winfo = &mddev->syno_fast_wakeup_info;
+				spin_lock(&winfo->active_lock);
+				winfo->active = true;
+				spin_unlock(&winfo->active_lock);
+				syno_md_fast_wakeup_devices(mddev);
+			}
+		}
+	}
+#else /* CONFIG_BLK_DEV_MD */
+	return;
+#endif /* CONFIG_BLK_DEV_MD */
+}
+
+int dm_active_get(struct mapped_device *md)
+{
+	return md->syno_fast_wakeup_info.active ? 1 : 0;
+}
+
+void dm_active_set(struct mapped_device *md, unsigned long value)
+{
+	int srcu_idx;
+	struct dm_table *map;
+	bool need_wakeup = false;
+	struct syno_md_fast_wakeup_info *winfo;
+
+	winfo = &md->syno_fast_wakeup_info;
+	spin_lock(&winfo->active_lock);
+	if (value) {
+		if (!winfo->active)
+			need_wakeup = true;
+		winfo->active = true;
+	} else {
+		winfo->active = false;
+	}
+	spin_unlock(&winfo->active_lock);
+
+	if (need_wakeup) {
+		map = dm_get_live_table(md, &srcu_idx);
+		syno_dm_fast_wakeup_md(md, map);
+		dm_put_live_table(md, srcu_idx);
+	}
+}
+#endif /* MY_ABC_HERE */
 /*
  * module hooks
  */

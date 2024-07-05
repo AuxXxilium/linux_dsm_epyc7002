@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0+
 /*
  *  Universal/legacy driver for 8250/16550-type serial ports
@@ -41,6 +44,21 @@
 #include <asm/irq.h>
 
 #include "8250.h"
+
+#ifdef MY_ABC_HERE
+#include <linux/pci_regs.h>
+#include <asm/pci-direct.h>
+#include <linux/pci.h>
+#ifdef MY_ABC_HERE
+#include <linux/synolib.h>
+#endif /* MY_ABC_HERE */
+
+extern char gszSynoTtyS0[50];
+extern char gszSynoTtyS1[50];
+extern char gszSynoTtyS2[50];
+
+static unsigned long syno_parse_ttys_port(char* s);
+#endif /* MY_ABC_HERE */
 
 /*
  * Configuration:
@@ -538,8 +556,42 @@ static void __init serial8250_isa_init_ports(void)
 	     i < ARRAY_SIZE(old_serial_port) && i < nr_uarts;
 	     i++, up++) {
 		struct uart_port *port = &up->port;
-
+#ifdef MY_ABC_HERE
+		//If ttyS is serial we have to replace the port here, cause there is no
+		//additional driver will fill the serial8250_ports.
+		char *str;
+		if ((0 == i) && (!strncmp(gszSynoTtyS0, "serial", 6))) {
+			str = &gszSynoTtyS0[6];
+			if (syno_parse_ttys_port(str)) {
+				port->iobase = syno_parse_ttys_port(str);
+			} else {
+				port->iobase = old_serial_port[i].port;
+			}
+		} else if ((1 == i) && (!strncmp(gszSynoTtyS1, "serial", 6))) {
+			str = &gszSynoTtyS1[6];
+			if (syno_parse_ttys_port(str)) {
+				port->iobase = syno_parse_ttys_port(str);
+			} else {
+				port->iobase = old_serial_port[i].port;
+			}
+		} else if ((1 == i) && (!strncmp(gszSynoTtyS2, "serial", 6))) {
+			str = &gszSynoTtyS2[6];
+			if (syno_parse_ttys_port(str)) {
+				port->iobase = syno_parse_ttys_port(str);
+			} else {
+				port->iobase = old_serial_port[i].port;
+			}
+		} else if ((2 == i) && (!strncmp(gszSynoTtyS2, "serial", 6))) {
+			str = &gszSynoTtyS2[6];
+			if (syno_parse_ttys_port(str)) {
+				port->iobase = syno_parse_ttys_port(str);
+			} else {
+				port->iobase = old_serial_port[i].port;
+			}
+		}
+#else /* MY_ABC_HERE */
 		port->iobase   = old_serial_port[i].port;
+#endif /* MY_ABC_HERE */
 		port->irq      = irq_canonicalize(old_serial_port[i].irq);
 		port->irqflags = 0;
 		port->uartclk  = old_serial_port[i].baud_base * 16;
@@ -575,6 +627,20 @@ serial8250_register_ports(struct uart_driver *drv, struct device *dev)
 		uart_add_one_port(drv, &up->port);
 	}
 }
+
+#ifdef MY_ABC_HERE
+void syno_uart_write(struct tty_port *port, char *buf, int size)
+{
+	struct uart_state *state = container_of(port, struct uart_state, port);
+	struct uart_port *uport = state->uart_port;
+	int i = 0;
+
+	for (i = 0; i < size; i++) {
+		serial_port_out(uport, UART_TX, *(buf + i));
+	}
+}
+EXPORT_SYMBOL(syno_uart_write);
+#endif /* MY_ABC_HERE */
 
 #ifdef CONFIG_SERIAL_8250_CONSOLE
 
@@ -681,10 +747,34 @@ static struct console univ8250_console = {
 	.data		= &serial8250_reg,
 };
 
+#ifdef MY_ABC_HERE
+struct console kt_console = {
+	.name		= "ttyS",
+	.write		= univ8250_console_write,
+	.device		= uart_console_device,
+	.setup		= univ8250_console_setup,
+	.exit		= univ8250_console_exit,
+	.match		= univ8250_console_match,
+	.flags		= CON_PRINTBUFFER | CON_ANYTIME | CON_ENABLED,
+	.index		= SYNO_OOB_TTY,
+	.data		= &serial8250_reg,
+};
+
+void kt_console_init(void)
+{
+	register_console(&kt_console);
+	univ8250_console_setup(&kt_console, NULL);
+}
+#endif /* MY_ABC_HERE */
+
 static int __init univ8250_console_init(void)
 {
 	if (nr_uarts == 0)
 		return -ENODEV;
+
+#ifdef MY_ABC_HERE
+	return -ENODEV;
+#endif /* MY_ABC_HERE */
 
 	serial8250_isa_init_ports();
 	register_console(&univ8250_console);
@@ -915,28 +1005,424 @@ static struct platform_device *serial8250_isa_devs;
  */
 static DEFINE_MUTEX(serial_mutex);
 
+#ifdef MY_ABC_HERE
+static unsigned long syno_parse_ttys_port(char* s)
+{
+	unsigned long Ret = 0;
+	char *e;
+
+	if (*s == ',')
+		++s;
+
+	if (!strncmp(s, "0x", 2)) {
+		Ret = simple_strtoul(s, &e, 16);
+	}
+
+	return Ret;
+}
+
+static unsigned long syno_parse_ttys_pci(char *s)
+{
+	unsigned long Ret = 0;
+	u8 bus, slot, func;
+	u32 bar0;
+	char *e;
+
+	if (*s == ',')
+		++s;
+
+	if (*s == 0)
+		goto End;
+
+	bus = (u8)simple_strtoul(s, &e, 16);
+	s = e;
+
+	if (*s != ':')
+		goto End;
+
+	++s;
+	slot = (u8)simple_strtoul(s, &e, 16);
+	s = e;
+
+	if (*s != '.')
+		goto End;
+
+	++s;
+	func = (u8)simple_strtoul(s, &e, 16);
+	s = e;
+
+	/* A baud might be following */
+	if (*s == ',')
+		s++;
+
+	bar0 = read_pci_config(bus, slot, func, PCI_BASE_ADDRESS_0);
+
+	if (bar0 & 0x01) {
+		/* pci is IO mapped and port is also IO mapped */
+		Ret = bar0 & 0xfffffffc;
+	} else if (!(bar0 & 0x01)) {
+		/* pci is IO mapped and port is also IO mapped */
+		Ret = bar0 & 0xfffffff0;
+    }
+
+End:
+	return Ret;
+}
+
+static bool syno_compare_tty_pci(char *str1, char *str2)
+{
+	bool bRet = false;
+	u8 bus, slot, func;
+	u8 bus2, slot2, func2;
+	char *e;
+
+	//,0x0:0x1a.0x0,115200
+	if (*str1 == ',')
+		++str1;
+	bus = (u8)simple_strtoul(str1, &e, 16);
+	str1 = e;
+
+	if (*str1 != ':')
+		goto End;
+	++str1;
+	slot = (u8)simple_strtoul(str1, &e, 16);
+
+	str1 = e;
+	if (*str1 != '.')
+		goto End;
+	++str1;
+	func = (u8)simple_strtoul(str1, &e, 16);
+
+	//0000:02:00.1
+	str2+=5;
+	bus2 = (u8)simple_strtoul(str2, &e, 16);
+	str2 = e;
+
+	if (*str2 != ':')
+		goto End;
+	++str2;
+	slot2 = (u8)simple_strtoul(str2, &e, 16);
+
+	str2 = e;
+	if (*str2 != '.')
+		goto End;
+	++str2;
+	func2 = (u8)simple_strtoul(str2, &e, 16);
+
+	if(bus == bus2 && slot == slot2 && func == func2) {
+		bRet = true;
+	}
+End:
+	return bRet;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+
+#define DT_TTY_NODE "ttyS"
+extern int syno_pciepath_dts_pattern_get(struct pci_dev *pdev, char *szPciePath, const int size);
+extern int syno_compare_dts_pciepath(const struct pci_dev *pdev, const struct device_node *pDeviceNode);
+
+/**
+ * lookup_internal_slot - lookup device tree to find corresponding internal slot of the ata_port
+ * @ap [IN]: query ata_port
+ *
+ * return  1: match
+ *         0: slot not found
+ */
+int pcipath_uart_port_match(char* str, const struct uart_port *port)
+{
+	int ret = 0;
+	char sztemp[SYNO_DTS_PROPERTY_CONTENT_LENGTH] = {'\0'};
+
+	if (NULL == str || NULL == port) {
+		goto END;
+	}
+
+	if (*str == ',')
+        ++str;
+
+	if (-1 == syno_pciepath_dts_pattern_get(to_pci_dev(port->dev), sztemp, sizeof(sztemp))) {
+		goto END;
+	}
+
+	if (0 == strncmp(str, sztemp, strlen(sztemp))) {
+		ret = 1;
+	}
+
+END:
+	return ret;
+}
+
+bool dts_uart_port_match(struct uart_port *port, const int uart_index)
+{
+	bool ret = false;
+	int index = -1;
+	struct device_node *pSlotNode = NULL;
+	const char *addr_type = NULL;
+	int err = 0;
+	u32 base_addr = 0;
+
+	if (NULL == of_root) {
+		goto END;
+	}
+	for_each_child_of_node(of_root, pSlotNode) {
+		// get index number of tty, e.g. /ttyS@2 --> 2
+		if (!pSlotNode->full_name || 1 != sscanf(pSlotNode->full_name, DT_TTY_NODE"@%d", &index)) {
+			continue;
+		}
+		if (uart_index == index) {
+			break;
+		}
+	}
+
+	if (NULL == pSlotNode) {
+		goto END;
+	}
+
+	err = of_property_read_string(pSlotNode, "addr_type", &addr_type);
+	if (err < 0) {
+		of_node_put(pSlotNode);
+		goto END;
+	}
+
+	if (!strcmp(addr_type, "pcie")) {
+		if (dev_is_pci(port->dev)) {
+			ret = (0 == syno_compare_dts_pciepath(to_pci_dev(port->dev), pSlotNode) ? true : false);
+		} else {
+			ret = false;
+		}
+	} else if (!strcmp(addr_type, "io")){
+		of_property_read_u32(pSlotNode, "base", &base_addr);
+		ret = (port->iobase == base_addr? true : false);
+	} else if (!strcmp(addr_type, "mmio")){
+		of_property_read_u32(pSlotNode, "base", &base_addr);
+		ret = ((virt_to_phys((volatile void *)port->mapbase) & 0xffffffff) == base_addr? true : false);
+	} else {
+		// unknown type
+		ret = false;
+	}
+
+	//
+	// TODO: Uart port is found
+	//       Set uart configs if there are some settings in dts.
+	//
+	//if (ret) {
+		// Set configs
+	//}
+
+	of_node_put(pSlotNode);
+
+END:
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
 static struct uart_8250_port *serial8250_find_match_or_unused(struct uart_port *port)
 {
 	int i;
 
+#ifdef MY_ABC_HERE
+	char *str;
+	struct pci_dev *pdev = NULL;
+	char *root_port = NULL;
+	int iTtyCount = 0;
+
+	if (0 != strcmp(gszSynoTtyS0, "")) {
+		iTtyCount++;
+	}
+	if (0 != strcmp(gszSynoTtyS1, "")) {
+		iTtyCount++;
+	}
+	if (0 != strcmp(gszSynoTtyS2, "")) {
+		iTtyCount++;
+	}
+
+	switch (port->iotype) {
+		case UPIO_PORT:
+		case UPIO_HUB6:
+			if (!strncmp(gszSynoTtyS0, "serial", 6)) {
+				str = &gszSynoTtyS0[6];
+				if (port->iobase == syno_parse_ttys_port(str)) {
+					return &serial8250_ports[0];
+				}
+			}
+
+			if (!strncmp(gszSynoTtyS1, "serial", 6)){
+				str = &gszSynoTtyS1[6];
+				if (port->iobase == syno_parse_ttys_port(str)) {
+					return &serial8250_ports[1];
+				}
+			}
+
+			if (!strncmp(gszSynoTtyS2, "serial", 6)){
+				str = &gszSynoTtyS2[6];
+				if (port->iobase == syno_parse_ttys_port(str)) {
+					return &serial8250_ports[2];
+				}
+			}
+
+#ifdef MY_ABC_HERE
+			if (!strcmp(gszSynoTtyS0, "")) {
+				if (dts_uart_port_match(port, 0)) {
+					iTtyCount++;
+					return &serial8250_ports[0];
+				}
+			}
+
+			if (!strcmp(gszSynoTtyS1, "")) {
+				if (dts_uart_port_match(port, 1)) {
+					iTtyCount++;
+					return &serial8250_ports[1];
+				}
+			}
+
+			if (!strcmp(gszSynoTtyS2, "")) {
+				if (dts_uart_port_match(port, 2)) {
+					iTtyCount++;
+					return &serial8250_ports[2];
+				}
+			}
+#endif /* MY_ABC_HERE */
+
+			/* fall through */
+		case UPIO_MEM:
+		case UPIO_MEM32:
+		case UPIO_MEM32BE:
+		case UPIO_AU:
+		case UPIO_TSI:
+			if (port->dev->bus && !strncmp("pci", port->dev->bus->name, 3)) {
+				pdev = to_pci_dev(port->dev);
+				if (pdev && pdev->bus->self) {
+					root_port = (char*)(dev_name(&(pdev->bus->self->dev)));
+				}
+			}
+			if (!strncmp(gszSynoTtyS0, "pciserial", 9)) {
+				str = &gszSynoTtyS0[9];
+				if (syno_compare_tty_pci(str, (char*)dev_name(port->dev)) ||
+						(root_port && syno_compare_tty_pci(str, root_port)) ||
+						((virt_to_phys((volatile void *)port->mapbase) & 0xffffffff) == syno_parse_ttys_pci(str))) {
+					return &serial8250_ports[0];
+				}
+			}
+			if (!strncmp(gszSynoTtyS1, "pciserial", 9)) {
+				str = &gszSynoTtyS1[9];
+				if (syno_compare_tty_pci(str, (char*)dev_name(port->dev)) ||
+						(root_port && syno_compare_tty_pci(str, root_port)) ||
+						((virt_to_phys((volatile void *)port->mapbase) & 0xffffffff) == syno_parse_ttys_pci(str))) {
+					return &serial8250_ports[1];
+				}
+			}
+			if (!strncmp(gszSynoTtyS2, "pciserial", 9)) {
+				str = &gszSynoTtyS2[9];
+				if (syno_compare_tty_pci(str, (char*)dev_name(port->dev)) ||
+						(root_port && syno_compare_tty_pci(str, root_port)) ||
+						((virt_to_phys((volatile void *)port->mapbase) & 0xffffffff) == syno_parse_ttys_pci(str))) {
+					return &serial8250_ports[2];
+				}
+			}
+			if (!strncmp(gszSynoTtyS0, "mmio", 4)) {
+				str = &gszSynoTtyS0[4];
+				if ((virt_to_phys((volatile void *)port->mapbase) & 0xffffffff) == syno_parse_ttys_port(str)) {
+					return &serial8250_ports[0];
+				}
+			}
+
+			if (!strncmp(gszSynoTtyS1, "mmio", 4)) {
+				str = &gszSynoTtyS1[4];
+				if ((virt_to_phys((volatile void *)port->mapbase) & 0xffffffff) == syno_parse_ttys_port(str)) {
+					return &serial8250_ports[1];
+				}
+			}
+
+			if (!strncmp(gszSynoTtyS2, "mmio", 4)) {
+				str = &gszSynoTtyS2[4];
+				if ((virt_to_phys((volatile void *)port->mapbase) & 0xffffffff) == syno_parse_ttys_port(str)) {
+					return &serial8250_ports[2];
+				}
+			}
+
+#ifdef MY_ABC_HERE
+			if (!strncmp(gszSynoTtyS0, "pcifull", 7)) {
+				str = &gszSynoTtyS0[7];
+				if (1 == pcipath_uart_port_match(str, port)) {
+					return &serial8250_ports[0];
+				}
+			}
+
+			if (!strncmp(gszSynoTtyS1, "pcifull", 7)) {
+				str = &gszSynoTtyS1[7];
+				if (1 == pcipath_uart_port_match(str, port)) {
+					return &serial8250_ports[1];
+				}
+			}
+
+			if (!strncmp(gszSynoTtyS2, "pcifull", 7)) {
+				str = &gszSynoTtyS2[7];
+				if (1 == pcipath_uart_port_match(str, port)) {
+					return &serial8250_ports[2];
+				}
+			}
+
+			if (!strcmp(gszSynoTtyS0, "")) {
+				if (dts_uart_port_match(port, 0)) {
+					iTtyCount++;
+					return &serial8250_ports[0];
+				}
+			}
+
+			if (!strcmp(gszSynoTtyS1, "")) {
+				if (dts_uart_port_match(port, 1)) {
+					iTtyCount++;
+					return &serial8250_ports[1];
+				}
+			}
+
+			if (!strcmp(gszSynoTtyS2, "")) {
+				if (dts_uart_port_match(port, 2)) {
+					iTtyCount++;
+					return &serial8250_ports[2];
+				}
+			}
+#endif /* MY_ABC_HERE */
+			break;
+		default:
+			break;
+	}
+#endif /* MY_ABC_HERE */
+
 	/*
 	 * First, find a port entry which matches.
 	 */
+
+#ifdef MY_ABC_HERE
+	for (i = iTtyCount; i < nr_uarts; i++)
+#else /* MY_ABC_HERE */
 	for (i = 0; i < nr_uarts; i++)
+#endif /* MY_ABC_HERE */
 		if (uart_match_port(&serial8250_ports[i].port, port))
 			return &serial8250_ports[i];
 
 	/* try line number first if still available */
 	i = port->line;
 	if (i < nr_uarts && serial8250_ports[i].port.type == PORT_UNKNOWN &&
-			serial8250_ports[i].port.iobase == 0)
+			serial8250_ports[i].port.iobase == 0
+#ifdef MY_ABC_HERE
+			&& i > (iTtyCount - 1)
+#endif /* MY_ABC_HERE */
+	)
+
 		return &serial8250_ports[i];
 	/*
 	 * We didn't find a matching entry, so look for the first
 	 * free entry.  We look for one which hasn't been previously
 	 * used (indicated by zero iobase).
 	 */
+#ifdef MY_ABC_HERE
+	for (i = iTtyCount; i < nr_uarts; i++)
+#else /* MY_ABC_HERE */
 	for (i = 0; i < nr_uarts; i++)
+#endif /* MY_ABC_HERE */
 		if (serial8250_ports[i].port.type == PORT_UNKNOWN &&
 		    serial8250_ports[i].port.iobase == 0)
 			return &serial8250_ports[i];
@@ -945,7 +1431,11 @@ static struct uart_8250_port *serial8250_find_match_or_unused(struct uart_port *
 	 * That also failed.  Last resort is to find any entry which
 	 * doesn't have a real port associated with it.
 	 */
+#ifdef MY_ABC_HERE
+	for (i = iTtyCount; i < nr_uarts; i++)
+#else /* MY_ABC_HERE */
 	for (i = 0; i < nr_uarts; i++)
+#endif /* MY_ABC_HERE */
 		if (serial8250_ports[i].port.type == PORT_UNKNOWN)
 			return &serial8250_ports[i];
 
@@ -1019,6 +1509,9 @@ int serial8250_register_8250_port(struct uart_8250_port *up)
 		uart->rs485_start_tx	= up->rs485_start_tx;
 		uart->rs485_stop_tx	= up->rs485_stop_tx;
 		uart->dma		= up->dma;
+#ifdef MY_ABC_HERE
+		uart->blXmitrCheck = true;
+#endif /* MY_ABC_HERE */
 
 		/* Take tx_loadsz from fifosize if it wasn't set separately */
 		if (uart->port.fifosize && !uart->tx_loadsz)

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2012-2013 Samsung Electronics Co., Ltd.
@@ -8,10 +11,9 @@
 #include <linux/buffer_head.h>
 #include <asm/unaligned.h>
 
-#include "exfat_raw.h"
 #include "exfat_fs.h"
 
-/* Upcase table macro */
+/* Upcase tabel macro */
 #define EXFAT_NUM_UPCASE	(2918)
 #define UTBL_COUNT		(0x10000)
 
@@ -659,7 +661,11 @@ static int exfat_load_upcase_table(struct super_block *sb,
 	unsigned char skip = false;
 	unsigned short *upcase_table;
 
-	upcase_table = kvcalloc(UTBL_COUNT, sizeof(unsigned short), GFP_KERNEL);
+#ifdef MY_ABC_HERE
+	upcase_table = kvmalloc(UTBL_COUNT * sizeof(unsigned short), GFP_KERNEL | __GFP_ZERO);
+#else
+	upcase_table = kcalloc(UTBL_COUNT, sizeof(unsigned short), GFP_KERNEL);
+#endif /* MY_ABC_HERE */
 	if (!upcase_table)
 		return -ENOMEM;
 
@@ -715,7 +721,11 @@ static int exfat_load_default_upcase_table(struct super_block *sb)
 	unsigned short uni = 0, *upcase_table;
 	unsigned int index = 0;
 
-	upcase_table = kvcalloc(UTBL_COUNT, sizeof(unsigned short), GFP_KERNEL);
+#ifdef MY_ABC_HERE
+	upcase_table = kvmalloc(UTBL_COUNT * sizeof(unsigned short), GFP_KERNEL | __GFP_ZERO);
+#else
+	upcase_table = kcalloc(UTBL_COUNT, sizeof(unsigned short), GFP_KERNEL);
+#endif /* MY_ABC_HERE */
 	if (!upcase_table)
 		return -ENOMEM;
 
@@ -803,5 +813,9 @@ load_default:
 
 void exfat_free_upcase_table(struct exfat_sb_info *sbi)
 {
+#ifdef MY_ABC_HERE
 	kvfree(sbi->vol_utbl);
+#else
+	kfree(sbi->vol_utbl);
+#endif /* MY_ABC_HERE */
 }

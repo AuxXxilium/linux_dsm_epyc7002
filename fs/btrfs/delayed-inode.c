@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2011 Fujitsu.  All rights reserved.
@@ -655,6 +658,16 @@ static int btrfs_delayed_inode_reserve_metadata(
 		return ret;
 	}
 
+#ifdef MY_ABC_HERE
+	if (src_rsv == &inode->block_rsv) {
+		spin_lock(&inode->lock);
+		if (test_and_clear_bit(BTRFS_INODE_USRQUOTA_META_RESERVED,
+				&inode->runtime_flags))
+			btrfs_calculate_inode_block_rsv_size(fs_info, inode);
+		spin_unlock(&inode->lock);
+	}
+#endif /* MY_ABC_HERE */
+
 	ret = btrfs_block_rsv_migrate(src_rsv, dst_rsv, num_bytes, true);
 	if (!ret) {
 		trace_btrfs_space_reservation(fs_info, "delayed_inode",
@@ -1145,7 +1158,12 @@ __btrfs_commit_inode_delayed_items(struct btrfs_trans_handle *trans,
  * Returns < 0 on error and returns with an aborted transaction with any
  * outstanding delayed items cleaned up.
  */
-static int __btrfs_run_delayed_items(struct btrfs_trans_handle *trans, int nr)
+static int __btrfs_run_delayed_items(struct btrfs_trans_handle *trans, int nr
+#ifdef MY_ABC_HERE
+				     , unsigned long *processed_inodes
+				     , unsigned long *processed_items
+#endif /* MY_ABC_HERE */
+				     )
 {
 	struct btrfs_fs_info *fs_info = trans->fs_info;
 	struct btrfs_delayed_root *delayed_root;
@@ -1154,6 +1172,10 @@ static int __btrfs_run_delayed_items(struct btrfs_trans_handle *trans, int nr)
 	struct btrfs_block_rsv *block_rsv;
 	int ret = 0;
 	bool count = (nr > 0);
+#ifdef MY_ABC_HERE
+	unsigned long inode_count = 0;
+	unsigned long item_count = 0;
+#endif /* MY_ABC_HERE */
 
 	if (TRANS_ABORTED(trans))
 		return -EIO;
@@ -1170,6 +1192,10 @@ static int __btrfs_run_delayed_items(struct btrfs_trans_handle *trans, int nr)
 
 	curr_node = btrfs_first_delayed_node(delayed_root);
 	while (curr_node && (!count || (count && nr--))) {
+#ifdef MY_ABC_HERE
+		int orig_count = curr_node->count;
+		int curr_count = 0;
+#endif /* MY_ABC_HERE */
 		ret = __btrfs_commit_inode_delayed_items(trans, path,
 							 curr_node);
 		if (ret) {
@@ -1178,6 +1204,13 @@ static int __btrfs_run_delayed_items(struct btrfs_trans_handle *trans, int nr)
 			btrfs_abort_transaction(trans, ret);
 			break;
 		}
+#ifdef MY_ABC_HERE
+		inode_count++;
+		curr_count = curr_node->count;
+		// It's just estimate the processed count, so we dont use lock.
+		item_count += (curr_count < orig_count) ?
+				(orig_count - curr_node->count) : 0;
+#endif /* MY_ABC_HERE */
 
 		prev_node = curr_node;
 		curr_node = btrfs_next_delayed_node(curr_node);
@@ -1188,18 +1221,43 @@ static int __btrfs_run_delayed_items(struct btrfs_trans_handle *trans, int nr)
 		btrfs_release_delayed_node(curr_node);
 	btrfs_free_path(path);
 	trans->block_rsv = block_rsv;
+#ifdef MY_ABC_HERE
+	if (!ret && processed_inodes && processed_items) {
+		*processed_inodes = inode_count;
+		*processed_items = item_count;
+	}
+#endif /* MY_ABC_HERE */
 
 	return ret;
 }
 
+#ifdef MY_ABC_HERE
+int btrfs_run_delayed_items_and_get_processed(struct btrfs_trans_handle *trans,
+			    unsigned long *processed_inodes,
+			    unsigned long *processed_items)
+{
+	return __btrfs_run_delayed_items(trans, -1,
+					 processed_inodes,
+					 processed_items);
+}
+#endif /* MY_ABC_HERE */
+
 int btrfs_run_delayed_items(struct btrfs_trans_handle *trans)
 {
-	return __btrfs_run_delayed_items(trans, -1);
+	return __btrfs_run_delayed_items(trans, -1
+#ifdef MY_ABC_HERE
+					 , NULL, NULL
+#endif /* MY_ABC_HERE */
+					 );
 }
 
 int btrfs_run_delayed_items_nr(struct btrfs_trans_handle *trans, int nr)
 {
-	return __btrfs_run_delayed_items(trans, nr);
+	return __btrfs_run_delayed_items(trans, nr
+#ifdef MY_ABC_HERE
+					 , NULL, NULL
+#endif /* MY_ABC_HERE */
+					 );
 }
 
 int btrfs_commit_inode_delayed_items(struct btrfs_trans_handle *trans,
@@ -1772,6 +1830,10 @@ static void fill_stack_inode_item(struct btrfs_trans_handle *trans,
 				     BTRFS_I(inode)->i_otime.tv_sec);
 	btrfs_set_stack_timespec_nsec(&inode_item->otime,
 				     BTRFS_I(inode)->i_otime.tv_nsec);
+
+#ifdef MY_ABC_HERE
+	btrfs_set_stack_inode_syno_uq_rfer_used(inode_item, BTRFS_I(inode)->uq_rfer_used);
+#endif /* MY_ABC_HERE */
 }
 
 int btrfs_fill_inode(struct inode *inode, u32 *rdev)
@@ -1826,6 +1888,10 @@ int btrfs_fill_inode(struct inode *inode, u32 *rdev)
 
 	inode->i_generation = BTRFS_I(inode)->generation;
 	BTRFS_I(inode)->index_cnt = (u64)-1;
+
+#ifdef MY_ABC_HERE
+	BTRFS_I(inode)->uq_rfer_used = btrfs_stack_inode_syno_uq_rfer_used(inode_item);
+#endif /* MY_ABC_HERE */
 
 	mutex_unlock(&delayed_node->mutex);
 	btrfs_release_delayed_node(delayed_node);

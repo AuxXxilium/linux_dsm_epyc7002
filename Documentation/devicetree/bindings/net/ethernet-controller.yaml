@@ -49,7 +49,11 @@ properties:
     description:
       Reference to an nvmem node for the MAC address
 
+#if defined(CONFIG_SYNO_LSP_RTD1619B)
+  nvmem-cells-names:
+#else /* CONFIG_SYNO_LSP_RTD1619B */
   nvmem-cell-names:
+#endif /* CONFIG_SYNO_LSP_RTD1619B */
     const: mac-address
 
   phy-connection-type:

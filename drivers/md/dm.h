@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  * Internal header file for device mapper
  *
@@ -22,6 +25,12 @@
 #include <linux/refcount.h>
 
 #include "dm-stats.h"
+#ifdef MY_ABC_HERE
+#include "syno-md-fast-wakeup.h"
+#ifdef CONFIG_BLK_DEV_MD
+#include "md.h"
+#endif /* CONFIG_BLK_DEV_MD */
+#endif /* MY_ABC_HERE */
 
 /*
  * Suspend feature flags
@@ -83,6 +92,11 @@ enum dm_queue_mode dm_get_md_type(struct mapped_device *md);
 struct target_type *dm_get_immutable_target_type(struct mapped_device *md);
 
 int dm_setup_md_queue(struct mapped_device *md, struct dm_table *t);
+#ifdef MY_ABC_HERE
+int dm_active_get(struct mapped_device *md);
+void dm_active_set(struct mapped_device *md, unsigned long value);
+void syno_dm_fast_wakeup_dev(struct mapped_device *md, struct dm_table *map);
+#endif /* MY_ABC_HERE */
 
 /*
  * To check whether the target type is bio-based or not (request-based).

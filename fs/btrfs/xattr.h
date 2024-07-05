@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2007 Red Hat.  All rights reserved.
@@ -21,5 +24,17 @@ ssize_t btrfs_listxattr(struct dentry *dentry, char *buffer, size_t size);
 int btrfs_xattr_security_init(struct btrfs_trans_handle *trans,
 				     struct inode *inode, struct inode *dir,
 				     const struct qstr *qstr);
+
+#ifdef MY_ABC_HERE
+int btrfs_xattr_syno_set_archive_bit(struct btrfs_trans_handle *trans,
+		struct inode *inode, const void *value, size_t size,
+		int flags, bool lock);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+int btrfs_xattr_syno_set_crtime(struct btrfs_trans_handle *trans,
+		struct inode *inode, struct btrfs_timespec *crtime,
+		int flags);
+#endif /* MY_ABC_HERE */
 
 #endif

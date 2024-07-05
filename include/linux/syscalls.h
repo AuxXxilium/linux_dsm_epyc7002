@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * syscalls.h - Linux syscall interfaces (non-arch-specific)
@@ -68,6 +71,12 @@ union bpf_attr;
 struct io_uring_params;
 struct clone_args;
 struct open_how;
+
+#ifdef MY_ABC_HERE
+struct SYNOSTAT;
+#else
+struct SYNOSTAT {};
+#endif /* MY_ABC_HERE */
 
 #include <linux/types.h>
 #include <linux/aio_abi.h>
@@ -1032,6 +1041,29 @@ asmlinkage long sys_pidfd_send_signal(int pidfd, int sig,
 				       siginfo_t __user *info,
 				       unsigned int flags);
 asmlinkage long sys_pidfd_getfd(int pidfd, int fd, unsigned int flags);
+
+#ifdef MY_ABC_HERE
+/* 802 */ asmlinkage long sys_syno_utime(const char __user *filename, struct __kernel_timespec __user *ctime);
+/* 802 */ asmlinkage long sys_syno_utime32(const char __user *filename, struct old_timespec32 __user *ctime);
+/* 803 */ asmlinkage long sys_syno_archive_bit(const char __user *filename, int cmd);
+/* 804 */ asmlinkage long sys_syno_recv_file(int fd, int s, loff_t *offset, size_t nbytes, size_t *rwbytes);
+/* 805 */ asmlinkage long sys_syno_mtd_alloc(bool alloc);
+/* 806 */ asmlinkage long sys_syno_caseless_stat(char __user *filename, struct stat __user *statbuf);
+/* 807 */ asmlinkage long sys_syno_caseless_lstat(char __user *filename, struct stat __user *statbuf);
+/* 810 */ asmlinkage long sys_syno_ecrypt_name(const char __user *src, char __user *dst);
+/* 811 */ asmlinkage long sys_syno_decrypt_name(const char __user *root, const char __user *src, char __user *dst);
+/* 812 */ asmlinkage long sys_syno_acl_check_perm(const char __user *filename, int mask);
+/* 813 */ asmlinkage long sys_syno_acl_is_support(const char __user *filename, int fd, int tag);
+/* 814 */ asmlinkage long sys_syno_acl_get_perm(const char __user *filename, int __user *out_perm);
+/* 815 */ asmlinkage long sys_syno_flush_aggregate(int fd);
+/* 819 */ asmlinkage long sys_syno_stat(char __user *filename, unsigned int flags, struct SYNOSTAT __user *statbuf);
+/* 820 */ asmlinkage long sys_syno_fstat(unsigned int fd, unsigned int flags, struct SYNOSTAT __user *statbuf);
+/* 821 */ asmlinkage long sys_syno_lstat(char __user *filename, unsigned int flags, struct SYNOSTAT __user *statbuf);
+/* 822 */ asmlinkage long sys_syno_notify_init(unsigned int event_f_flags);
+/* 823 */ asmlinkage long sys_syno_notify_add_watch(int synotify_fd, const char  __user *pathname, u64 mask);
+/* 824 */ asmlinkage long sys_syno_notify_remove_watch(int synotify_fd, const char  __user *pathname, u64 mask);
+/* 827 */ asmlinkage long sys_syno_archive_overwrite(unsigned int fd, unsigned int flags);
+#endif /* MY_ABC_HERE */
 
 /*
  * Architecture-specific system calls

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  *   fs/cifs/transport.c
  *
@@ -238,6 +241,24 @@ smb_send_kvec(struct TCP_Server_Info *server, struct msghdr *smb_msg,
 		 * reconnect which may clear the network problem.
 		 */
 		rc = sock_sendmsg(ssocket, smb_msg);
+#ifdef MY_ABC_HERE
+		if (rc == -EAGAIN || rc == -EINTR) {
+			retries++;
+			if (!server->noblocksnd && (retries > 2)) {
+				cifs_dbg(VFS, "sends on sock %p stuck 3 time fail with blocksend (sndtimo=5s)\n", ssocket);
+				rc = -EAGAIN;
+				break;
+			}
+			if (retries >= 14) {
+				cifs_dbg(VFS, "sends on sock %p stuck for 15 seconds\n",
+					 ssocket);
+				rc = -EAGAIN;
+				break;
+			}
+			msleep(1 << retries);
+			continue;
+		}
+#else /* MY_ABC_HERE */
 		if (rc == -EAGAIN) {
 			retries++;
 			if (retries >= 14 ||
@@ -249,6 +270,7 @@ smb_send_kvec(struct TCP_Server_Info *server, struct msghdr *smb_msg,
 			msleep(1 << retries);
 			continue;
 		}
+#endif /* MY_ABC_HERE */
 
 		if (rc < 0)
 			return rc;
@@ -443,7 +465,14 @@ unmask:
 		 * be taken as the remainder of this one. We need to kill the
 		 * socket so the server throws away the partial SMB
 		 */
+#ifdef MY_ABC_HERE
+		// CID 45292: Data race condition. tcpstatus only set without lock here.
+		spin_lock(&GlobalMid_Lock);
 		server->tcpStatus = CifsNeedReconnect;
+		spin_unlock(&GlobalMid_Lock);
+#else /* MY_ABC_HERE */
+		server->tcpStatus = CifsNeedReconnect;
+#endif /* MY_ABC_HERE */
 		trace_smb3_partial_send_reconnect(server->CurrentMid,
 						  server->hostname);
 	}
@@ -1268,6 +1297,35 @@ SendReceive2(const unsigned int xid, struct cifs_ses *ses,
 	struct kvec s_iov[CIFS_MAX_IOV_SIZE], *new_iov;
 	int rc;
 
+#ifdef MY_ABC_HERE
+	if (&synocifs_values == ses->server->values) {
+		if (SMB20_PROT_ID > ses->server->dialect) {
+			struct smb_hdr *hdr = iov->iov_base;
+			if (0xFF != hdr->Protocol[0]) {
+				cifs_dbg(FYI, "%s: SMB Command(0x%x) Dialect(0x%x); header(0x%x) isn't SMB1\n",
+						__func__,
+						hdr->Command,
+						ses->server->dialect,
+						hdr->Protocol[0]);
+				*resp_buf_type = CIFS_NO_BUFFER;
+				return -EAGAIN;
+			}
+		} else {
+			struct smb2_sync_hdr *shdr = iov->iov_base;
+			if (SMB2_PROTO_NUMBER != shdr->ProtocolId &&
+			    SMB2_TRANSFORM_PROTO_NUM != shdr->ProtocolId &&
+			    SMB2_COMPRESSION_TRANSFORM_ID != shdr->ProtocolId) {
+				cifs_dbg(FYI, "%s: SMB Command(0x%x) Dialect(0x%x); header(0x%x) isn't SMB2\n",
+						__func__,
+						shdr->Command,
+						ses->server->dialect,
+						shdr->ProtocolId);
+				*resp_buf_type = CIFS_NO_BUFFER;
+				return -EAGAIN;
+			}
+		}
+	}
+#endif /* MY_ABC_HERE */
 	if (n_vec + 1 > CIFS_MAX_IOV_SIZE) {
 		new_iov = kmalloc_array(n_vec + 1, sizeof(struct kvec),
 					GFP_KERNEL);
@@ -1338,6 +1396,30 @@ SendReceive(const unsigned int xid, struct cifs_ses *ses,
 	if (rc)
 		return rc;
 
+#ifdef MY_ABC_HERE
+	if (&synocifs_values == ses->server->values) {
+		if (SMB20_PROT_ID <= ses->server->dialect) {
+			if (0xFF == in_buf->Protocol[0]) {
+				cifs_dbg(FYI, "%s: SMB1 Command(0x%x), but server Dialect(0x%x) is SMB2\n",
+						__func__,
+						in_buf->Command,
+						ses->server->dialect);
+				return -EAGAIN;
+			}
+		} else if (0xFE == in_buf->Protocol[0] ||
+			   0xFD == in_buf->Protocol[0] ||
+			   0xFC == in_buf->Protocol[0]) {
+			// FIXME: compression and transform
+			struct smb2_sync_hdr *hdr = (struct smb2_sync_hdr *)in_buf;
+			// SMB2 header should not send here.
+			cifs_dbg(FYI, "%s: SMB2 Command(0x%x) Dialect(0x%x) use SendReceive\n",
+					__func__,
+					hdr->Command,
+					ses->server->dialect);
+			return -EAGAIN;
+		}
+	}
+#endif /* MY_ABC_HERE */
 	/* make sure that we sign in the same order that we send on this socket
 	   and avoid races inside tcp sendmsg code that could cause corruption
 	   of smb data */
@@ -1409,6 +1491,120 @@ out:
 
 	return rc;
 }
+#ifdef MY_ABC_HERE
+int
+SendReceiveSyno(const unsigned int xid, struct cifs_ses *ses,
+	    struct smb_hdr *in_buf, struct kvec *out_buf,
+	    const int flags)
+{
+	int rc = 0;
+	struct mid_q_entry *midQ;
+	unsigned int len = be32_to_cpu(in_buf->smb_buf_length);
+	struct kvec iov = { .iov_base = in_buf, .iov_len = len };
+	struct smb_rqst rqst = { .rq_iov = &iov, .rq_nvec = 1 };
+	struct cifs_credits credits = { .value = 1, .instance = 0 };
+	struct TCP_Server_Info *server;
+
+	if (ses == NULL) {
+		return -EIO;
+	}
+	server = ses->server;
+	if (server == NULL) {
+		return -EIO;
+	}
+
+	if (server->tcpStatus == CifsExiting) {
+		return -ENOENT;
+	}
+
+	/* Ensure that we do not send more than 50 overlapping requests
+	   to the same server. We may make this configurable later or
+	   use ses->maxReq */
+
+	if (len > CIFSMaxBufSize + MAX_CIFS_HDR_SIZE - 4) {
+		cifs_server_dbg(VFS, "Invalid length, greater than maximum frame, %d\n",
+				len);
+		return -EIO;
+	}
+
+	rc = wait_for_free_request(server, flags, &credits.instance);
+	if (rc) {
+		return rc;
+	}
+
+	/* make sure that we sign in the same order that we send on this socket
+	   and avoid races inside tcp sendmsg code that could cause corruption
+	   of smb data */
+
+	mutex_lock(&server->srv_mutex);
+
+	rc = allocate_mid(ses, in_buf, &midQ);
+	if (rc) {
+		mutex_unlock(&server->srv_mutex);
+		/* Update # of requests on wire to server */
+		add_credits(server, &credits, 0);
+		return rc;
+	}
+
+	rc = cifs_sign_smb(in_buf, server, &midQ->sequence_number);
+	if (rc) {
+		mutex_unlock(&server->srv_mutex);
+		goto out;
+	}
+
+	midQ->mid_state = MID_REQUEST_SUBMITTED;
+
+	cifs_in_send_inc(server);
+	rc = smb_send(server, in_buf, len);
+	cifs_in_send_dec(server);
+	cifs_save_when_sent(midQ);
+
+	if (rc < 0) {
+		server->sequence_number -= 2;
+	}
+
+	mutex_unlock(&server->srv_mutex);
+
+	if (rc < 0) {
+		goto out;
+	}
+
+	rc = wait_for_response(server, midQ);
+	if (rc != 0) {
+		send_cancel(server, &rqst, midQ);
+		spin_lock(&GlobalMid_Lock);
+		if (midQ->mid_state == MID_REQUEST_SUBMITTED) {
+			/* no longer considered to be "in-flight" */
+			midQ->callback = DeleteMidQEntry;
+			spin_unlock(&GlobalMid_Lock);
+			add_credits(server, &credits, 0);
+			return rc;
+		}
+		spin_unlock(&GlobalMid_Lock);
+	}
+
+	rc = cifs_sync_mid_result(midQ, server);
+	if (rc != 0) {
+		add_credits(server, &credits, 0);
+		return rc;
+	}
+
+	if (!midQ->resp_buf || !out_buf || !out_buf[0].iov_base ||
+	    midQ->mid_state != MID_RESPONSE_RECEIVED) {
+		rc = -EIO;
+		cifs_server_dbg(VFS, "Bad MID state?\n");
+		goto out;
+	}
+
+	out_buf[0].iov_len = get_rfc1002_length(midQ->resp_buf);
+	memcpy(out_buf[0].iov_base, midQ->resp_buf, out_buf[0].iov_len);
+out:
+	cifs_delete_mid(midQ);
+	add_credits(server, &credits, 0);
+
+	return rc;
+}
+#endif /* MY_ABC_HERE */
 
 /* We send a LOCKINGX_CANCEL_LOCK to cause the Windows
    blocking lock to return. */

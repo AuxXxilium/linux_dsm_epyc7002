@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * fs/fs-writeback.c
@@ -1211,7 +1214,11 @@ static void requeue_io(struct inode *inode, struct bdi_writeback *wb)
 	inode_io_list_move_locked(inode, wb, &wb->b_more_io);
 }
 
-static void inode_sync_complete(struct inode *inode)
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
+static
+#endif /* MY_ABC_HERE */
+void inode_sync_complete(struct inode *inode)
 {
 	inode->i_state &= ~I_SYNC;
 	/* If inode is clean an unused, put it into LRU now... */
@@ -1220,6 +1227,9 @@ static void inode_sync_complete(struct inode *inode)
 	smp_mb();
 	wake_up_bit(&inode->i_state, __I_SYNC);
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL(inode_sync_complete);
+#endif /* MY_ABC_HERE */
 
 static bool inode_dirtied_after(struct inode *inode, unsigned long t)
 {
@@ -2202,6 +2212,31 @@ int dirtytime_interval_handler(struct ctl_table *table, int write,
 	return ret;
 }
 
+#ifdef MY_ABC_HERE
+static noinline void block_dump___mark_inode_dirty(struct inode *inode)
+{
+	if (inode->i_ino || strcmp(inode->i_sb->s_id, "bdev")) {
+		struct dentry *dentry;
+		const char *name = "?";
+
+		dentry = d_find_alias(inode);
+		if (dentry) {
+			spin_lock(&dentry->d_lock);
+			name = (const char *) dentry->d_name.name;
+		}
+		printk(KERN_DEBUG
+		       "ppid:%d(%s), pid:%d(%s), dirtied inode %lu (%s) on %s\n",
+		       task_pid_nr(current->real_parent), current->real_parent->comm,
+		       task_pid_nr(current), current->comm, inode->i_ino,
+		       name, inode->i_sb->s_id);
+		if (dentry) {
+			spin_unlock(&dentry->d_lock);
+			dput(dentry);
+		}
+	}
+}
+#endif /* MY_ABC_HERE */
+
 /**
  * __mark_inode_dirty -	internal function
  *
@@ -2260,6 +2295,11 @@ void __mark_inode_dirty(struct inode *inode, int flags)
 	if (((inode->i_state & flags) == flags) ||
 	    (dirtytime && (inode->i_state & I_DIRTY_INODE)))
 		return;
+
+#ifdef MY_ABC_HERE
+	if (unlikely(block_dump))
+		block_dump___mark_inode_dirty(inode);
+#endif /* MY_ABC_HERE */
 
 	spin_lock(&inode->i_lock);
 	if (dirtytime && (inode->i_state & I_DIRTY_INODE))

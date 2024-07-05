@@ -1,0 +1,21 @@
+require 'rake/testtask'
+
+task :default => [:help]
+
+task :help do
+    puts <<-HELP
+
+    Options:
+      rake help                                 This help
+      rake test                                 Verify all configs
+      rake test TEST="CONFIG_SYNO_FEATURES.rb"  Verify specified key only
+
+    HELP
+end
+
+Rake::TestTask.new(:test) do |t|
+    t.libs <<   'lib/'
+    t.pattern = '*.rb'
+    t.warning = ENV['warning'] ? true : false
+    t.verbose = ENV['verbose'] ? true : false
+end

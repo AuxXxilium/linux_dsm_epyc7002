@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * Driver for USB Mass Storage compliant devices
@@ -57,6 +60,7 @@
 #include "option_ms.h"
 
 #if IS_ENABLED(CONFIG_USB_UAS)
+#include <linux/usb.h>
 #include "uas-detect.h"
 #endif
 
@@ -75,6 +79,9 @@ static char quirks[128];
 module_param_string(quirks, quirks, sizeof(quirks), S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(quirks, "supplemental list of device IDs and their quirks");
 
+#ifdef MY_ABC_HERE
+extern int syno_all_usb_uas_enabled;
+#endif /* MY_ABC_HERE */
 
 /*
  * The entries in this table correspond, line for line,
@@ -860,6 +867,12 @@ static void quiesce_and_remove_host(struct us_data *us)
 	if (test_bit(US_FLIDX_SCAN_PENDING, &us->dflags))
 		usb_autopm_put_interface_no_suspend(us->pusb_intf);
 
+#ifdef MY_ABC_HERE
+	scsi_lock(host);
+	usb_stor_stop_transport(us);
+	scsi_unlock(host);
+#endif /* MY_ABC_HERE */
+
 	/*
 	 * Removing the host will perform an orderly shutdown: caches
 	 * synchronized, disks spun down, etc.
@@ -1102,8 +1115,22 @@ static int storage_probe(struct usb_interface *intf,
 
 	/* If uas is enabled and this device can do uas then ignore it. */
 #if IS_ENABLED(CONFIG_USB_UAS)
+#ifdef MY_ABC_HERE
+	/*
+	 * If service key support_uasp equals to "yes", then syno_all_usb_uas_enabled will be 1
+	 * and usb device will use uas driver.
+	 *
+	 * If service key support_uasp equals to "no", then syno_all_usb_uas_enabled will be 0
+	 * and usb device will use usb-storage driver.
+	 */
+	if (0 < syno_all_usb_uas_enabled)
+		if (uas_use_uas_driver(intf, id, NULL))
+			return -ENXIO;
+#else /* MY_ABC_HERE */
 	if (uas_use_uas_driver(intf, id, NULL))
 		return -ENXIO;
+
+#endif /* MY_ABC_HERE */
 #endif
 
 	/*

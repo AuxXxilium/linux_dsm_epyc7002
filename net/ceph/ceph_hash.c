@@ -103,6 +103,17 @@ unsigned int ceph_str_hash_linux(const char *str, unsigned int length)
 	return hash;
 }
 
+#ifdef CONFIG_SYNO_CEPH_CASELESS_STAT
+unsigned int ceph_str_upper_hash(int type, const char *s, unsigned int len)
+{
+	char hash_buf[NAME_MAX+1];
+	unsigned int upperlen;
+
+	upperlen = syno_utf8_toupper(hash_buf, s, NAME_MAX, len, NULL);
+	return ceph_str_hash(type, hash_buf, upperlen);
+}
+EXPORT_SYMBOL(ceph_str_upper_hash);
+#endif /* CONFIG_SYNO_CEPH_CASELESS_STAT */
 
 unsigned int ceph_str_hash(int type, const char *s, unsigned int len)
 {

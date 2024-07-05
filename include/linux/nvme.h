@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Definitions for the NVM Express interface
@@ -1593,6 +1596,20 @@ struct nvme_completion {
 	__u16	command_id;	/* of the command which completed */
 	__le16	status;		/* did the command fail, and if so, why? */
 };
+
+#ifdef MY_ABC_HERE
+struct syno_nvme_error_log_page {
+	__u64   error_count;
+	__u16   sqid;
+	__u16   cmdid;
+	__u16   status_field;
+	__u16   parm_error_location;
+	__u64   lba;
+	__u32   nsid;
+	__u8    vs;
+	__u8    resv[35];
+};
+#endif /* MY_ABC_HERE */
 
 #define NVME_VS(major, minor, tertiary) \
 	(((major) << 16) | ((minor) << 8) | (tertiary))

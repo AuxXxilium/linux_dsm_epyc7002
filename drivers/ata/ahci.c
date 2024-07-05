@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  ahci.c - AHCI SATA support
@@ -34,6 +37,27 @@
 #include <linux/io-64-nonatomic-lo-hi.h>
 #include "ahci.h"
 
+#ifdef MY_ABC_HERE
+#include <linux/of.h>
+#endif /* MY_ABC_HERE */
+
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+#include <linux/synolib.h>
+#endif /* MY_ABC_HERE || MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#include <linux/synobios.h>
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#include <linux/syno_gpio.h>
+extern struct ata_port *syno_ata_port_get_by_port(const unsigned short diskPort);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+extern char g_ahci_switch;
+#endif /* MY_ABC_HERE */
+
 #define DRV_NAME	"ahci"
 #define DRV_VERSION	"3.0"
 
@@ -59,6 +83,9 @@ enum board_ids {
 	/* board IDs for specific chipsets in alphabetical order */
 	board_ahci_al,
 	board_ahci_avn,
+#ifdef MY_ABC_HERE
+	board_ahci_jmb585,
+#endif /* MY_ABC_HERE */
 	board_ahci_mcp65,
 	board_ahci_mcp77,
 	board_ahci_mcp89,
@@ -79,6 +106,11 @@ enum board_ids {
 	board_ahci_mcp73	= board_ahci_mcp65,
 	board_ahci_mcp79	= board_ahci_mcp77,
 };
+
+#ifdef MY_ABC_HERE
+static int syno_ahci_hardreset_jmb(struct ata_link *link, unsigned int *class, unsigned long deadline);
+static int syno_ahci_softreset_jmb(struct ata_link *link, unsigned int *class, unsigned long deadline);
+#endif /* MY_ABC_HERE */
 
 static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent);
 static void ahci_remove_one(struct pci_dev *dev);
@@ -118,6 +150,15 @@ static struct ata_port_operations ahci_avn_ops = {
 	.inherits		= &ahci_ops,
 	.hardreset		= ahci_avn_hardreset,
 };
+
+#ifdef MY_ABC_HERE
+static struct ata_port_operations ahci_jmb585_ops = {
+	.inherits		= &ahci_ops,
+	.hardreset		= syno_ahci_hardreset_jmb,
+	.softreset		= syno_ahci_softreset_jmb,
+	.pmp_softreset		= syno_ahci_softreset_jmb,
+};
+#endif /* MY_ABC_HERE */
 
 static const struct ata_port_info ahci_port_info[] = {
 	/* by features */
@@ -242,6 +283,14 @@ static const struct ata_port_info ahci_port_info[] = {
 		.udma_mask	= ATA_UDMA6,
 		.port_ops	= &ahci_ops,
 	},
+#ifdef MY_ABC_HERE
+	[board_ahci_jmb585] = {
+		.flags		= AHCI_FLAG_COMMON,
+		.pio_mask	= ATA_PIO4,
+		.udma_mask	= ATA_UDMA6,
+		.port_ops	= &ahci_jmb585_ops,
+	},
+#endif /* MY_ABC_HERE */
 };
 
 static const struct pci_device_id ahci_pci_tbl[] = {
@@ -416,6 +465,11 @@ static const struct pci_device_id ahci_pci_tbl[] = {
 	{ PCI_VDEVICE(INTEL, 0x34d3), board_ahci_mobile }, /* Ice Lake LP AHCI */
 	{ PCI_VDEVICE(INTEL, 0x02d3), board_ahci_mobile }, /* Comet Lake PCH-U AHCI */
 	{ PCI_VDEVICE(INTEL, 0x02d7), board_ahci_mobile }, /* Comet Lake PCH RAID */
+#ifdef MY_ABC_HERE
+	// restore JMB585 IFS error handler
+	{ PCI_VDEVICE(JMICRON, 0x0585), board_ahci_jmb585 },
+	{ PCI_VDEVICE(JMICRON, 0x0582), board_ahci_jmb585 },
+#endif /* MY_ABC_HERE */
 
 	/* JMicron 360/1/3/5/6, match class to avoid IDE function */
 	{ PCI_VENDOR_ID_JMICRON, PCI_ANY_ID, PCI_ANY_ID, PCI_ANY_ID,
@@ -576,6 +630,12 @@ static const struct pci_device_id ahci_pci_tbl[] = {
 	  .driver_data = board_ahci_yes_fbs },
 	{ PCI_DEVICE(PCI_VENDOR_ID_TTI, 0x0645), /* highpoint rocketraid 644L */
 	  .driver_data = board_ahci_yes_fbs },
+#ifdef MY_ABC_HERE
+	{ PCI_DEVICE(PCI_VENDOR_ID_MARVELL_EXT, 0x9235),
+	  .driver_data = board_ahci_yes_fbs },			/* 88se9235 */
+	{ PCI_DEVICE(PCI_VENDOR_ID_MARVELL_EXT, 0x9215),
+	  .driver_data = board_ahci_yes_fbs },			/* 88se9215 */
+#endif /* MY_ABC_HERE */
 
 	/* Promise */
 	{ PCI_VDEVICE(PROMISE, 0x3f20), board_ahci },	/* PDC42819 */
@@ -609,6 +669,138 @@ static const struct pci_device_id ahci_pci_tbl[] = {
 	{ }	/* terminate list */
 };
 
+#ifdef MY_ABC_HERE
+#define SYNO_SATA_MAX_PORTS_CNT 32
+
+static struct {
+	const char *model_name;
+
+	/* switch information on the adapter card */
+	u8 switch_layer;
+	u16 switch_vid;
+	u16 switch_pid;
+
+	/* for extracting model ID:
+	 *	mid_off:   the offset of GPIO in config space of switch
+	 *	mid_mask:  the mask of model ID in GPIO pins
+	 *	mid_shift: the shift of model ID in GPIO pins
+	 * (for more details, please refer product PRD and switch manual)
+	 */
+	u16 mid_off;
+	u16 mid_mask;
+	u16 mid_shift;
+
+	/* model ID of the adapter card */
+	u16 mid;
+
+	/* maximum ports of the sata controller (e.g. MV9235: 4 ports) */
+	u8 max_ports;
+
+	/* amplifying parameters - if some ports do not
+	 * need to adjust amplifying parameters, you
+	 * can leave it blank or manually set it to zero
+	 */
+	u32 amp_param_g2[SYNO_SATA_MAX_PORTS_CNT];
+	u32 amp_param_g3[SYNO_SATA_MAX_PORTS_CNT];
+} syno_m2d_models[] = {
+	{	/* M2D17 */
+		.model_name = "M2D17",
+		.switch_layer = 2,
+		.switch_vid = 0x111D,
+		.switch_pid = 0x806E,
+		.mid_off = 0x420,
+		.mid_mask = 0x780,
+		.mid_shift = 7,
+		.mid = 0x0,
+		.max_ports = 4,
+	},
+	{	/* M2D18 */
+		.model_name = "M2D18",
+		.switch_layer = 2,
+		.switch_vid = 0x111D,
+		.switch_pid = 0x806E,
+		.mid_off = 0x420,
+		.mid_mask = 0x780,
+		.mid_shift = 7,
+		.mid = 0x1,
+		.max_ports = 4,
+		.amp_param_g3 = {
+			0xFF5,
+		},
+	},
+	{	/* terminated with NULL model_name */
+		.model_name = NULL,
+	},
+};
+
+static int m2d_switch_match(struct pci_dev *pdev, int idx)
+{
+	int ret = -1;
+	u16 val = 0;
+	struct pci_dev *pdev_cur = NULL;
+	int layer_cnt = 0;
+
+	layer_cnt = syno_m2d_models[idx].switch_layer;
+	pdev_cur = pdev;
+
+	while (NULL != pdev_cur && 0 < layer_cnt) {
+		pdev_cur = pdev_cur->bus->self;
+		layer_cnt -= 1;
+	}
+
+	if (NULL == pdev_cur) {
+		goto END;
+	}
+
+	if (pdev_cur->vendor != syno_m2d_models[idx].switch_vid ||
+	    pdev_cur->device != syno_m2d_models[idx].switch_pid) {
+		goto END;
+	}
+
+	if (0 > pci_read_config_word(pdev_cur, syno_m2d_models[idx].mid_off, &val)) {
+		goto END;
+	}
+
+	val = (val & syno_m2d_models[idx].mid_mask)
+			>> syno_m2d_models[idx].mid_shift;
+
+	if (val != syno_m2d_models[idx].mid) {
+		goto END;
+	}
+
+	ret = 0;
+END:
+	return ret;
+}
+
+static int syno_m2d_model_get(struct pci_dev *pdev)
+{
+	int ret = -1;
+	int idx = 0;
+
+	if (NULL == pdev) {
+		printk(KERN_WARNING "Bad parameter!\n");
+		goto END;
+	}
+
+	if (1 != syno_check_on_option_pci_slot(pdev)) {
+		goto END;
+	}
+
+	for (idx = 0; syno_m2d_models[idx].model_name; idx++) {
+		if (0 != m2d_switch_match(pdev, idx)) {
+			continue;
+		}
+
+		ret = idx;
+		goto END;
+	}
+
+END:
+	return ret;
+}
+#endif /* SYNO_PCI_M2DXX_SIGNAL_SETTING */
+
 static const struct dev_pm_ops ahci_pci_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(ahci_pci_device_suspend, ahci_pci_device_resume)
 	SET_RUNTIME_PM_OPS(ahci_pci_device_runtime_suspend,
@@ -637,6 +829,1403 @@ MODULE_PARM_DESC(marvell_enable, "Marvell SATA via AHCI (1 = enabled)");
 static int mobile_lpm_policy = -1;
 module_param(mobile_lpm_policy, int, 0644);
 MODULE_PARM_DESC(mobile_lpm_policy, "Default LPM policy for mobile chipsets");
+
+#ifdef MY_DEF_HERE
+/*
+ * 9170 gpio mmio address, to control 9170 GPIO, please read register manual(AN-ML-10-051513_GPIO)
+ */
+enum {
+	MV_9170_GPIO_DATA_OUT			= 0x220,
+	MV_9170_GPIO_DATA_OUT_ENABLE		= 0x224,
+	MV_9170_GPIO_ACTIVE			= 0x258,
+	MV_9170_VENDOR_SPEC1_ADDR_OFFSET	= 0xA8,			/* To manipulate GPIO via Vendor specific register */
+	MV_9170_VENDOR_SPEC1_DATA_OFFSET	= 0xAC,
+};
+
+/*
+ *	Read value from 9170 gpio register
+ */
+u32 syno_mv_9170_gpio_reg_read(struct ata_host *host, const unsigned int gpioaddr)
+{
+	void __iomem *host_mmio = NULL;
+	u32 value = 0;
+
+	host_mmio = ahci_host_base(host);
+	if (NULL == host_mmio) {
+		goto END;
+	}
+
+	/* write to 9170 gpio active register address to VENDER_SPEC_ADDR1 */
+	writel(gpioaddr, host_mmio + MV_9170_VENDOR_SPEC1_ADDR_OFFSET);
+	/* read original value from vendor specific data1 */
+	value = readl(host_mmio + MV_9170_VENDOR_SPEC1_DATA_OFFSET);
+END:
+	return value;
+}
+
+/*
+ *	9170 GPIO register set
+ */
+void syno_mv_9170_gpio_reg_set(struct ata_host *host, const unsigned int gpioaddr, u32 value)
+{
+	void __iomem *host_mmio = NULL;
+	u32 reg_val;
+
+	host_mmio = ahci_host_base(host);
+	if (NULL == host_mmio) {
+		goto END;
+	}
+
+	/* write to 9170 gpio active register address to VENDER_SPEC_ADDR1 */
+	writel(gpioaddr, host_mmio + MV_9170_VENDOR_SPEC1_ADDR_OFFSET);
+	/* read original value from vendor specific data1 */
+	reg_val = readl(host_mmio + MV_9170_VENDOR_SPEC1_DATA_OFFSET);
+	/* then write value to it */
+	writel(value, host_mmio + MV_9170_VENDOR_SPEC1_DATA_OFFSET);
+END:
+	return;
+}
+#endif /* MY_DEF_HERE */
+
+#ifdef MY_DEF_HERE
+/*
+ * 9235 gpio mmio address, to control 9235/9215 GPIO, please read register manual section 1.6
+ */
+enum {
+	/* MV_9235_GPIO_DATA_OUT the actual address is 0x71020, the 0x07000000 is MBUS_ID for vendor specific register 1 */
+	MV_9235_GPIO_DATA_OUT			= 0x07071020,
+	MV_9235_GPIO_DATA_OUT_ENABLE		= 0x07071024,
+	MV_9235_GPIO_ACTIVE			= 0x07071058,
+	MV_9235_VENDOR_SPEC1_ADDR_OFFSET	= 0xA8,			/* To manipulate GPIO via Vendor specific register */
+	MV_9235_VENDOR_SPEC1_DATA_OFFSET	= 0xAC,
+};
+
+/*
+ *	Read value from 9235 gpio register
+ */
+u32 syno_mv_9235_gpio_reg_read(struct ata_host *host, const unsigned int gpioaddr)
+{
+	void __iomem *host_mmio = NULL;
+	u32 value = 0;
+
+	if(NULL == (host_mmio = ahci_host_base(host))) {
+		goto END;
+	}
+
+	// write to 9235 gpio active register address to VENDER_SPEC_ADDR1
+	writel(gpioaddr, host_mmio + MV_9235_VENDOR_SPEC1_ADDR_OFFSET);
+	// read original value from vendor specific data1
+	value = readl(host_mmio + MV_9235_VENDOR_SPEC1_DATA_OFFSET);
+END:
+	return value;
+}
+
+/*
+ *	9235 GPIO register set
+ */
+void syno_mv_9235_gpio_reg_set(struct ata_host *host, const unsigned int gpioaddr, u32 value)
+{
+	void __iomem *host_mmio = NULL;
+	u32 reg_val;
+
+	if(NULL == (host_mmio = ahci_host_base(host))) {
+		goto END;
+	}
+
+	// write to 9235 gpio active register address to VENDER_SPEC_ADDR1
+	writel(gpioaddr, host_mmio + MV_9235_VENDOR_SPEC1_ADDR_OFFSET);
+	// read original value from vendor specific data1
+	reg_val = readl(host_mmio + MV_9235_VENDOR_SPEC1_DATA_OFFSET);
+	// then write value to it
+	writel(value, host_mmio + MV_9235_VENDOR_SPEC1_DATA_OFFSET);
+END:
+	return;
+}
+#endif /* MY_DEF_HERE */
+
+#ifdef MY_ABC_HERE
+/*
+ *	Check vender and device for Marvell 88se9235, 88se9215, 88se9170
+ */
+static int syno_mv_9xxx_check(struct pci_dev* pdev)
+{
+	if (pdev->vendor == 0x1b4b && (pdev->device == 0x9235 || pdev->device == 0x9215 || pdev->device == 0x9170)) {
+		return 1;
+	}
+
+	return 0;
+}
+
+/*
+ *	Get value from 9xxx vendor spec register2
+ */
+static u32 syno_mv_9xxx_reg_get(struct ata_host *host, const unsigned int reg_addr, unsigned int addr_offset, unsigned int data_offset)
+{
+	void __iomem *host_mmio = NULL;
+	u32 value = 0;
+
+	if(NULL == (host_mmio = ahci_host_base(host))) {
+		goto END;
+	}
+
+	// write to 9xxx from register
+	writel(reg_addr, host_mmio + addr_offset);
+	// read original value from register
+	value = readl(host_mmio + data_offset);
+END:
+	return value;
+}
+
+/*
+ *	Set value to 9xxx vendor spec register2
+ */
+static void syno_mv_9xxx_reg_set(struct ata_host *host, const unsigned int reg_addr, u32 value, const unsigned int addr_offset, const unsigned int data_offset)
+{
+	void __iomem *host_mmio = NULL;
+
+	if(NULL == (host_mmio = ahci_host_base(host))) {
+		goto END;
+	}
+
+	// set 9xxx register for writting
+	writel(reg_addr, host_mmio + addr_offset);
+	// then write value to it
+	writel(value, host_mmio + data_offset);
+END:
+	return;
+}
+
+/*
+ * Signal adjustment per model
+ */
+#define MV_GEN 3
+#define MV_PORT 4
+/* The register addrs are provided by Marvell and no description on spec */
+const unsigned int mv_sata_gen[MV_GEN] = {0x8D, 0x8F, 0x91};
+const unsigned mv_port_addr[MV_PORT] = {0x178, 0x1f8, 0x278, 0x2f8};
+const unsigned mv_port_data[MV_PORT] = {0x17c, 0x1fc, 0x27c, 0x2fc};
+
+void syno_mv_9xxx_amp_adjust_by_port(struct ata_host *host, u32 val, unsigned int addr_offset, const unsigned int data_offset, const unsigned int reg_addr)
+{
+	u32 reg_val = 0;
+
+	reg_val = syno_mv_9xxx_reg_get(host, 0x0E, addr_offset, data_offset);
+	syno_mv_9xxx_reg_set(host, 0xE, reg_val & ~0x100, addr_offset, data_offset);
+	reg_val = syno_mv_9xxx_reg_get(host, reg_addr, addr_offset, data_offset);
+	// Make sure we only modify the necessary bits
+	val &= 0xFBE;
+	reg_val &= ~0xFBE;
+	reg_val |= val;
+	syno_mv_9xxx_reg_set(host, reg_addr, reg_val, addr_offset, data_offset);
+}
+
+void syno_mv_9xxx_amp_adjust(struct ata_host *host, struct pci_dev *pdev)
+{
+	int port = 0;
+#ifdef MY_ABC_HERE
+	int idx = 0;
+
+	if (0 <= (idx = syno_m2d_model_get(pdev))) {
+		for (port = 0; port < syno_m2d_models[idx].max_ports; port++) {
+			if (syno_m2d_models[idx].amp_param_g2[port]) {
+				syno_mv_9xxx_amp_adjust_by_port(host,
+				    syno_m2d_models[idx].amp_param_g2[port],
+				    mv_port_addr[port], mv_port_data[port], mv_sata_gen[1]);
+			}
+
+			if (syno_m2d_models[idx].amp_param_g3[port]) {
+				syno_mv_9xxx_amp_adjust_by_port(host,
+				    syno_m2d_models[idx].amp_param_g3[port],
+				    mv_port_addr[port], mv_port_data[port], mv_sata_gen[2]);
+			}
+		}
+	} else {
+#endif /* MY_ABC_HERE */
+	if (syno_is_hw_version(HW_DS720p)) {
+		// ESATA port
+		/* MV9170 */
+		if (syno_is_hw_revision(HW_R1)) {
+			port = 0;
+			syno_mv_9xxx_amp_adjust_by_port(host, 0xE75, mv_port_addr[port], mv_port_data[port], mv_sata_gen[2]);
+			port = 1;
+			syno_mv_9xxx_amp_adjust_by_port(host, 0xE75, mv_port_addr[port], mv_port_data[port], mv_sata_gen[2]);
+		} else {
+			port = 0;
+			syno_mv_9xxx_amp_adjust_by_port(host, 0xA75, mv_port_addr[port], mv_port_data[port], mv_sata_gen[2]);
+		}
+	} else if (syno_is_hw_version(HW_DS1520p)) {
+		if (0x9170 == pdev->device) {
+			port = 0;
+			syno_mv_9xxx_amp_adjust_by_port(host, 0xD75, mv_port_addr[port], mv_port_data[port], mv_sata_gen[2]);
+			port = 1;
+			syno_mv_9xxx_amp_adjust_by_port(host, 0xD75, mv_port_addr[port], mv_port_data[port], mv_sata_gen[2]);
+		}
+	} else if (syno_is_hw_version(HW_DS920p)) {
+		if (0x9170 == pdev->device) {
+			port = 0;
+			syno_mv_9xxx_amp_adjust_by_port(host, 0xD75, mv_port_addr[port], mv_port_data[port], mv_sata_gen[2]);
+			port = 1;
+			syno_mv_9xxx_amp_adjust_by_port(host, 0xE75, mv_port_addr[port], mv_port_data[port], mv_sata_gen[2]);
+		}
+	}
+#ifdef MY_ABC_HERE
+	}
+#endif /* MY_ABC_HERE */
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+
+#define SYNO_JMB585_PORT_NUM 5
+#define SYNO_JMB582_PORT_NUM 2
+#define SYNO_JMB58X_GEN 3
+#define SYNO_JMB58X_SATA_REG 1
+#define SYNO_JMB58X_PCIE_REG 0
+
+const unsigned jmb_port_addr[SYNO_JMB58X_GEN][SYNO_JMB585_PORT_NUM] = {{0x74, 0x76, 0x78, 0x7A, 0x7C},
+                                                                       {0x73, 0x75, 0x77, 0x79, 0x7B},
+                                                                       {0x04, 0x11, 0x1e, 0x2b, 0x38}};
+const unsigned jmb_port_ctle_reg[SYNO_JMB585_PORT_NUM] = {0x0B, 0x18, 0x25, 0x32, 0x3F};
+const unsigned jmb_ssc_addr = 0x2;
+
+static u32 syno_jmb58x_reg_get(struct ata_host *host, const unsigned int addr, unsigned long reg_type)
+{
+	void __iomem *host_mmio = NULL;
+	u32 reg_data = 0;
+
+	if (NULL == (host_mmio = ahci_host_base(host))) {
+		goto END;
+	}
+
+	// Index port has 24 bits, PHY registers access uses bit[12:0] and bit[18], bit[18] is used to select:
+	//   0: PCIe PHY registers
+	//   1: SATA PHY registers.
+	// Offset C0 [IDXP] is index port register
+	writel((addr & 0x01FFFUL) + (reg_type << 18UL), host_mmio + 0xC0);
+	// Offset C8 [DPHY] is data port for PCIe/SATA PHY registers access.
+	reg_data = readl(host_mmio + 0xC8);
+
+END:
+	return reg_data;
+}
+
+static void syno_jmb58x_reg_set(struct ata_host *host, const unsigned int addr, unsigned int data, unsigned long reg_type)
+{
+	void __iomem *host_mmio = NULL;
+
+	if (NULL == (host_mmio = ahci_host_base(host))) {
+		goto END;
+	}
+
+	// Index port has 24 bits, PHY registers access uses bit[12:0] and bit[18], bit[18] is used to select:
+	//   0: PCIe PHY registers
+	//   1: SATA PHY registers.
+	// Offset C0 [IDXP] is index port register
+	writel((addr & 0x01FFFUL) + (reg_type << 18UL), host_mmio + 0xC0);
+	// Offset C8 [DPHY] is data port for PCIe/SATA PHY registers access.
+	writel(data, host_mmio + 0xC8);
+
+END:
+	return;
+}
+
+void syno_jmb58x_amp_adjust(struct ata_host *host, struct pci_dev* pdev, const unsigned addr[][SYNO_JMB585_PORT_NUM], unsigned int *data, int len, unsigned int gen)
+{
+	int port = 0;
+	if ( NULL == pdev || NULL == data || SYNO_JMB585_PORT_NUM < len || SYNO_JMB58X_GEN < gen || 0 == gen) {
+		dev_warn(&pdev->dev, "Invalid parameter\n");
+		return;
+	}
+	for (port = 0; port < len; port++) {
+		syno_jmb58x_reg_set(host, addr[gen - 1][port], data[port], SYNO_JMB58X_SATA_REG);
+		mdelay(100);
+		dev_info(&pdev->dev, "JMB58%d port=%d, reg_addr=0x%x, reg_data=0x%x\n", len, port, addr[gen - 1][port], syno_jmb58x_reg_get(host, addr[gen - 1][port], SYNO_JMB58X_SATA_REG));
+	}
+}
+
+static void syno_jmb58x_ssc_set(struct ata_host *host, struct pci_dev* pdev, const unsigned addr, unsigned ssc_enable)
+{
+	u32 value = 0;
+
+	if (ssc_enable) {
+		value = 0x00003803; // 0x3803 for SSC enable
+	} else {
+		value = 0x00003813; // 0x3813 for SSC disable
+	}
+	syno_jmb58x_reg_set(host, addr, value, SYNO_JMB58X_SATA_REG);
+
+	value = syno_jmb58x_reg_get(host, addr, SYNO_JMB58X_SATA_REG);
+	dev_info(&pdev->dev, "JMB58%d SSC register: 0x%x, SSC %s\n",  pdev->device, value, (value & 0x00000010)?"off":"on");
+	return;
+}
+
+static void syno_jmb58x_spi_read(struct ata_host *host, u8 *buffer, u32 buffer_size, u32 offset)
+{
+	u32 i = 0;
+	u32 dwData = 0;
+	void __iomem *host_mmio = NULL;
+
+	if (NULL == (host_mmio = ahci_host_base(host))) {
+		goto END;
+	}
+
+	// setting register for spi_read
+	// offset B4 is SPI configuration register, 0xFF for set configuration
+	// offset B5 is SPI write protect bit, 0x80 for disable write protect
+	// offset B6 is SPI control register
+	// offset B7 is SPI command register, spi flash's instruction code.
+	// combine and set
+	writel(0xFF | (0x80 << 8) | (0xE9 << 16) | (0x03 << 24), host_mmio + 0xB4);
+
+	for (i = offset; i < (offset + buffer_size); i += 4) {
+		// write to index port(offset 0xC0) first
+		// the unit of index port is byte but must DW aligned
+		// Offset C0 [IDXP] is index port register.
+		writel(i, host_mmio + 0xC0);
+
+		// Offset CC [EROM] is data port for external SPI flash access.
+		// read data port(offset 0xCC) from the desired target address
+		dwData = readl(host_mmio + 0xCC);
+		buffer[i - offset] = (u8) dwData;
+		buffer[i - offset + 1] = (u8)(dwData >> 8);
+		buffer[i - offset + 2] = (u8)(dwData >> 16);
+		buffer[i - offset + 3] = (u8)(dwData >> 24);
+	}
+
+END:
+	return;
+}
+
+static bool syno_jmb58x_read_header_ver(struct ata_host *host, struct pci_dev *pdev, char *szHeaderVer, int cbHeaderVer)
+{
+	u32 offset = 0;
+	u32 rdbuffer_offset = 0;
+	static u8 rbuffer[1024] = {0};//Modified data type to static to prevent the compiling warning that the frame size is larger than 1024 bytes
+	u32 cmp_offset = 0;
+	bool blFoundOffset = false;
+
+	for (offset = 0; offset < 1048576; offset += 1024) {
+		//Default flash size 1MB, can adjust this value according to flash's actual size
+		// read 1024 bytes from flash
+		syno_jmb58x_spi_read(host, rbuffer, 1024, offset);
+
+		for (rdbuffer_offset = 0; rdbuffer_offset < 1024; rdbuffer_offset += 8) {
+			if((0x08 == (rbuffer[rdbuffer_offset + 3] & 0x08)) && !(offset == 0 && rdbuffer_offset == 0)) {
+				blFoundOffset = true; //Offset command location found
+				rdbuffer_offset += 8;
+				break;
+			}
+		}
+
+		if (blFoundOffset) {
+			if (0 == rdbuffer_offset % 512) {
+				cmp_offset = rbuffer[rdbuffer_offset - 4] | rbuffer[rdbuffer_offset - 3] << 8 | rbuffer[rdbuffer_offset - 2] << 16 | rbuffer[rdbuffer_offset - 1] << 24;
+				if ((offset + rdbuffer_offset) == cmp_offset) {
+					//If the Option ROM offset equals the found offset value while the found offset location is adjacent to Option ROM offset,
+					//it means the header version doesn't exist
+					dev_err(&pdev->dev, "JMB%x header error: No Version in Header\n", pdev->device);
+					blFoundOffset = false;
+					goto END;
+				}
+			}
+
+			//If the location of the found offset is at the end of 1024 bytes, it means the header version is located at the beginning of
+			//the next 1024 bytes. So read 4 more bytes to acquire the header version
+			if (1024 == rdbuffer_offset) {
+				memset(rbuffer, 0, 1024);
+				syno_jmb58x_spi_read(host, rbuffer, 4, offset);
+				rdbuffer_offset = 0;
+			}
+
+			if (0 == rbuffer[rdbuffer_offset] && 0 == rbuffer[rdbuffer_offset + 1] && 0 == rbuffer[rdbuffer_offset + 2] && 0 == rbuffer[rdbuffer_offset + 3]) {
+				//The version value equals 0.0.0.0, which means the header version doesn't exist
+				dev_err(&pdev->dev, "JMB%x header error: Version value is 0.0.0.0\n", pdev->device);
+				blFoundOffset = false;
+				goto END;
+			}
+
+			snprintf(szHeaderVer, cbHeaderVer, "%02d.%02d.%02d.%02d", rbuffer[rdbuffer_offset], rbuffer[rdbuffer_offset+1], rbuffer[rdbuffer_offset+2], rbuffer[rdbuffer_offset+3]);
+			goto END;
+		}
+	}
+
+END:
+	return blFoundOffset;
+}
+
+static int syno_jmb58x_get_chip_version(struct ata_host *host, char *szChipVer, int cbChipVer)
+{
+	int iRet = -1;
+	struct pci_dev *pdev = NULL;
+	void __iomem *host_mmio = NULL;
+	u32 reg_data = 0;
+
+	if (!host || !szChipVer || 0 > cbChipVer) {
+		goto END;
+	}
+
+	if (NULL == (host_mmio = ahci_host_base(host)) ||
+		NULL == (pdev = to_pci_dev(host->dev))) {
+		goto END;
+	}
+
+	reg_data = readl(host_mmio + 0x44);
+	if (reg_data & 0xFF) {
+		snprintf(szChipVer, cbChipVer, "B0");
+	} else {
+		//read chip and header version
+		reg_data = syno_jmb58x_reg_get(host, 0x564, SYNO_JMB58X_PCIE_REG);
+		snprintf(szChipVer, cbChipVer, (reg_data & 0x00000100)?"A1":"A0");
+	}
+
+	iRet = 0;
+END:
+	return iRet;
+}
+
+static void syno_jmb58x_version_show(struct ata_host *host)
+{
+	struct pci_dev *pdev = NULL;
+	char szHeaderVer[32] = {0};
+	char szChipVer[16] = {0};
+
+	if (!host || NULL == (pdev = to_pci_dev(host->dev))) {
+		goto END;
+	}
+
+	//read chip and header version
+	
+	if (0 == syno_jmb58x_get_chip_version(host, szChipVer, sizeof(szChipVer))) {
+		dev_info(&pdev->dev, "JMB%x Chip Version: %s\n", pdev->device, szChipVer);
+	} else {
+		dev_err(&pdev->dev, "JMB%x Chip Version: CANNOT GET VERSION!!\n", pdev->device);
+	}
+	
+	if (syno_jmb58x_read_header_ver(host, pdev, szHeaderVer, 32)) {
+		dev_info(&pdev->dev, "JMB%x Header Version: %s\n", pdev->device, szHeaderVer);
+	} else {
+		dev_err(&pdev->dev, "JMB%x Header Version: CANNOT GET HEADER VERSION!!\n", pdev->device);
+	}
+
+END:
+	return;
+}
+
+void syno_jmb58x_init(struct ata_host *host)
+{
+	struct pci_dev *pdev = to_pci_dev(host->dev);
+	unsigned int jmb585_data[SYNO_JMB585_PORT_NUM] = {0};
+	unsigned int link_speed = 0;
+
+	u32 value = 0;
+
+	syno_jmb58x_version_show(host);
+
+	if (syno_is_hw_version(HW_RS1220p)) {
+		if (0x11 == PCI_SLOT(pdev->bus->self->devfn)) {
+			/* 197b:0585 pci address is 00:11.0 in RS1220+ */
+			//set gen 3 SATA Signal
+			link_speed = 3;
+			jmb585_data[0] = 0x7fe9;
+			jmb585_data[1] = 0xffe9;
+			jmb585_data[2] = 0x7fe9;
+			jmb585_data[3] = 0x1ffe9;
+			jmb585_data[4] = 0x1fe7;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		}
+	} else if (syno_is_hw_version(HW_DS1520p)) {
+		if (0x13 == PCI_SLOT(pdev->bus->self->devfn)) {
+			/* 197b:0585 pci address is 00:13.0 in DS1520+ */
+			//set gen 2 SATA Signal
+			link_speed = 2;
+			jmb585_data[0] = 0x1e4;
+			jmb585_data[1] = 0x1e4;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x1e4;
+			jmb585_data[4] = 0x1e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		}
+	} else if (syno_is_hw_version(HW_DS1621p)) {
+		//set SSC off
+		syno_jmb58x_ssc_set(host, pdev, jmb_ssc_addr, 0);
+
+		if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x05 == PCI_FUNC(pdev->bus->self->devfn)) {
+			link_speed = 3;
+			jmb585_data[0] = 0x1fe9;
+			jmb585_data[1] = 0x1fe9;
+			jmb585_data[2] = 0x1fe9;
+			jmb585_data[3] = 0x1fe9;
+			jmb585_data[4] = 0x1fe5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		} else if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x06 == PCI_FUNC(pdev->bus->self->devfn)) {
+			link_speed = 3;
+			jmb585_data[0] = 0x3fe9;
+			jmb585_data[1] = 0xffe9;
+			jmb585_data[2] = 0x3fe9;
+			jmb585_data[3] = 0x1ffe9;
+			jmb585_data[4] = 0x1fe5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+			link_speed = 2;
+			jmb585_data[0] = 0x1e4;
+			jmb585_data[1] = 0x1e5;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x1e4;
+			jmb585_data[4] = 0x1e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		}
+	} else if (syno_is_hw_version(HW_RS1221p)) {
+		//set SSC off
+		syno_jmb58x_ssc_set(host, pdev, jmb_ssc_addr, 0);
+
+		if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x06 == PCI_FUNC(pdev->bus->self->devfn)) {
+			link_speed = 3;
+			jmb585_data[0] = 0x1fe5;
+			jmb585_data[1] = 0x1fe5;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x7e5;
+			jmb585_data[4] = 0xfef;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+			link_speed = 2;
+			jmb585_data[0] = 0x1e4;
+			jmb585_data[1] = 0x1e4;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x1e4;
+			jmb585_data[4] = 0x1e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		} else if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x07 == PCI_FUNC(pdev->bus->self->devfn)) {
+			link_speed = 3;
+			jmb585_data[0] = 0x3e5;
+			jmb585_data[1] = 0x1e5;
+			jmb585_data[2] = 0x1fe5;
+			jmb585_data[3] = 0x1fe5;
+			jmb585_data[4] = 0x1fe5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+			link_speed = 2;
+			jmb585_data[0] = 0x1e4;
+			jmb585_data[1] = 0x1e4;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x1e4;
+			jmb585_data[4] = 0x1e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		}
+	} else if (syno_is_hw_version(HW_RS1221rpp)) {
+		//set SSC off
+		syno_jmb58x_ssc_set(host, pdev, jmb_ssc_addr, 0);
+		if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x06 == PCI_FUNC(pdev->bus->self->devfn)) {
+			link_speed = 3;
+			jmb585_data[0] = 0x1fe5;
+			jmb585_data[1] = 0x1e5;
+			jmb585_data[2] = 0x1fe5;
+			jmb585_data[3] = 0x1fe5;
+			jmb585_data[4] = 0x7fff;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+			link_speed = 2;
+			jmb585_data[0] = 0x1e4;
+			jmb585_data[1] = 0x1e4;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x1e4;
+			jmb585_data[4] = 0x1e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		} else if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x07 == PCI_FUNC(pdev->bus->self->devfn)) {
+			link_speed = 3;
+			jmb585_data[0] = 0x1fe5;
+			jmb585_data[1] = 0x1fe5;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x7e5;
+			jmb585_data[4] = 0x1fe5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+			link_speed = 2;
+			jmb585_data[0] = 0x1e4;
+			jmb585_data[1] = 0x1e4;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x1e4;
+			jmb585_data[4] = 0x1e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		}
+	} else if (syno_is_hw_version(HW_DS1821p)) {
+		//set SSC off
+		syno_jmb58x_ssc_set(host, pdev, jmb_ssc_addr, 0);
+
+		if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x05 == PCI_FUNC(pdev->bus->self->devfn)) {
+			link_speed = 3;
+			jmb585_data[0] = 0xae8;
+			jmb585_data[1] = 0xae5;
+			jmb585_data[2] = 0xae5;
+			jmb585_data[3] = 0xae5;
+			jmb585_data[4] = 0xae5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+			link_speed = 2;
+			jmb585_data[0] = 0x1e4;
+			jmb585_data[1] = 0x1e4;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x1e4;
+			jmb585_data[4] = 0x1e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		} else if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x06 == PCI_FUNC(pdev->bus->self->devfn)) {
+			link_speed = 3;
+			jmb585_data[0] = 0xae8;
+			jmb585_data[1] = 0xae5;
+			jmb585_data[2] = 0xae5;
+			jmb585_data[3] = 0x7e5;
+			jmb585_data[4] = 0x7e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+			link_speed = 2;
+			jmb585_data[0] = 0x1e4;
+			jmb585_data[1] = 0x1e4;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x1e4;
+			jmb585_data[4] = 0x1e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		}
+	} else if (syno_is_hw_version(HW_DS2422p)) {
+		//set SSC off
+		syno_jmb58x_ssc_set(host, pdev, jmb_ssc_addr, 0);
+
+		if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x02 == PCI_FUNC(pdev->bus->self->devfn)) {
+			link_speed = 3;
+			jmb585_data[0] = 0x1fe5;
+			jmb585_data[1] = 0x1fe9;
+			jmb585_data[2] = 0x1fe5;
+			jmb585_data[3] = 0x1fe9;
+			jmb585_data[4] = 0x1fe5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+			link_speed = 2;
+			jmb585_data[0] = 0x1e4;
+			jmb585_data[1] = 0x1e4;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x1e4;
+			jmb585_data[4] = 0x1e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		} else if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x03 == PCI_FUNC(pdev->bus->self->devfn)) {
+			link_speed = 3;
+			jmb585_data[0] = 0x1fe5;
+			jmb585_data[1] = 0x1fe9;
+			jmb585_data[2] = 0x1fe5;
+			jmb585_data[3] = 0x1fe9;
+			jmb585_data[4] = 0x1fe5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+			link_speed = 2;
+			jmb585_data[0] = 0x1e4;
+			jmb585_data[1] = 0x1e4;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x1e4;
+			jmb585_data[4] = 0x1e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		} else if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x04 == PCI_FUNC(pdev->bus->self->devfn)) {
+			link_speed = 3;
+			jmb585_data[0] = 0x1fe5;
+			jmb585_data[1] = 0x1fed;
+			jmb585_data[2] = 0x1fe5;
+			jmb585_data[3] = 0x1fed;
+			jmb585_data[4] = 0x1fe5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+			link_speed = 2;
+			jmb585_data[0] = 0x1e4;
+			jmb585_data[1] = 0x1e4;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x1e4;
+			jmb585_data[4] = 0x1e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		} else if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x05 == PCI_FUNC(pdev->bus->self->devfn)) {
+			link_speed = 3;
+			jmb585_data[0] = 0x1fe7;
+			jmb585_data[1] = 0x1fe9;
+			jmb585_data[2] = 0x1fe9;
+			jmb585_data[3] = 0x1fe9;
+			jmb585_data[4] = 0x1fe5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+			link_speed = 2;
+			jmb585_data[0] = 0x1e4;
+			jmb585_data[1] = 0x1e4;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x1e4;
+			jmb585_data[4] = 0x1e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		}
+	} else if (syno_is_hw_version(HW_RS2421p) || syno_is_hw_version(HW_RS2421rpp)) {
+		//set SSC off
+		syno_jmb58x_ssc_set(host, pdev, jmb_ssc_addr, 0);
+		if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x05 == PCI_FUNC(pdev->bus->self->devfn)) {
+			value = syno_jmb58x_reg_get(host, jmb_port_ctle_reg[3], SYNO_JMB58X_SATA_REG);
+			value &= ~0xFF0;
+			value |= 0x020;
+			syno_jmb58x_reg_set(host, jmb_port_ctle_reg[3], value, SYNO_JMB58X_SATA_REG);
+		}
+	} else if (syno_is_hw_version(HW_RS2821rpp)) {
+		//set SSC off
+		syno_jmb58x_ssc_set(host, pdev, jmb_ssc_addr, 0);
+
+		if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x02 == PCI_FUNC(pdev->bus->self->devfn)) {
+			link_speed = 3;
+			jmb585_data[0] = 0x1fe5;
+			jmb585_data[1] = 0x1fe5;
+			jmb585_data[2] = 0x1fe5;
+			jmb585_data[3] = 0x1fe5;
+			jmb585_data[4] = 0x3fe5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+			link_speed = 2;
+			jmb585_data[0] = 0x1e4;
+			jmb585_data[1] = 0x1e4;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x1e4;
+			jmb585_data[4] = 0x1e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		} else if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x03 == PCI_FUNC(pdev->bus->self->devfn)) {
+			link_speed = 3;
+			jmb585_data[0] = 0x7fe5;
+			jmb585_data[1] = 0x7fe5;
+			jmb585_data[2] = 0xfe5;
+			jmb585_data[3] = 0xfe5;
+			jmb585_data[4] = 0x3fe5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+			link_speed = 2;
+			jmb585_data[0] = 0x1e4;
+			jmb585_data[1] = 0x1e4;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x1e4;
+			jmb585_data[4] = 0x1e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		} else if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x04 == PCI_FUNC(pdev->bus->self->devfn)) {
+			link_speed = 3;
+			jmb585_data[0] = 0x3fe5;
+			jmb585_data[1] = 0x3fe5;
+			jmb585_data[2] = 0x7fe5;
+			jmb585_data[3] = 0x3fe5;
+			jmb585_data[4] = 0x3fe5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+			link_speed = 2;
+			jmb585_data[0] = 0x1e4;
+			jmb585_data[1] = 0x1e4;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x1e4;
+			jmb585_data[4] = 0x1e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		} else if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x05 == PCI_FUNC(pdev->bus->self->devfn)) {
+			link_speed = 3;
+			jmb585_data[0] = 0x7fe5;
+			jmb585_data[1] = 0x1fe6;
+			jmb585_data[2] = 0x1fe6;
+			jmb585_data[3] = 0x1fe6;
+			jmb585_data[4] = 0x1fe6;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+			link_speed = 2;
+			jmb585_data[0] = 0x1e4;
+			jmb585_data[1] = 0x1e4;
+			jmb585_data[2] = 0x1e5;
+			jmb585_data[3] = 0x1e4;
+			jmb585_data[4] = 0x1e5;
+			syno_jmb58x_amp_adjust(host, pdev, jmb_port_addr, jmb585_data, SYNO_JMB585_PORT_NUM, link_speed);
+		}
+	} else if (syno_is_hw_version(HW_RS2423p) || syno_is_hw_version(HW_RS2423rpp)) {
+		//set SSC off
+		syno_jmb58x_ssc_set(host, pdev, jmb_ssc_addr, 0);
+		if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x06 == PCI_FUNC(pdev->bus->self->devfn)) {
+			value = syno_jmb58x_reg_get(host, jmb_port_ctle_reg[3], SYNO_JMB58X_SATA_REG);
+			value &= ~0xFF0;
+			value |= 0x020;
+			syno_jmb58x_reg_set(host, jmb_port_ctle_reg[3], value, SYNO_JMB58X_SATA_REG);
+		}
+	}
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+//Access Offset 0xAC to set GPIO[15:11] for pull up[15:11] and output enable [15:11], pull up is used to control resister status, set 0 in this case
+//Register description:
+//   Memory Write (BAR5 + 0xAC ) = { pull_up[15:11] , 3'h0 , 8'h00, output_enable [15:11] , 3'h0,  8'h00  }
+//                                   (MSB)                                                          (LSB)
+//Access Offset 0xA8 DWORD[31:27] to output value to GPIO 15~11 or read value from it.
+//Ex:
+//  Memory Write (BAR5 + 0xA8 ) = { DATA[31:27], 3'h00, 8'h00, 16h'00 }
+//  Memory Read  (BAR5 + 0xA8 ) = { 16'h00, DATA[15:11], 3'h00, 8'h00 }
+//                                  (MSB)                       (LSB)
+//
+//Need to wait 25 sec after boot up to controll the GPIOs
+#define JMB585_GPIO_ENABLE_PIN 0xF800
+#define JMB585_GPIO_PIN_OFFSET 11
+#define JMB585_LED_BOOT_TIME 25
+
+static u32 syno_jmb585_led_gpio_get(struct ata_host *host)
+{
+	void __iomem *host_mmio = NULL;
+	u32 uData;
+
+	if (NULL == (host_mmio = ahci_host_base(host))) {
+		goto END;
+	}
+
+	//clear output enable for GPIO[15:11]
+	writel(0x0, host_mmio + 0xAC);
+	uData = readl(host_mmio + 0xA8);
+	writel(JMB585_GPIO_ENABLE_PIN, host_mmio + 0xAC);
+
+END:
+	return ((uData & JMB585_GPIO_ENABLE_PIN) >> 27);
+}
+
+static void syno_jmb585_led_gpio_set(struct ata_host *host, const unsigned int uiGpioCtrl)
+{
+	void __iomem *host_mmio = NULL;
+
+	if (NULL == (host_mmio = ahci_host_base(host))) {
+		goto END;
+	}
+
+	// set output enable for GPIO[15:11]
+	writel(JMB585_GPIO_ENABLE_PIN, host_mmio + 0xAC);
+	// pull high for GPIO[15:11]
+	// Memory Write (BAR5 + 0xA8 ) = { DATA[31:27], 3'h00, 8'h00, 16h'00 }
+	writel((uiGpioCtrl & 0x1F) << 27, host_mmio + 0xA8);
+
+END:
+	return;
+}
+
+int syno_jmb585_disk_led_get(const int iDiskPort)
+{
+	unsigned int uiLedIdx = 0;
+	unsigned int uiLedPolarity = 0;
+	int iRet = -EINVAL;
+	struct ata_port *ap = syno_ata_port_get_by_port(iDiskPort);
+	if (NULL == ap) {
+		goto END;
+	}
+
+	// Access GPIO[15:11] for Led[4:0]
+	uiLedIdx = HDD_FAIL_LED_PIN_BY_SLOT(DT_INTERNAL_SLOT, iDiskPort) - JMB585_GPIO_PIN_OFFSET;
+	uiLedPolarity = HDD_FAIL_LED_POLARITY_BY_SLOT(DT_INTERNAL_SLOT, iDiskPort);
+
+	//Access Offset 0xAC to set GPIO[15:11] for pull up[15:11]
+	iRet = syno_jmb585_led_gpio_get(ap->host) & (1 << uiLedIdx);
+	iRet = iRet >> uiLedIdx;
+END:
+	return (iRet == uiLedPolarity)? 1 : 0;
+}
+EXPORT_SYMBOL(syno_jmb585_disk_led_get);
+
+int syno_jmb585_disk_led_set(const int iDiskPort, const int iValue)
+{
+	unsigned int uiLedIdx = 0;
+	unsigned int uiLedPolarity = 0;
+	int iRet = -EINVAL;
+	struct ata_port *ap = syno_ata_port_get_by_port(iDiskPort);
+	if (NULL == ap || iValue > 1 || iValue < 0) {
+		goto END;
+	}
+
+	// Access GPIO[15:11] for Led[4:0]
+	uiLedIdx = HDD_FAIL_LED_PIN_BY_SLOT(DT_INTERNAL_SLOT, iDiskPort) - JMB585_GPIO_PIN_OFFSET;
+	uiLedPolarity = HDD_FAIL_LED_POLARITY_BY_SLOT(DT_INTERNAL_SLOT, iDiskPort);
+
+	if (iValue == uiLedPolarity) {
+		ap->host->uJMB585LedStat |= (1 << uiLedIdx);
+	} else {
+		ap->host->uJMB585LedStat &= ~(1 << uiLedIdx);
+	}
+	syno_jmb585_led_gpio_set(ap->host, ap->host->uJMB585LedStat);
+	iRet = 0;
+END:
+	return iRet;
+}
+EXPORT_SYMBOL(syno_jmb585_disk_led_set);
+
+void syno_jmb585_led_wait(void)
+{
+	struct timespec64 tp;
+	ktime_get_boottime_ts64(&tp);
+	if (tp.tv_sec < JMB585_LED_BOOT_TIME) {
+		msleep((JMB585_LED_BOOT_TIME - tp.tv_sec) * 1000);
+	}
+}
+EXPORT_SYMBOL(syno_jmb585_led_wait);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_DEF_HERE
+#define SYNO_ASM1061_MAX_PORT_NUM 2
+#define SYNO_ASM1061_GEN 3
+/*
+ *	Check vender and device for asmedia 1061
+ */
+static int syno_asmedia_1061_check(struct pci_dev* pdev)
+{
+	return (pdev->vendor == 0x1b21 && pdev->device == 0x0612) ? 0 : -1;
+}
+
+/*
+ *	Get value from asmedia vendor spec register
+ */
+static u8 syno_asmedia_1061_reg_get(struct pci_dev *pdev, unsigned int devfn, unsigned int reg_addr)
+{
+	int check = -1;
+	u8 reg_data = 0;
+
+	if (0 != syno_asmedia_1061_check(pdev)) {
+		dev_warn(&pdev->dev, "Invalid PCI device !!\n");
+		goto END;
+	}
+
+	check = pci_bus_read_config_byte(pdev->bus, devfn, reg_addr, &reg_data);
+	if (0 != check) {
+		dev_warn(&pdev->dev, "pci_bus_read_config_byte error, return = %d\n", check);
+		goto END;
+	}
+END:
+	return reg_data;
+}
+
+/*
+ *	Set value to asmedia vendor spec register
+ */
+static void syno_asmedia_1061_reg_set(struct pci_dev *pdev, unsigned int devfn, unsigned int reg_addr, u8 reg_data)
+{
+	int check = -1;
+
+	if (0 != syno_asmedia_1061_check(pdev)) {
+		dev_warn(&pdev->dev, "Invalid PCI device !!\n");
+		goto END;
+	}
+
+	check = pci_bus_write_config_byte(pdev->bus, devfn, reg_addr, reg_data);
+	if (0 != check) {
+		dev_warn(&pdev->dev, "pci_bus_write_config_byte error, return = %d\n", check);
+		goto END;
+	}
+END:
+	return;
+}
+
+void syno_asmedia_1061_gpio2_led_mode(struct pci_dev *pdev, unsigned int devfn)
+{
+	unsigned int led_mode_addr = 0xA02;
+	u8 reg_data = 0;
+
+	reg_data = syno_asmedia_1061_reg_get(pdev, devfn, led_mode_addr);
+	reg_data |= (1 << 3);
+	syno_asmedia_1061_reg_set(pdev, devfn, led_mode_addr, reg_data);
+}
+
+void syno_asmedia_1061_amp_adjust(struct pci_dev *pdev, unsigned int devfn, unsigned int *addr, unsigned int *data, int len, unsigned int gen_offset)
+{
+	int port = 0;
+
+	if (NULL == pdev || NULL == data || SYNO_ASM1061_MAX_PORT_NUM < len) {
+		printk("syno_asmedia_1061_amp_adjust: Invalid parameter\n");
+		goto END;
+	}
+
+	for (port = 0; port < len; ++port) {
+		syno_asmedia_1061_reg_set(pdev, devfn, addr[port] | gen_offset, data[port]);
+		dev_info(&pdev->dev, "Asmedia 1061 port=%d, reg_addr=0x%x, reg_data=0x%x\n", port, addr[port] | gen_offset, syno_asmedia_1061_reg_get(pdev, devfn, addr[port] | gen_offset));
+	}
+
+END:
+	return;
+}
+
+unsigned int asmedia_addr[SYNO_ASM1061_MAX_PORT_NUM] = {0xCA0, 0xDA0};
+unsigned int asmedia_gen[SYNO_ASM1061_GEN] = {0x4, 0x5, 0x6};
+
+void syno_asmedia_1061_init(struct ata_host *host)
+{
+	struct pci_dev *pdev = to_pci_dev(host->dev);
+	unsigned int devfn = 0;
+	unsigned int asmedia_DS420p_data_gen1[SYNO_ASM1061_MAX_PORT_NUM] = {0xab, 0xab};
+	unsigned int asmedia_DS420p_data_gen2[SYNO_ASM1061_MAX_PORT_NUM] = {0x26, 0x26};
+	unsigned int asmedia_DS420p_data_gen3[SYNO_ASM1061_MAX_PORT_NUM] = {0x38, 0x28};
+	unsigned int asmedia_DS920p_data_gen1[SYNO_ASM1061_MAX_PORT_NUM] = {0xab, 0xab};
+	unsigned int asmedia_DS920p_data_gen2[SYNO_ASM1061_MAX_PORT_NUM] = {0x26, 0x26};
+	unsigned int asmedia_DS920p_data_gen3[SYNO_ASM1061_MAX_PORT_NUM] = {0x25, 0xd8};
+
+	if (syno_is_hw_version(HW_DS420p)) {
+		devfn = PCI_DEVFN(0x00, 0x0);
+		syno_asmedia_1061_amp_adjust(pdev, devfn, asmedia_addr, asmedia_DS420p_data_gen1, SYNO_ASM1061_MAX_PORT_NUM, asmedia_gen[0]);
+		syno_asmedia_1061_amp_adjust(pdev, devfn, asmedia_addr, asmedia_DS420p_data_gen2, SYNO_ASM1061_MAX_PORT_NUM, asmedia_gen[1]);
+		syno_asmedia_1061_amp_adjust(pdev, devfn, asmedia_addr, asmedia_DS420p_data_gen3, SYNO_ASM1061_MAX_PORT_NUM, asmedia_gen[2]);
+		mdelay(100);
+		syno_asmedia_1061_reg_set(pdev, devfn, 0xCAE, 0x92);
+		mdelay(100);
+		syno_asmedia_1061_reg_set(pdev, devfn, 0xDAE, 0x92);
+	} else if (syno_is_hw_version(HW_DS920p)) {
+		devfn = PCI_DEVFN(0x00, 0x0);
+		syno_asmedia_1061_amp_adjust(pdev, devfn, asmedia_addr, asmedia_DS920p_data_gen1, SYNO_ASM1061_MAX_PORT_NUM, asmedia_gen[0]);
+		syno_asmedia_1061_amp_adjust(pdev, devfn, asmedia_addr, asmedia_DS920p_data_gen2, SYNO_ASM1061_MAX_PORT_NUM, asmedia_gen[1]);
+		syno_asmedia_1061_amp_adjust(pdev, devfn, asmedia_addr, asmedia_DS920p_data_gen3, SYNO_ASM1061_MAX_PORT_NUM, asmedia_gen[2]);
+		mdelay(100);
+		syno_asmedia_1061_reg_set(pdev, devfn, 0xCAE, 0x92);
+		mdelay(100);
+		syno_asmedia_1061_reg_set(pdev, devfn, 0xDAE, 0x92);
+	}
+}
+#endif /* MY_DEF_HERE */
+
+#ifdef CONFIG_SYNO_SATA_ASM116X_CONTROL
+#define SYNO_ASM116X_MAX_PORT_NUM    6
+#define SYNO_ASM116X_GEN             3
+
+static int syno_asmedia_116x_check(struct pci_dev* pdev)
+{
+	return (pdev->vendor == 0x1b21 && (pdev->device == 0x1164 || pdev->device == 0x1165)) ? 0 : -1;
+}
+
+u8 syno_asmedia_116x_reg_get_byte(struct pci_dev *pdev, const unsigned int reg_addr)
+{
+	u8 reg_data = 0;
+	void __iomem *bar0 = NULL;
+
+	if (NULL == (bar0 = ioremap(pci_resource_start(pdev, 0), pci_resource_len(pdev, 0)))) {
+		dev_warn(&pdev->dev, "Can't map asmedia registers\n");
+		goto END;
+	}
+
+	reg_data = readb(bar0 + reg_addr);
+
+END:
+	if (bar0) {
+		iounmap(bar0);
+		bar0 = NULL;
+	}
+	return reg_data;
+}
+
+void syno_asmedia_116x_reg_set_byte(struct pci_dev *pdev, unsigned int reg_addr, u8 reg_data)
+{
+	void __iomem *bar0 = NULL;
+
+	if (NULL == (bar0 = ioremap(pci_resource_start(pdev, 0), pci_resource_len(pdev, 0)))) {
+		dev_warn(&pdev->dev, "Can't map asmedia registers\n");
+		goto END;
+	}
+
+	writeb(reg_data, bar0 + reg_addr);
+
+END:
+	if (bar0) {
+		iounmap(bar0);
+		bar0 = NULL;
+	}
+	return;
+}
+
+u16 syno_asmedia_116x_reg_get_word(struct pci_dev *pdev, const unsigned int reg_addr)
+{
+	u16 reg_data = 0;
+	void __iomem *bar0 = NULL;
+
+	if (NULL == (bar0 = ioremap(pci_resource_start(pdev, 0), pci_resource_len(pdev, 0)))) {
+		dev_warn(&pdev->dev, "Can't map asmedia registers\n");
+		goto END;
+	}
+
+	reg_data = readw(bar0 + reg_addr);
+
+END:
+	if (bar0) {
+		iounmap(bar0);
+		bar0 = NULL;
+	}
+	return reg_data;
+}
+
+void syno_asmedia_116x_reg_set_word(struct pci_dev *pdev, unsigned int reg_addr, u16 reg_data)
+{
+	void __iomem *bar0 = NULL;
+
+	if (NULL == (bar0 = ioremap(pci_resource_start(pdev, 0), pci_resource_len(pdev, 0)))) {
+		dev_warn(&pdev->dev, "Can't map asmedia registers\n");
+		goto END;
+	}
+
+	writew(reg_data, bar0 + reg_addr);
+
+END:
+	if (bar0) {
+		iounmap(bar0);
+		bar0 = NULL;
+	}
+	return;
+}
+
+#ifdef MY_DEF_HERE
+static void syno_asmedia_116x_amp_adjust(struct pci_dev *pdev, const unsigned addr[][SYNO_ASM116X_MAX_PORT_NUM], unsigned int *data, unsigned int len, unsigned int gen)
+{
+	void __iomem *bar0 = NULL;
+	unsigned int port = 0;
+
+	if (NULL == pdev || NULL == data || SYNO_ASM116X_MAX_PORT_NUM < len || SYNO_ASM116X_GEN < gen || 0 == gen) {
+		printk("syno_asmedia_116x_amp_adjust: Invalid parameter\n");
+		goto END;
+	}
+
+	bar0 = ioremap(pci_resource_start(pdev, 0), pci_resource_len(pdev, 0));
+	if (!bar0) {
+		dev_warn(&pdev->dev, "Can't map asmedia sata registers\n");
+		goto END;
+	}
+
+	for (port = 0; port < len; port++) {
+		syno_asmedia_116x_reg_set_byte(pdev, addr[gen - 1][port], data[port]);
+		dev_info(&pdev->dev, "ASM%x port=%d, reg_addr=0x%x, reg_data=0x%x\n",pdev->device, port, addr[gen - 1][port], syno_asmedia_116x_reg_get_byte(pdev, addr[gen - 1][port]));
+	}
+
+END:
+	if (bar0) {
+		iounmap(bar0);
+		bar0 = NULL;
+	}
+	return;
+}
+
+static void syno_asmedia_116x_ssc_set(struct pci_dev* pdev, unsigned ssc_enable)
+{
+	const unsigned asm116x_ssc_addr = 0x198C;
+	u8 value = 0;
+
+	if (NULL == pdev || 1 < ssc_enable) {
+		printk("syno_asmedia_116x_ssc_set: Invalid parameter\n");
+		goto END;
+	}
+
+	value = syno_asmedia_116x_reg_get_byte(pdev, asm116x_ssc_addr);
+	if (ssc_enable) {
+		value |= 0x01;
+	} else {
+		value &= ~0x01;
+	}
+	syno_asmedia_116x_reg_set_byte(pdev, asm116x_ssc_addr, value);
+	value = syno_asmedia_116x_reg_get_byte(pdev, asm116x_ssc_addr);
+	dev_info(&pdev->dev, "ASM%x SSC register: 0x%x, SSC %s\n", pdev->device, value, (value & 0x01)?"on":"off");
+
+END:
+	return;
+}
+#endif /* MY_DEF_HERE */
+
+#ifdef MY_DEF_HERE
+#define SYNO_ASM116X_LED_UNIT_REG    0x1D20
+#define SYNO_ASM116X_GPIO_MODE_REG   0x1D6E
+#define SYNO_ASM116X_GPIO_CTL_REG    0x1D6A
+#define SYNO_ASM116X_GPIO_OUTPUT_REG 0x1D6C
+#define SYNO_ASM116X_ALED_DURATION   100
+
+enum {
+	ASM116X_LED_UNIT_100US,
+	ASM116X_LED_UNIT_1MS,
+	ASM116X_LED_UNIT_10MS,
+	ASM116X_LED_UNIT_100MS,
+};
+
+const unsigned asm116x_aled_off_addr[SYNO_ASM116X_MAX_PORT_NUM] = {0x1D10, 0x1D11, 0x1D12, 0x1D13, 0x1D14, 0x1D15};
+const unsigned asm116x_aled_on_addr[SYNO_ASM116X_MAX_PORT_NUM] = {0x1D18, 0x1D19, 0x1D1A, 0x1D1B, 0x1D1C, 0x1D1D};
+
+extern int lookup_internal_slot(const struct ata_port *ap);
+extern struct ata_port *syno_ata_port_get_by_port(const unsigned short diskPort);
+
+int syno_asmedia_116x_disk_led_get(const int iDiskPort)
+{
+	unsigned int uiLedGpioIdx = 0;
+	unsigned int uiLedPolarity = 0;
+	int iRet = -EINVAL;
+	struct ata_port *ap = syno_ata_port_get_by_port(iDiskPort);
+
+	if (NULL == ap) {
+		printk("syno_asmedia_116x_disk_led_get: Invalid parameter\n");
+		goto END;
+	}
+
+	uiLedGpioIdx = HDD_FAIL_LED_PIN_BY_SLOT(DT_INTERNAL_SLOT, iDiskPort);
+	uiLedPolarity = HDD_FAIL_LED_POLARITY_BY_SLOT(DT_INTERNAL_SLOT, iDiskPort);
+
+	iRet = syno_asmedia_116x_reg_get_word(to_pci_dev(ap->dev), SYNO_ASM116X_GPIO_OUTPUT_REG) & (1 << uiLedGpioIdx);
+	iRet = iRet >> uiLedGpioIdx;
+END:
+	return (uiLedPolarity == iRet)? 1 : 0;
+}
+EXPORT_SYMBOL(syno_asmedia_116x_disk_led_get);
+
+int syno_asmedia_116x_disk_led_set(const int iDiskPort, const int iValue)
+{
+	unsigned int uiLedGpioIdx = 0;
+	unsigned int uiLedPolarity = 0;
+	int iRet = -EINVAL;
+	u16 reg_data = 0;
+	struct ata_port *ap = syno_ata_port_get_by_port(iDiskPort);
+
+	if (NULL == ap || iValue > 1 || iValue < 0) {
+		printk("syno_asmedia_116x_disk_led_set: Invalid parameter\n");
+		goto END;
+	}
+
+	uiLedGpioIdx = HDD_FAIL_LED_PIN_BY_SLOT(DT_INTERNAL_SLOT, iDiskPort);
+	uiLedPolarity = HDD_FAIL_LED_POLARITY_BY_SLOT(DT_INTERNAL_SLOT, iDiskPort);
+	reg_data = syno_asmedia_116x_reg_get_word(to_pci_dev(ap->dev), SYNO_ASM116X_GPIO_OUTPUT_REG);
+
+	if (uiLedPolarity == iValue) {
+		reg_data |= (1 << uiLedGpioIdx);
+	} else {
+		reg_data &= ~(1 << uiLedGpioIdx);
+	}
+	syno_asmedia_116x_reg_set_word(to_pci_dev(ap->dev), SYNO_ASM116X_GPIO_OUTPUT_REG, reg_data);
+	iRet = 0;
+END:
+	return iRet;
+}
+EXPORT_SYMBOL(syno_asmedia_116x_disk_led_set);
+
+static void syno_asmedia_116x_disk_led_gpio_init(struct ata_host *host, unsigned int uiMaxPort)
+{
+	struct pci_dev *pdev = to_pci_dev(host->dev);
+	u8 gpio_mode = 0;
+	u16 gpio_ctl = 0, gpio_output = 0, led_unit = 0;
+	unsigned int uiHddFailLedGpioIdx = 0;
+	unsigned int uiHddFailLedPolarity = 0;
+	unsigned int i = 0;
+	unsigned int uiDiskIdx = 0;
+
+	if (NULL == pdev || SYNO_ASM116X_MAX_PORT_NUM < uiMaxPort) {
+		printk("syno_asmedia_116x_disk_led_gpio_init: Invalid parameter\n");
+		goto END;
+	}
+
+	// GPIO_MODE[0:5] represent GPIO 8 ~ 13 mode, 1 for GPIO, 0 for DEVSLP
+	gpio_mode = syno_asmedia_116x_reg_get_byte(pdev, SYNO_ASM116X_GPIO_MODE_REG);
+	// GPIO_OUTPUT[0:5] represent GPIO 0 ~ 5 and GPIO_OUTPUT[8:13] represent GPIO 8 ~ 13
+	gpio_output = syno_asmedia_116x_reg_get_word(pdev, SYNO_ASM116X_GPIO_OUTPUT_REG);
+	// GPIO_CTL[0:5] represent GPIO 0 ~ 5 and GPIO_CTL[8:13] represent GPIO 8 ~ 13, 1 for enable
+	gpio_ctl = syno_asmedia_116x_reg_get_word(pdev, SYNO_ASM116X_GPIO_CTL_REG);
+	// LED_UNIT[0:11] represent Port 0 ~ 5 Led time unit, bit[2n:2n+1] for led n, 0h : 100us, 1h:1ms, 2h:10ms, 3h:100ms
+	led_unit = syno_asmedia_116x_reg_get_word(pdev, SYNO_ASM116X_LED_UNIT_REG);
+
+	for (i = 0; i < uiMaxPort; i++) {
+		if (0 > (uiDiskIdx = lookup_internal_slot(host->ports[i]))) {
+			goto END;
+		} else if ( 0 == uiDiskIdx) {
+			continue;
+		}
+		uiHddFailLedGpioIdx = HDD_FAIL_LED_PIN_BY_SLOT(DT_INTERNAL_SLOT, uiDiskIdx);
+		uiHddFailLedPolarity = HDD_FAIL_LED_POLARITY_BY_SLOT(DT_INTERNAL_SLOT, uiDiskIdx);
+		// clean led time unit first
+		led_unit &= ~(3 << (2 * i));
+		// set Led time unit to 1 ms for led i
+		led_unit |= (ASM116X_LED_UNIT_1MS << (2 * i));
+		// set LED_ON_PX Duration
+		syno_asmedia_116x_reg_set_byte(pdev, asm116x_aled_on_addr[i], SYNO_ASM116X_ALED_DURATION);
+		// set LED_OFF_PX Duration
+		syno_asmedia_116x_reg_set_byte(pdev, asm116x_aled_off_addr[i], SYNO_ASM116X_ALED_DURATION);
+		// set to GPIO mode
+		if (8 <= uiHddFailLedGpioIdx) {
+			gpio_mode |= (1 << (uiHddFailLedGpioIdx - 8));
+		}
+		// initialize Led to off
+		if (0 == uiHddFailLedPolarity) {
+			gpio_output |= (1 << uiHddFailLedGpioIdx);
+		} else {
+			gpio_output &= ~(1 << uiHddFailLedGpioIdx);
+		}
+		// enable GPIO
+		gpio_ctl |= (1 << uiHddFailLedGpioIdx);
+	}
+
+	syno_asmedia_116x_reg_set_word(pdev, SYNO_ASM116X_LED_UNIT_REG, led_unit);
+	syno_asmedia_116x_reg_set_byte(pdev, SYNO_ASM116X_GPIO_MODE_REG, gpio_mode);
+	syno_asmedia_116x_reg_set_word(pdev, SYNO_ASM116X_GPIO_OUTPUT_REG, gpio_output);
+	syno_asmedia_116x_reg_set_word(pdev, SYNO_ASM116X_GPIO_CTL_REG, gpio_ctl);
+
+END:
+	return;
+}
+#endif /* MY_DEF_HERE */
+
+static u32 syno_asmedia_116x_fw_version_get(struct pci_dev *pdev, unsigned int devfn, unsigned int reg_addr)
+{
+	int iRet = -1;
+	u32 reg_data = 0;
+
+	if (0 != syno_asmedia_116x_check(pdev)) {
+		dev_warn(&pdev->dev, "Invalid PCI device !!\n");
+		goto END;
+	}
+
+	// FW Version: 0xF0~0xF5 from PCIe MMIO
+	iRet = pci_bus_read_config_dword(pdev->bus, devfn, reg_addr, &reg_data);
+	if (0 != iRet) {
+		dev_warn(&pdev->dev, "pci_bus_read_config_byte error, return = %d\n", iRet);
+		goto END;
+	}
+END:
+	return reg_data;
+}
+
+static void syno_asmedia_116x_fw_version_show(struct ata_host *host)
+{
+
+	struct pci_dev *pdev = NULL;
+	unsigned int uiFwVer_1 = 0, uiFwVer_2 = 0;
+
+	if (NULL == host || NULL == (pdev = to_pci_dev(host->dev))) {
+		goto END;
+	}
+
+	// FW Version: 0xF0~0xF5 from PCIe MMIO
+	uiFwVer_1 = syno_asmedia_116x_fw_version_get(pdev, PCI_DEVFN(0x00, 0x0), 0xF0);
+	uiFwVer_2 = syno_asmedia_116x_fw_version_get(pdev, PCI_DEVFN(0x00, 0x0), 0xF4);
+	dev_info(&pdev->dev, "ASM%x FW Version: %x%x\n", pdev->device, uiFwVer_1, uiFwVer_2);
+
+END:
+	return;
+}
+
+#ifdef MY_DEF_HERE
+const unsigned asm116x_port_addr[SYNO_ASM116X_GEN][SYNO_ASM116X_MAX_PORT_NUM] = {{0x122, 0x322, 0x522, 0x722, 0x922, 0xB22},
+                                                                               {0x123, 0x323, 0x523, 0x723, 0x923, 0xB23},
+                                                                               {0x124, 0x324, 0x524, 0x724, 0x924, 0xB24}};
+#endif /* MY_DEF_HERE */
+
+void syno_asmedia_116x_init(struct ata_host *host)
+{
+#ifdef MY_DEF_HERE
+	struct pci_dev *pdev = to_pci_dev(host->dev);
+	unsigned int uiLinkSpeed = 0;
+	unsigned int asm116x_data[SYNO_ASM116X_MAX_PORT_NUM] = {0};
+#endif /* MY_DEF_HERE */
+
+	syno_asmedia_116x_fw_version_show(host);
+
+#ifdef MY_DEF_HERE
+	// Initialize GPIO Mode for led control
+	syno_asmedia_116x_disk_led_gpio_init(host, host->n_ports);
+#endif /* MY_DEF_HERE */
+
+#ifdef MY_DEF_HERE
+	if (syno_is_hw_version(HW_RS2421p) || syno_is_hw_version(HW_RS2421rpp)) {
+		// Set SSC off
+		syno_asmedia_116x_ssc_set(pdev, 0);
+
+		if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x02 == PCI_FUNC(pdev->bus->self->devfn)) {
+			uiLinkSpeed = 3;
+			asm116x_data[0] = 0x38;
+			asm116x_data[1] = 0x38;
+			asm116x_data[2] = 0x38;
+			asm116x_data[3] = 0x38;
+			syno_asmedia_116x_amp_adjust(pdev, asm116x_port_addr, asm116x_data, host->n_ports, uiLinkSpeed);
+		} else if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x03 == PCI_FUNC(pdev->bus->self->devfn)) {
+			uiLinkSpeed = 3;
+			asm116x_data[0] = 0x38;
+			asm116x_data[1] = 0x38;
+			asm116x_data[2] = 0x38;
+			asm116x_data[3] = 0x38;
+			syno_asmedia_116x_amp_adjust(pdev, asm116x_port_addr, asm116x_data, host->n_ports, uiLinkSpeed);
+		} else if (0x01 == PCI_SLOT(pdev->bus->self->devfn) && 0x04 == PCI_FUNC(pdev->bus->self->devfn)) {
+			uiLinkSpeed = 3;
+			asm116x_data[0] = 0x38;
+			asm116x_data[1] = 0x38;
+			asm116x_data[2] = 0x38;
+			asm116x_data[3] = 0x38;
+			syno_asmedia_116x_amp_adjust(pdev, asm116x_port_addr, asm116x_data, host->n_ports, uiLinkSpeed);
+		}
+	}
+#endif /* MY_DEF_HERE */
+}
+#endif /* CONFIG_SYNO_SATA_ASM116X_CONTROL */
 
 static void ahci_pci_save_initial_config(struct pci_dev *pdev,
 					 struct ahci_host_priv *hpriv)
@@ -830,6 +2419,61 @@ static int ahci_avn_hardreset(struct ata_link *link, unsigned int *class,
 	DPRINTK("EXIT, rc=%d, class=%u\n", rc, *class);
 	return rc;
 }
+
+#ifdef MY_ABC_HERE
+static int syno_ahci_hardreset_jmb(struct ata_link *link, unsigned int *class,
+			  unsigned long deadline)
+{
+	const unsigned long *timing = sata_ehc_deb_timing(&link->eh_context);
+	struct ata_port *ap = link->ap;
+	struct ahci_port_priv *pp = ap->private_data;
+	struct ahci_host_priv *hpriv = ap->host->private_data;
+	u8 *d2h_fis = pp->rx_fis + RX_FIS_D2H_REG;
+	struct ata_taskfile tf;
+	bool online;
+	int rc;
+	void __iomem *port_mmio = ahci_port_base(link->ap);
+	u32 uIRQStatus = 0;
+
+	DPRINTK("ENTER\n");
+	hpriv->stop_engine(ap);
+
+	/* clear D2H reception area to properly wait for D2H FIS */
+	ata_tf_init(link->device, &tf);
+	tf.command = ATA_BUSY;
+	ata_tf_to_fis(&tf, 0, 0, d2h_fis);
+
+	uIRQStatus = readl(port_mmio + PORT_IRQ_MASK);
+	writel(uIRQStatus & ~PORT_IRQ_BAD_PMP, port_mmio + PORT_IRQ_MASK);
+	rc = sata_link_hardreset(link, timing, deadline, &online,
+				 ahci_check_ready);
+	writel(uIRQStatus, port_mmio + PORT_IRQ_MASK);
+
+	hpriv->start_engine(ap);
+
+	if (online)
+		*class = ahci_dev_classify(ap);
+
+	DPRINTK("EXIT, rc=%d, class=%u\n", rc, *class);
+	return rc;
+}
+
+static int syno_ahci_softreset_jmb(struct ata_link *link, unsigned int *class,
+			  unsigned long deadline)
+{
+	int pmp = sata_srst_pmp(link);
+	int iRet = 0;
+	void __iomem *port_mmio = ahci_port_base(link->ap);
+	u32 uIRQStatus = 0;
+	DPRINTK("ENTER\n");
+
+	uIRQStatus = readl(port_mmio + PORT_IRQ_MASK);
+	writel(uIRQStatus & ~PORT_IRQ_BAD_PMP, port_mmio + PORT_IRQ_MASK);
+	iRet = ahci_do_softreset(link, class, pmp, deadline, ahci_check_ready);
+	writel(uIRQStatus, port_mmio + PORT_IRQ_MASK);
+	return iRet;
+}
+#endif /* MY_ABC_HERE */
 
 
 #ifdef CONFIG_PM
@@ -1660,6 +3304,224 @@ static ssize_t remapped_nvme_show(struct device *dev,
 
 static DEVICE_ATTR_RO(remapped_nvme);
 
+#ifdef MY_ABC_HERE
+
+#define SYNO_SATA_MAX_GEN 3
+#define SYNO_SATA_MAX_PORTS 32
+
+extern int syno_compare_dts_ata_port(const struct ata_port *pAtaPort, const struct device_node *pDeviceNode);
+extern int syno_compare_dts_pciepath(const struct pci_dev *pdev, const struct device_node *pDeviceNode);
+/**
+ * syno_ahci_compare_ata_devicetree_info - check the ata_port matches the device_node
+ * @ap [IN]:   query ata_port
+ * @node [IN]: comparing device_node
+ *
+ * return true: success
+          false: fail
+ */
+bool syno_ahci_compare_ata_devicetree_info(const struct ata_port *ap, const struct device_node *pNode)
+{
+	int ret = false;
+	struct device_node *pAhciNode = NULL;
+	if (NULL == ap || NULL == pNode) {
+		goto END;
+	}
+
+	pAhciNode = of_get_child_by_name(pNode, DT_AHCI);
+	if (0 != syno_compare_dts_ata_port(ap, pAhciNode)) {
+		goto END;
+	}
+
+	if (0 != syno_compare_dts_pciepath(to_pci_dev(ap->dev), pAhciNode)) {
+		goto END;
+	}
+	ret = true;
+END:
+	if (pAhciNode) {
+		of_node_put(pAhciNode);
+	}
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
+
+#ifdef MY_ABC_HERE
+static void syno_set_signal(struct ata_host *host, unsigned int sigData[SYNO_SATA_MAX_GEN][SYNO_SATA_MAX_PORTS], unsigned int sscOffTable[SYNO_SATA_MAX_PORTS])
+{
+	int port, gen;
+	struct pci_dev *pdev = NULL;
+	int max_port = 0;
+	
+	if (NULL == host || NULL == sigData) {
+		goto END;
+	}
+
+	pdev = to_pci_dev(host->dev);
+
+#ifdef MY_ABC_HERE
+	if (syno_mv_9xxx_check(pdev)) {
+		printk("mv9xxx\n");
+		for (gen = 0; gen < MV_GEN; gen++) {
+			for (port = 0; port < MV_PORT; ++port) {
+				if (sigData[gen][port]) {
+					syno_mv_9xxx_amp_adjust_by_port(host, sigData[gen][port], mv_port_addr[port], mv_port_data[port], mv_sata_gen[gen]);
+				}
+			}
+		}
+	}
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	if (0 == syno_jmb58x_check(pdev->vendor, pdev->device)) {
+		if (0x0585 == pdev->device) {
+			max_port = SYNO_JMB585_PORT_NUM;
+		} else if (0x0582 == pdev->device) {
+			max_port = SYNO_JMB582_PORT_NUM;
+		}
+
+		for (gen = 0; gen < SYNO_JMB58X_GEN; gen++) {
+			for(port = 0; port < max_port; port++) {
+				if (sigData[gen][port]) {
+					syno_jmb58x_reg_set(host, jmb_port_addr[gen][port], sigData[gen][port], SYNO_JMB58X_SATA_REG);
+					mdelay(100);
+					dev_info(&pdev->dev, "JMB58%d port=%d, reg_addr=0x%x, reg_data=0x%x\n", max_port, port, jmb_port_addr[gen][port], syno_jmb58x_reg_get(host, jmb_port_addr[gen][port], SYNO_JMB58X_SATA_REG));
+				}
+			}
+		}
+
+		for (port = 0; port < max_port; port++) {
+			if (sscOffTable[port]) {
+				syno_jmb58x_ssc_set(host, pdev, jmb_ssc_addr, 0);
+				break;
+			}
+		}
+	}
+#endif /* MY_ABC_HERE */
+#ifdef MY_DEF_HERE
+	if (0 == syno_asmedia_1061_check(pdev)) {
+		for (gen = 0; gen < SYNO_ASM1061_GEN; gen++) {
+			for (port = 0; port < SYNO_ASM1061_MAX_PORT_NUM; ++port) {
+				if (sigData[gen][port]) {
+					syno_asmedia_1061_reg_set(pdev, pdev->devfn, asmedia_addr[port] | asmedia_gen[gen], sigData[gen][port]);
+					dev_info(&pdev->dev, "Asmedia 1061 port=%d, reg_addr=0x%x, reg_data=0x%x\n", port, asmedia_addr[port] | asmedia_gen[gen], syno_asmedia_1061_reg_get(pdev, pdev->devfn, asmedia_addr[port] | asmedia_gen[gen]));
+				}
+			}
+		}
+	}
+#endif /* MY_DEF_HERE */
+#ifdef MY_DEF_HERE
+	if (0 == syno_asmedia_116x_check(pdev)) {
+		for (gen = 0; gen < SYNO_ASM116X_GEN; ++gen) {
+			for (port = 0; port < SYNO_ASM116X_MAX_PORT_NUM; ++port) {
+				if (0 != sigData[gen][port]) {
+					syno_asmedia_116x_reg_set_byte(pdev, asm116x_port_addr[gen][port], sigData[gen][port]);
+					dev_info(&pdev->dev, "ASM%x port=%d, reg_addr=0x%x, reg_data=0x%x\n",pdev->device, port, asm116x_port_addr[gen][port], syno_asmedia_116x_reg_get_byte(pdev, asm116x_port_addr[gen][port]));
+				}
+			}
+		}
+		for (port = 0; port < SYNO_ASM116X_GEN; port++) {
+			if (sscOffTable[port]) {
+				syno_asmedia_116x_ssc_set(pdev, 0);
+				break;
+			}
+		}
+	}
+#endif /* MY_DEF_HERE */
+
+END:
+	return;
+}
+
+static void syno_init_and_signal_adjust_by_dts(struct ata_host *host)
+{
+	struct pci_dev *pdev = NULL;
+	struct device_node *pSlotNode = NULL;
+	struct device_node *pAhciNode = NULL;
+	
+	unsigned int sigData[SYNO_SATA_MAX_GEN][SYNO_SATA_MAX_PORTS] = {{0}};
+	unsigned int sscOffTable[SYNO_SATA_MAX_PORTS] = {0};
+
+	u32 ata_port_no = U32_MAX;
+
+	char buf[MAX_NODENAME_LEN] = {0};
+	int i = 0;
+
+	if (NULL == of_root || NULL == (pdev = to_pci_dev(host->dev))) {
+		goto END;
+	}
+
+/* Show contorller fw version */
+#ifdef MY_ABC_HERE
+	if (0 == syno_jmb58x_check(pdev->vendor, pdev->device)) {
+		syno_jmb58x_version_show(host);
+	}
+#endif /* MY_ABC_HERE */
+#ifdef CONFIG_SYNO_SATA_ASM116X_CONTROL
+	if (0 == syno_asmedia_116x_check(pdev)) {
+		syno_asmedia_116x_fw_version_show(host);
+	}
+#endif /* CONFIG_SYNO_SATA_ASM116X_CONTROL */
+
+	/* Enum slot */
+	for_each_child_of_node(of_root, pSlotNode) {
+
+		/* Skip non-disk slot */
+		if ((0 != strncmp(pSlotNode->full_name, DT_INTERNAL_SLOT, strlen(DT_INTERNAL_SLOT))) &&
+		    (0 != strncmp(pSlotNode->full_name, DT_ESATA_SLOT, strlen(DT_ESATA_SLOT))) &&
+		    (0 != strncmp(pSlotNode->full_name, DT_CX4_SLOT, strlen(DT_CX4_SLOT))) &&
+		    (0 != strncmp(pSlotNode->full_name, DT_SYSTEM_SLOT, strlen(DT_SYSTEM_SLOT)))) {
+			continue;
+		}
+
+		/* Get AHCI node */
+		if (NULL == (pAhciNode = of_get_child_by_name(pSlotNode, DT_AHCI))) {
+			printk("Can not get ahci node: %s\n", pSlotNode->full_name);
+			continue;
+		}
+
+		/* Match PCIe path */
+		if (0 != syno_compare_dts_pciepath(pdev, pAhciNode)) {
+			continue;
+		}
+
+		/* Get ATA port index */
+		if (0 != of_property_read_u32_index(pAhciNode, DT_ATA_PORT, 0, &ata_port_no)) {
+			continue;
+		}
+
+		/* Check ATA port index is vaild */
+		if (SYNO_SATA_MAX_PORTS <= ata_port_no) {
+			continue;
+		}
+
+		/* Get Singal data & store data */
+		for (i = 0; i < SYNO_SATA_MAX_GEN; i++) {
+			snprintf(buf, MAX_NODENAME_LEN, "signal_data_gen%d", i+1);
+			of_property_read_u32_index(pAhciNode, buf, 0, &sigData[i][ata_port_no]);
+		}
+
+		/* Read SSC OFF */
+		if(of_property_read_bool(pAhciNode, DT_SET_SSC_OFF)) {
+			sscOffTable[ata_port_no] = 1;
+		}
+	}
+
+	syno_set_signal(host, sigData, sscOffTable);
+
+/* General adjust */
+#ifdef MY_DEF_HERE
+	if (0 == syno_asmedia_1061_check(pdev)) {
+		syno_asmedia_1061_reg_set(pdev, pdev->devfn, 0xCAE, 0x92);
+		mdelay(100);
+		syno_asmedia_1061_reg_set(pdev, pdev->devfn, 0xDAE, 0x92);
+	}
+#endif /* MY_DEF_HERE */
+
+END:
+	return;
+
+}
+#endif /* MY_ABC_HERE */
+
 static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	unsigned int board_id = ent->driver_data;
@@ -1672,6 +3534,13 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	int ahci_pci_bar = AHCI_PCI_BAR_STANDARD;
 
 	VPRINTK("ENTER\n");
+
+#ifdef MY_ABC_HERE
+	if ('0' == g_ahci_switch) {
+		printk("AHCI is disabled.\n");
+		return 0;
+	}
+#endif /* MY_ABC_HERE */
 
 	WARN_ON((int)ATA_MAX_QUEUE > AHCI_MAX_CMDS);
 
@@ -1886,6 +3755,24 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		/* disabled/not-implemented port */
 		if (!(hpriv->port_map & (1 << i)))
 			ap->ops = &ata_dummy_port_ops;
+
+#ifdef MY_ABC_HERE
+		ap->ops->syno_compare_node_info = syno_ahci_compare_ata_devicetree_info;
+		/* Fill internal slot index. 0 base, < 0 means error or not internal slot */
+		ap->syno_internal_slot_index = lookup_internal_slot(ap) - 1;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+		/* Have default syno_recover method, set max tries */
+		ap->syno_recover_max_tries = 1;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+		/* Support deep sleep, change recover method to deep retry */
+		if (iIsSynoDeepSleepSupport(ap)) {
+			ap->ops->syno_recover = syno_sata_deep_retry;
+		}
+#endif /* MY_ABC_HERE */
 	}
 
 	/* apply workaround for ASUS P5W DH Deluxe mainboard */
@@ -1907,6 +3794,36 @@ static int ahci_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	ahci_pci_print_info(host);
 
 	pci_set_master(pdev);
+
+#ifdef CONFIG_SYNO_SATA_SIGNAL_ADJUST
+#ifdef MY_ABC_HERE
+	if (syno_mv_9xxx_check(pdev)) {
+		syno_mv_9xxx_amp_adjust(host, pdev);
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (0 == syno_jmb58x_check(pdev->vendor, pdev->device)) {
+		syno_jmb58x_init(host);
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_DEF_HERE
+	if (0 == syno_asmedia_1061_check(pdev)) {
+		syno_asmedia_1061_init(host);
+	}
+#endif /* MY_DEF_HERE */
+
+#ifdef CONFIG_SYNO_SATA_ASM116X_CONTROL
+	if (0 == syno_asmedia_116x_check(pdev)) {
+		syno_asmedia_116x_init(host);
+	}
+#endif /* CONFIG_SYNO_SATA_ASM116X_CONTROL */
+#endif /* CONFIG_SYNO_SATA_SIGNAL_ADJUST */
+
+#ifdef MY_ABC_HERE
+	syno_init_and_signal_adjust_by_dts(host);
+#endif /* MY_ABC_HERE */
 
 	rc = ahci_host_activate(host, &ahci_sht);
 	if (rc)

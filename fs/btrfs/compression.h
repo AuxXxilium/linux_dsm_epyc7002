@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2008 Oracle.  All rights reserved.
@@ -108,6 +111,9 @@ enum btrfs_compression_type {
 	BTRFS_COMPRESS_LZO   = 2,
 	BTRFS_COMPRESS_ZSTD  = 3,
 	BTRFS_NR_COMPRESS_TYPES = 4,
+#ifdef MY_ABC_HERE
+	BTRFS_COMPRESS_DEFAULT = 2,
+#endif /* MY_ABC_HERE */
 };
 
 struct workspace_manager {

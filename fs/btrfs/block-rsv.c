@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 
 #include "misc.h"
@@ -353,6 +356,9 @@ void btrfs_update_global_block_rsv(struct btrfs_fs_info *fs_info)
 	struct btrfs_space_info *sinfo = block_rsv->space_info;
 	u64 num_bytes;
 	unsigned min_items;
+#ifdef MY_ABC_HERE
+	struct btrfs_root *syno_extent_usage_root = fs_info->syno_extent_usage_root;
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * The global block rsv is based on the size of the extent tree, the
@@ -362,6 +368,14 @@ void btrfs_update_global_block_rsv(struct btrfs_fs_info *fs_info)
 	num_bytes = btrfs_root_used(&fs_info->extent_root->root_item) +
 		btrfs_root_used(&fs_info->csum_root->root_item) +
 		btrfs_root_used(&fs_info->tree_root->root_item);
+#ifdef MY_ABC_HERE
+	if (fs_info->free_space_root)
+		num_bytes += btrfs_root_used(&fs_info->free_space_root->root_item);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	if (syno_extent_usage_root)
+		num_bytes += btrfs_root_used(&syno_extent_usage_root->root_item) * 2;
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * We at a minimum are going to modify the csum root, the tree root, and
@@ -386,7 +400,25 @@ void btrfs_update_global_block_rsv(struct btrfs_fs_info *fs_info)
 	spin_lock(&sinfo->lock);
 	spin_lock(&block_rsv->lock);
 
+#ifdef MY_ABC_HERE
+	/*
+	 * When volume size <= 50GB, the first metadata chunk is 256MB (from btrfs-progs)
+	 * In the old version, when the volume size > 80G, we set the
+	 * minimum value of global reservation to 256MB, otherwise set to 16MB.
+	 *
+	 * DSM #126033, lower this condition to volume size >= 10GB.
+	 * Therefore, after the upgrade, the remaining space may be taken
+	 * away by the global reserve, resulting in the volume cannot
+	 * be written, and ENOSPC appears.
+	 */
+	if (fs_info->super_copy->total_bytes > 50ULL * 1024 * 1024 * 1024)
+		num_bytes = max_t(u64, num_bytes, SZ_256M);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	block_rsv->size = min_t(u64, num_bytes, SZ_2G);
+#else /* MY_ABC_HERE */
 	block_rsv->size = min_t(u64, num_bytes, SZ_512M);
+#endif /* MY_ABC_HERE */
 
 	if (block_rsv->reserved < block_rsv->size) {
 		num_bytes = block_rsv->size - block_rsv->reserved;
@@ -412,6 +444,36 @@ void btrfs_update_global_block_rsv(struct btrfs_fs_info *fs_info)
 	spin_unlock(&sinfo->lock);
 }
 
+#ifdef MY_ABC_HERE
+static void init_cleaner_block_rsv(struct btrfs_fs_info *fs_info)
+{
+	struct btrfs_block_rsv *block_rsv = &fs_info->cleaner_block_rsv;
+	struct btrfs_space_info *sinfo = block_rsv->space_info;
+	u64 used, num_bytes;
+
+	spin_lock(&sinfo->lock);
+	spin_lock(&block_rsv->lock);
+
+	block_rsv->size = 0;
+	block_rsv->reserved = 0;
+
+	used = btrfs_space_info_used(sinfo, true);
+	if (used + SZ_16M < sinfo->total_bytes)
+		block_rsv->size = sinfo->total_bytes - used;
+
+	if (fs_info->super_copy->total_bytes > 80ULL * 1024 * 1024 * 1024)
+		block_rsv->size = min_t(u64, block_rsv->size, SZ_128M);
+	else
+		block_rsv->size = min_t(u64, block_rsv->size, SZ_16M);
+	num_bytes = block_rsv->size - block_rsv->reserved;
+	btrfs_space_info_update_bytes_may_use(fs_info, sinfo, num_bytes);
+	block_rsv->reserved = block_rsv->size;
+	block_rsv->full = 1;
+	spin_unlock(&block_rsv->lock);
+	spin_unlock(&sinfo->lock);
+}
+#endif /* MY_ABC_HERE */
+
 void btrfs_init_global_block_rsv(struct btrfs_fs_info *fs_info)
 {
 	struct btrfs_space_info *space_info;
@@ -425,8 +487,21 @@ void btrfs_init_global_block_rsv(struct btrfs_fs_info *fs_info)
 	fs_info->empty_block_rsv.space_info = space_info;
 	fs_info->delayed_block_rsv.space_info = space_info;
 	fs_info->delayed_refs_rsv.space_info = space_info;
+#ifdef MY_ABC_HERE
+	fs_info->cleaner_block_rsv.space_info = space_info;
+#endif /* MY_ABC_HERE */
 
 	fs_info->extent_root->block_rsv = &fs_info->delayed_refs_rsv;
+#ifdef MY_ABC_HERE
+	if (fs_info->syno_usage_root)
+		fs_info->syno_usage_root->block_rsv = &fs_info->delayed_refs_rsv;
+	if (fs_info->syno_extent_usage_root)
+		fs_info->syno_extent_usage_root->block_rsv = &fs_info->delayed_refs_rsv;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	if (fs_info->free_space_root)
+		fs_info->free_space_root->block_rsv = &fs_info->global_block_rsv;
+#endif /* MY_ABC_HERE */
 	fs_info->csum_root->block_rsv = &fs_info->delayed_refs_rsv;
 	fs_info->dev_root->block_rsv = &fs_info->global_block_rsv;
 	fs_info->tree_root->block_rsv = &fs_info->global_block_rsv;
@@ -435,10 +510,16 @@ void btrfs_init_global_block_rsv(struct btrfs_fs_info *fs_info)
 	fs_info->chunk_root->block_rsv = &fs_info->chunk_block_rsv;
 
 	btrfs_update_global_block_rsv(fs_info);
+#ifdef MY_ABC_HERE
+	init_cleaner_block_rsv(fs_info);
+#endif /* MY_ABC_HERE */
 }
 
 void btrfs_release_global_block_rsv(struct btrfs_fs_info *fs_info)
 {
+#ifdef MY_ABC_HERE
+	block_rsv_release_bytes(fs_info, &fs_info->cleaner_block_rsv, NULL, (u64)-1, NULL);
+#endif /* MY_ABC_HERE */
 	btrfs_block_rsv_release(fs_info, &fs_info->global_block_rsv, (u64)-1,
 				NULL);
 	WARN_ON(fs_info->trans_block_rsv.size > 0);
@@ -458,9 +539,22 @@ static struct btrfs_block_rsv *get_block_rsv(
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct btrfs_block_rsv *block_rsv = NULL;
 
+#ifdef MY_ABC_HERE
+	if (root != fs_info->chunk_root && trans->syno_usage)
+		return &fs_info->delayed_refs_rsv;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	if (root != fs_info->chunk_root && trans->cleaner)
+		return &fs_info->cleaner_block_rsv;
+#endif /* MY_ABC_HERE */
+
 	if (test_bit(BTRFS_ROOT_SHAREABLE, &root->state) ||
 	    (root == fs_info->csum_root && trans->adding_csums) ||
-	    (root == fs_info->uuid_root))
+	    (root == fs_info->uuid_root)
+#ifdef MY_ABC_HERE
+	    || (root == fs_info->syno_feat_root)
+#endif /* MY_ABC_HERE */
+	    )
 		block_rsv = trans->block_rsv;
 
 	if (!block_rsv)
@@ -482,6 +576,9 @@ struct btrfs_block_rsv *btrfs_use_block_rsv(struct btrfs_trans_handle *trans,
 	int ret;
 	bool global_updated = false;
 
+#ifdef MY_ABC_HERE
+retry:
+#endif /* MY_ABC_HERE */
 	block_rsv = get_block_rsv(trans, root);
 
 	if (unlikely(block_rsv->size == 0))
@@ -493,6 +590,13 @@ again:
 
 	if (block_rsv->failfast)
 		return ERR_PTR(ret);
+
+#ifdef MY_ABC_HERE
+	if (block_rsv == &fs_info->cleaner_block_rsv) {
+		trans->cleaner = false;
+		goto retry;
+	}
+#endif /* MY_ABC_HERE */
 
 	if (block_rsv->type == BTRFS_BLOCK_RSV_GLOBAL && !global_updated) {
 		global_updated = true;
@@ -529,6 +633,12 @@ try_reserve:
 		ret = btrfs_block_rsv_use_bytes(global_rsv, blocksize);
 		if (!ret)
 			return global_rsv;
+#ifdef MY_ABC_HERE
+		if (block_rsv->type != BTRFS_BLOCK_RSV_TEMP) {
+			block_rsv = global_rsv;
+			goto again;
+		}
+#endif /* MY_ABC_HERE */
 	}
 	return ERR_PTR(ret);
 }

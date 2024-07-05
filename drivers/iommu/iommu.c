@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2007-2008 Advanced Micro Devices, Inc.
@@ -28,9 +31,16 @@
 static struct kset *iommu_group_kset;
 static DEFINE_IDA(iommu_group_ida);
 
+#ifdef MY_ABC_HERE
+#define IOMMU_CMD_LINE_DMA_API		BIT(0)
+static unsigned int iommu_def_domain_type __read_mostly = IOMMU_DOMAIN_IDENTITY;
+static bool iommu_dma_strict __read_mostly = true;
+static u32 iommu_cmd_line __read_mostly = IOMMU_CMD_LINE_DMA_API;
+#else /* MY_ABC_HERE */
 static unsigned int iommu_def_domain_type __read_mostly;
 static bool iommu_dma_strict __read_mostly = true;
 static u32 iommu_cmd_line __read_mostly;
+#endif /* MY_ABC_HERE */
 
 struct iommu_group {
 	struct kobject kobj;
@@ -68,7 +78,10 @@ static const char * const iommu_group_resv_type_string[] = {
 	[IOMMU_RESV_SW_MSI]			= "msi",
 };
 
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 #define IOMMU_CMD_LINE_DMA_API		BIT(0)
+#endif /* MY_ABC_HERE */
 
 static void iommu_set_cmd_line_dma_api(void)
 {
@@ -1467,6 +1480,12 @@ static int iommu_get_def_domain_type(struct device *dev)
 	if (ops->def_domain_type)
 		type = ops->def_domain_type(dev);
 
+#ifdef MY_ABC_HERE
+	if (type) {
+		dev_info(dev, "Device specific iommu domain: %s\n", iommu_domain_type_str(type));
+	}
+#endif /* MY_ABC_HERE */
+
 	return (type == 0) ? iommu_def_domain_type : type;
 }
 
@@ -1661,6 +1680,10 @@ static int probe_get_default_domain_type(struct device *dev, void *data)
 				 dev_name(gtype->dev),
 				 iommu_domain_type_str(gtype->type));
 			gtype->type = 0;
+#ifdef MY_ABC_HERE
+		} else {
+			dev_info(dev, "Device specific iommu domain: %s\n", iommu_domain_type_str(type));
+#endif /* MY_ABC_HERE */
 		}
 
 		if (!gtype->dev) {

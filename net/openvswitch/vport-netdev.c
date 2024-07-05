@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2007-2012 Nicira, Inc.
@@ -107,6 +110,27 @@ struct vport *ovs_netdev_link(struct vport *vport, const char *name)
 	dev_disable_lro(vport->dev);
 	dev_set_promiscuity(vport->dev, 1);
 	vport->dev->priv_flags |= IFF_OVS_DATAPATH;
+#ifdef MY_ABC_HERE
+	if (unlikely(vport->dev->flags & IFF_SLAVE)) {
+		netdev_err(vport->dev, "Error: Device was already enslaved.\n");
+	}
+	vport->dev->flags |= IFF_SLAVE;
+
+	if (syno_is_eth_name(vport->dev->name)) {
+		struct net_device *ovs_eth_dev =
+			syno_ovs_eth_get_from_eth(vport->dev);
+
+		if (ovs_eth_dev) {
+			if (netif_carrier_ok(vport->dev)) {
+				netif_carrier_on(ovs_eth_dev);
+			} else {
+				netif_carrier_off(ovs_eth_dev);
+			}
+
+			dev_put(ovs_eth_dev);
+		}
+	}
+#endif /* MY_ABC_HERE */
 	rtnl_unlock();
 
 	return vport;
@@ -146,6 +170,9 @@ static void vport_netdev_free(struct rcu_head *rcu)
 void ovs_netdev_detach_dev(struct vport *vport)
 {
 	ASSERT_RTNL();
+#ifdef MY_ABC_HERE
+	vport->dev->flags &= ~IFF_SLAVE;
+#endif /* MY_ABC_HERE */
 	vport->dev->priv_flags &= ~IFF_OVS_DATAPATH;
 	netdev_rx_handler_unregister(vport->dev);
 	netdev_upper_dev_unlink(vport->dev,

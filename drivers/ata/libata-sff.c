@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  libata-sff.c - helper library for PCI IDE BMDMA
@@ -928,6 +931,26 @@ static void ata_hsm_qc_complete(struct ata_queued_cmd *qc, int in_wq)
 	struct ata_port *ap = qc->ap;
 
 	if (ap->ops->error_handler) {
+#ifdef MY_DEF_HERE
+		if (IS_SYNO_SPINUP_CMD(qc)) {
+			if (in_wq) { 
+				ata_sff_irq_on(ap);
+			}
+
+			/* read result TF if requested, copy from ata_qc_complete() and fill_result_tf() */
+			if (qc->err_mask ||
+				qc->flags & ATA_QCFLAG_RESULT_TF ||
+				qc->flags & ATA_QCFLAG_FAILED) {
+				qc->result_tf.flags = qc->tf.flags;
+				ap->ops->qc_fill_rtf(qc);
+			}
+			
+			__ata_qc_complete(qc);
+				
+			return;
+		}
+#endif /* MY_DEF_HERE */
+
 		if (in_wq) {
 			/* EH might have kicked in while host lock is
 			 * released.
@@ -937,12 +960,28 @@ static void ata_hsm_qc_complete(struct ata_queued_cmd *qc, int in_wq)
 				if (likely(!(qc->err_mask & AC_ERR_HSM))) {
 					ata_sff_irq_on(ap);
 					ata_qc_complete(qc);
-				} else
+				}
+#ifdef MY_ABC_HERE
+				else if (NULL == qc->scsicmd && !ata_tag_internal(qc->tag)) {
+					DBGMESG("disk %d:its our insert cmd,don't freeze. cmd 0x%x tag %d feature 0x%x\n",
+								qc->ap->print_id, qc->tf.command, qc->tag, qc->tf.feature);
+					__ata_qc_complete(qc);
+				}
+#endif /* MY_ABC_HERE */
+				else
 					ata_port_freeze(ap);
+
 			}
 		} else {
 			if (likely(!(qc->err_mask & AC_ERR_HSM)))
 				ata_qc_complete(qc);
+#ifdef MY_ABC_HERE
+			else if (NULL == qc->scsicmd && !ata_tag_internal(qc->tag)) {
+				DBGMESG("disk %d:its our insert cmd,don't freeze. cmd 0x%x tag %d feature 0x%x\n",
+						qc->ap->print_id, qc->tf.command, qc->tag, qc->tf.feature);
+				__ata_qc_complete(qc);
+			}
+#endif /* MY_ABC_HERE */
 			else
 				ata_port_freeze(ap);
 		}
@@ -974,6 +1013,15 @@ int ata_sff_hsm_move(struct ata_port *ap, struct ata_queued_cmd *qc,
 
 	lockdep_assert_held(ap->lock);
 
+#ifdef MY_ABC_HERE
+	/* if Synology special command timeout,
+	 * it will be flushed (ATA_QCFLAG_ACTIVE = 0).
+	 * But it still in workqueue, so we should be ignore it when called by ata_pio_task
+	 */
+	if (syno_qc_filter(qc)) {
+		goto fsm_start;
+	}
+#endif /* MY_ABC_HERE */
 	WARN_ON_ONCE((qc->flags & ATA_QCFLAG_ACTIVE) == 0);
 
 	/* Make sure ata_sff_qc_issue() does not throw things
@@ -1247,6 +1295,20 @@ void ata_sff_flush_pio_task(struct ata_port *ap)
 
 	cancel_delayed_work_sync(&ap->sff_pio_task);
 
+#ifdef MY_ABC_HERE
+	/*
+	 * FIXME:
+	 * The following kernel upstream fix doesn't apply to our kernel
+	 *
+	 *    commit ce7514526742c0898b837d4395f515b79dfb5a12 upstream.
+	 *    libata: prevent HSM state change race between ISR and PIO
+	 *
+	 * ata_sff_flush_pio_task() is used when sending internal commands. We add
+	 * another path to use internal commands, the commands may come from user
+	 * space and will be preempted by EH, EH also use internal commands. This
+	 * spin_lock_irq may cause deadlock, so we remove it.
+	 */
+#else /* MY_ABC_HERE */
 	/*
 	 * We wanna reset the HSM state to IDLE.  If we do so without
 	 * grabbing the port lock, critical sections protected by it which
@@ -1256,8 +1318,15 @@ void ata_sff_flush_pio_task(struct ata_port *ap)
 	 * ata_sff_hsm_move() causing ata_sff_hsm_move() to BUG().
 	 */
 	spin_lock_irq(ap->lock);
+#endif /* MY_ABC_HERE */
+
 	ap->hsm_task_state = HSM_ST_IDLE;
+
+#ifdef MY_ABC_HERE
+	/* Please see above FIXME */
+#else /* MY_ABC_HERE */
 	spin_unlock_irq(ap->lock);
+#endif /* MY_ABC_HERE */
 
 	ap->sff_pio_task_link = NULL;
 
@@ -1993,6 +2062,12 @@ int ata_sff_softreset(struct ata_link *link, unsigned int *classes,
 	/* if link is occupied, -ENODEV too is an error */
 	if (rc && (rc != -ENODEV || sata_scr_valid(link))) {
 		ata_link_err(link, "SRST failed (errno=%d)\n", rc);
+#ifdef MY_ABC_HERE
+		if (-EBUSY == rc) {
+			ata_link_printk(link, KERN_ERR, "SRST fail, set srst fail flag\n");
+			link->uiSflags |= ATA_SYNO_FLAG_SRST_FAIL;
+		}
+#endif /* MY_ABC_HERE */
 		return rc;
 	}
 

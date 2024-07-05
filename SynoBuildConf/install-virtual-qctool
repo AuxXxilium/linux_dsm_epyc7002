@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# shellcheck disable=SC2154
+if [ "$PLATFORM_FAMILY" != "SYNOPLAT_F_X86_64" ]; then
+	SkipThisProject
+	return
+fi
+
+if [ -e "tools/power/x86/turbostat/turbostat" ]; then
+	install -Dm755 tools/power/x86/turbostat/turbostat "${TmpInstDir}"/turbostat
+fi

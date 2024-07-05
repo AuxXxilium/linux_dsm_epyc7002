@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_FS_H
 #define _LINUX_FS_H
@@ -43,6 +46,10 @@
 #include <asm/byteorder.h>
 #include <uapi/linux/fs.h>
 
+#ifdef MY_ABC_HERE
+#include <linux/sched.h>
+#endif /* MY_ABC_HERE */
+
 struct backing_dev_info;
 struct bdi_writeback;
 struct bio;
@@ -68,6 +75,9 @@ struct fsverity_info;
 struct fsverity_operations;
 struct fs_context;
 struct fs_parameter_spec;
+#ifdef MY_ABC_HERE
+struct socket;
+#endif /* MY_ABC_HERE */
 
 extern void __init inode_init(void);
 extern void __init inode_init_early(void);
@@ -92,6 +102,33 @@ typedef int (get_block_t)(struct inode *inode, sector_t iblock,
 typedef int (dio_iodone_t)(struct kiocb *iocb, loff_t offset,
 			ssize_t bytes, void *private);
 
+#ifdef MY_ABC_HERE
+/*
+   Note!!!!! It should be consistent with SYNO_ACL_MAY_XXXXX in <uapi/linux/syno_acl.h>
+*/
+#define MAY_EXEC		0x00000001
+#define MAY_WRITE		0x00000002
+#define MAY_READ		0x00000004
+#define MAY_APPEND		0x00000008
+#define MAY_ACCESS 		0x00000010
+#define MAY_OPEN 		0x00000020
+
+#define MAY_READ_EXT_ATTR	0x00000040
+#define MAY_READ_PERMISSION	0x00000080
+#define MAY_READ_ATTR		0x00000100
+#define MAY_WRITE_ATTR		0x00000200
+#define MAY_WRITE_EXT_ATTR	0x00000400
+#define MAY_WRITE_PERMISSION	0x00000800
+#define MAY_DEL			0x00001000
+#define MAY_DEL_CHILD		0x00002000
+#define MAY_GET_OWNER_SHIP	0x00004000
+
+#define MAY_CHDIR		0x00010000
+#define MAY_NOT_BLOCK		0x00020000 /* called from RCU mode, don't block */
+
+#define MASK_RDONLY_CHECK       (MAY_WRITE|MAY_APPEND|MAY_WRITE_ATTR|MAY_WRITE_EXT_ATTR|MAY_WRITE_PERMISSION|MAY_DEL|MAY_DEL_CHILD|MAY_GET_OWNER_SHIP)
+
+#else /* MY_ABC_HERE */
 #define MAY_EXEC		0x00000001
 #define MAY_WRITE		0x00000002
 #define MAY_READ		0x00000004
@@ -101,6 +138,7 @@ typedef int (dio_iodone_t)(struct kiocb *iocb, loff_t offset,
 #define MAY_CHDIR		0x00000040
 /* called from RCU mode, don't block */
 #define MAY_NOT_BLOCK		0x00000080
+#endif /* MY_ABC_HERE */
 
 /*
  * flags in file.f_mode.  Note that FMODE_READ and FMODE_WRITE must correspond
@@ -280,6 +318,11 @@ enum positive_aop_returns {
 #define AOP_FLAG_NOFS			0x0002 /* used by filesystem to direct
 						* helper code (eg buffer layer)
 						* to clear GFP_FS from alloc */
+#ifdef MY_ABC_HERE
+/* Number of recvfile flags follow LK4.4, but it's not obligatory. */
+#define AOP_FLAG_RECVFILE      0x0008
+#define AOP_FLAG_RECVFILE_ECRYPTFS_NO_TRUNCATE      0x0020
+#endif /* MY_ABC_HERE */
 
 /*
  * oh the beauties of C type declarations.
@@ -388,6 +431,11 @@ struct address_space_operations {
 	int (*write_end)(struct file *, struct address_space *mapping,
 				loff_t pos, unsigned len, unsigned copied,
 				struct page *page, void *fsdata);
+#ifdef MY_ABC_HERE
+	int (*aggregate_write_end)(struct file *, struct address_space *mapping,
+				loff_t pos, unsigned len, unsigned copied,
+				struct page **page, unsigned page_num);
+#endif /* MY_ABC_HERE */
 
 	/* Unfortunately this kludge is needed for FIBMAP. Don't use it */
 	sector_t (*bmap)(struct address_space *, sector_t);
@@ -594,11 +642,24 @@ is_uncached_acl(struct posix_acl *acl)
 	return (long)acl & 1;
 }
 
+#ifdef MY_ABC_HERE
+struct syno_acl;
+
+static inline bool
+is_uncached_syno_acl(struct syno_acl *acl)
+{
+	return (long)acl & 1;
+}
+#endif /* MY_ABC_HERE */
+
 #define IOP_FASTPERM	0x0001
 #define IOP_LOOKUP	0x0002
 #define IOP_NOFOLLOW	0x0004
 #define IOP_XATTR	0x0008
 #define IOP_DEFAULT_READLINK	0x0010
+#ifdef MY_ABC_HERE
+#define IOP_ECRYPTFS_LOWER_INIT	0x0040
+#endif /* MY_ABC_HERE */
 
 struct fsnotify_mark_connector;
 
@@ -614,6 +675,9 @@ struct inode {
 	kgid_t			i_gid;
 	unsigned int		i_flags;
 
+#ifdef MY_ABC_HERE
+	struct syno_acl		*i_syno_acl;
+#endif /* MY_ABC_HERE */
 #ifdef CONFIG_FS_POSIX_ACL
 	struct posix_acl	*i_acl;
 	struct posix_acl	*i_default_acl;
@@ -716,6 +780,16 @@ struct inode {
 #ifdef CONFIG_FS_VERITY
 	struct fsverity_info	*i_verity_info;
 #endif
+
+#ifdef MY_ABC_HERE
+	u32			i_archive_bit;
+	struct mutex		i_archive_bit_mutex;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	u32			i_archive_version;
+	struct mutex		i_archive_version_mutex;
+#endif /* MY_ABC_HERE */
 
 	void			*i_private; /* fs or device private pointer */
 } __randomize_layout;
@@ -952,6 +1026,15 @@ struct file {
 	struct address_space	*f_mapping;
 	errseq_t		f_wb_err;
 	errseq_t		f_sb_err; /* for syncfs */
+#ifdef MY_ABC_HERE
+	struct list_head	open_list;
+	char comm[TASK_COMM_LEN];
+	pid_t pid;
+#ifdef CONFIG_SMP
+	int	f_sb_list_cpu;
+#endif /* CONFIG_SMP */
+#endif /* MY_ABC_HERE */
+
 } __randomize_layout
   __attribute__((aligned(4)));	/* lest something weird decides that 2 is OK */
 
@@ -1332,6 +1415,9 @@ extern void fasync_free(struct fasync_struct *);
 /* can be called from interrupts */
 extern void kill_fasync(struct fasync_struct **, int, int);
 
+#ifdef MY_ABC_HERE
+extern int setfl(int fd, struct file *filp, unsigned long arg);
+#endif /* MY_ABC_HERE */
 extern void __f_setown(struct file *filp, struct pid *, enum pid_type, int force);
 extern int f_setown(struct file *filp, unsigned long arg, int force);
 extern void f_delown(struct file *filp);
@@ -1349,11 +1435,17 @@ extern int send_sigurg(struct fown_struct *fown);
 #define SB_SYNCHRONOUS	16	/* Writes are synced at once */
 #define SB_MANDLOCK	64	/* Allow mandatory locks on an FS */
 #define SB_DIRSYNC	128	/* Directory modifications are synchronous */
+#ifdef MY_ABC_HERE
+#define SB_ROOTPRJQUOTA 512
+#endif /* MY_ABC_HERE */
 #define SB_NOATIME	1024	/* Do not update access times. */
 #define SB_NODIRATIME	2048	/* Do not update directory access times */
 #define SB_SILENT	32768
 #define SB_POSIXACL	(1<<16)	/* VFS does not apply the umask */
 #define SB_INLINECRYPT	(1<<17)	/* Use blk-crypto for encrypted files */
+#ifdef MY_ABC_HERE
+#define SB_SYNOACL      (1<<20) /* Synology WinACL */
+#endif /* MY_ABC_HERE */
 #define SB_KERNMOUNT	(1<<22) /* this is a kern_mount call */
 #define SB_I_VERSION	(1<<23) /* Update inode I_version field */
 #define SB_LAZYTIME	(1<<25) /* Update the on-disk [acm]times lazily */
@@ -1547,6 +1639,29 @@ struct super_block {
 
 	spinlock_t		s_inode_wblist_lock;
 	struct list_head	s_inodes_wb;	/* writeback inodes */
+#ifdef MY_ABC_HERE
+	/*
+	 * relatime_period can be changed by mount option "relatime_period=%u".
+	 * Because most file systems do not accept unrecognized mount options,
+	 * this option is parsed by underlying file systems instead of vfs layer.
+	 */
+	long relatime_period;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	struct rw_semaphore	s_archive_version_rwsem;
+	u32			s_archive_version;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	struct ratelimit_state	rs;
+#ifdef CONFIG_SMP
+	struct list_head __percpu *s_files;
+#else /* CONFIG_SMP */
+	struct list_head	s_files;
+#endif /* CONFIG_SMP */
+#endif /* MY_ABC_HERE */
+
 } __randomize_layout;
 
 /* Helper functions so that in most cases filesystems will
@@ -1763,6 +1878,18 @@ extern void inode_init_owner(struct inode *inode, const struct inode *dir,
 			umode_t mode);
 extern bool may_open_dev(const struct path *path);
 
+#ifdef MY_ABC_HERE
+extern int vfs_quota_query(struct file *file, u64 *used, u64 *reserved, u64 *limit);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+/*
+ * VFS space_usage helper definitions.
+ */
+extern int vfs_syno_space_usage(struct file *file, struct syno_space_usage_info *info);
+#endif /* MY_ABC_HERE */
+
+
 /*
  * This is the "filldir" function type, used by readdir() to let
  * the kernel specify what kind of dirent layout it wants to have.
@@ -1807,6 +1934,9 @@ struct dir_context {
  */
 #define REMAP_FILE_DEDUP		(1 << 0)
 #define REMAP_FILE_CAN_SHORTEN		(1 << 1)
+#ifdef MY_ABC_HERE
+#define REMAP_FILE_SKIP_CHECK_COMPR_DIR (1 << 8)
+#endif /* MY_ABC_HERE */
 
 /*
  * These flags signal that the caller is ok with altering various aspects of
@@ -1815,9 +1945,18 @@ struct dir_context {
  * Flags in this category exist to preserve the quirky behavior of the hoisted
  * btrfs clone/dedupe ioctls.
  */
+#ifdef MY_ABC_HERE
+#define REMAP_FILE_ADVISORY		(REMAP_FILE_CAN_SHORTEN \
+					| REMAP_FILE_SKIP_CHECK_COMPR_DIR \
+					)
+#else /* MY_ABC_HERE */
 #define REMAP_FILE_ADVISORY		(REMAP_FILE_CAN_SHORTEN)
+#endif /* MY_ABC_HERE */
 
 struct iov_iter;
+#ifdef MY_ABC_HERE
+typedef int (*encrypt_page_cb_t)(struct page *enc_page, void *crypt_stat_ptr, struct page *page);
+#endif /* MY_ABC_HERE */
 
 struct file_operations {
 	struct module *owner;
@@ -1843,6 +1982,9 @@ struct file_operations {
 	ssize_t (*sendpage) (struct file *, struct page *, int, size_t, loff_t *, int);
 	unsigned long (*get_unmapped_area)(struct file *, unsigned long, unsigned long, unsigned long, unsigned long);
 	int (*check_flags)(int);
+#ifdef MY_ABC_HERE
+	int (*setfl)(struct file *, unsigned long);
+#endif /* MY_ABC_HERE */
 	int (*flock) (struct file *, int, struct file_lock *);
 	ssize_t (*splice_write)(struct pipe_inode_info *, struct file *, loff_t *, size_t, unsigned int);
 	ssize_t (*splice_read)(struct file *, loff_t *, struct pipe_inode_info *, size_t, unsigned int);
@@ -1853,12 +1995,29 @@ struct file_operations {
 #ifndef CONFIG_MMU
 	unsigned (*mmap_capabilities)(struct file *);
 #endif
+#ifdef MY_ABC_HERE
+	ssize_t (*syno_recvfile)(int fd, struct file *file, struct socket *sock,
+	                         loff_t pos, size_t count, size_t * rbytes, size_t * wbytes);
+#ifdef MY_ABC_HERE
+	int (*ecryptfs_zero_copy)(struct file *file, loff_t pos, int num_page,
+			struct page **pages, encrypt_page_cb_t encrypt_cb, void *crypt_stat);
+#endif /* MY_ABC_HERE */
+#endif /* MY_ABC_HERE */
 	ssize_t (*copy_file_range)(struct file *, loff_t, struct file *,
 			loff_t, size_t, unsigned int);
 	loff_t (*remap_file_range)(struct file *file_in, loff_t pos_in,
 				   struct file *file_out, loff_t pos_out,
 				   loff_t len, unsigned int remap_flags);
 	int (*fadvise)(struct file *, loff_t, loff_t, int);
+#ifdef MY_ABC_HERE
+	long (*non_blocking_punch_hole)(struct file *file, loff_t offset, loff_t len);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	int (*quota_query) (struct file *file, u64 *used, u64 *reserved, u64 *limit);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	int (*syno_space_usage) (struct file *file, struct syno_space_usage_info *info);
+#endif /* MY_ABC_HERE */
 } __randomize_layout;
 
 struct inode_operations {
@@ -1889,6 +2048,54 @@ struct inode_operations {
 			   umode_t create_mode);
 	int (*tmpfile) (struct inode *, struct dentry *, umode_t);
 	int (*set_acl)(struct inode *, struct posix_acl *, int);
+#ifdef MY_ABC_HERE
+	int (*syno_locker_mode_get)(struct inode *, enum locker_mode *);
+	int (*syno_locker_state_get)(struct inode *, enum locker_state *);
+	int (*syno_locker_state_set)(struct inode *, enum locker_state);
+	int (*syno_locker_period_end_set)(struct inode *, struct timespec64 *);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	int (*syno_getattr)(struct dentry *, struct kstat *, unsigned int syno_flags);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	int (*syno_get_archive_bit)(struct dentry *, unsigned int *, int);
+	int (*syno_set_archive_bit)(struct dentry *, unsigned int);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	int (*syno_get_archive_version)(struct dentry *, u32 *);
+	int (*syno_set_archive_version)(struct dentry *, u32);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	int (*syno_get_crtime)(struct inode *, struct timespec64 *);
+	int (*syno_set_crtime)(struct inode *, struct timespec64 *);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	struct syno_acl * (*syno_get_acl)(struct inode *);
+	int (*syno_set_acl)(struct inode *, struct syno_acl *);
+	int (*syno_acl_xattr_get)(struct dentry *, int, void *, size_t);
+	int (*syno_permission)(struct dentry *, int);
+	int (*syno_exec_permission)(struct dentry *);
+	int (*syno_archive_bit_change_ok)(struct dentry *, unsigned int cmd, int tag, int mask);
+	int (*syno_setattr_prepare)(struct dentry *, struct iattr *);
+	int (*syno_setattr_post)(struct dentry *, struct iattr *);
+	int (*syno_may_delete)(struct dentry *, struct inode *);
+	int (*syno_may_access)(struct dentry *, int);
+	void (*syno_acl_to_mode)(struct dentry *, struct kstat *);
+	int (*syno_acl_init)(struct dentry *, struct inode *);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	/* fsdev support */
+	int (*fsdev_activate)(struct inode *inode, struct block_device **fs_bdev);
+	void (*fsdev_deactivate)(struct inode *inode);
+	int (*fsdev_mapping)(struct inode *inode, u64 start, u64 end, u64 *dev_start, u64 *dev_end);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	int (*syno_rbd_meta_file_activate)(struct inode *);
+	int (*syno_rbd_meta_file_deactivate)(struct inode *);
+	int (*syno_rbd_meta_file_mapping)(struct inode *,
+			struct syno_rbd_meta_ioctl_args *args);
+#endif /* MY_ABC_HERE */
 } ____cacheline_aligned;
 
 static inline ssize_t call_read_iter(struct file *file, struct kiocb *kio,
@@ -1930,6 +2137,10 @@ extern int vfs_dedupe_file_range(struct file *file,
 extern loff_t vfs_dedupe_file_range_one(struct file *src_file, loff_t src_pos,
 					struct file *dst_file, loff_t dst_pos,
 					loff_t len, unsigned int remap_flags);
+#ifdef MY_ABC_HERE
+extern ssize_t vfs_recvfile(int fd, struct file *file, struct socket *sock,
+		loff_t pos, size_t count, size_t *received, size_t *written);
+#endif /* MY_ABC_HERE */
 
 
 struct super_operations {
@@ -1965,6 +2176,22 @@ struct super_operations {
 				  struct shrink_control *);
 	long (*free_cached_objects)(struct super_block *,
 				    struct shrink_control *);
+#ifdef MY_ABC_HERE
+	int (*syno_get_sb_archive_version)(struct super_block *sb, u32 *version);
+	int (*syno_set_sb_archive_version)(struct super_block *sb, u32 version);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	int (*syno_decrypt_filename)(char **plaintext_name,
+				     size_t *plaintext_name_size,
+				     struct super_block *sb,
+				     const char *name,
+				     size_t name_size);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	int (*syno_rbd_set_first_mapping_table_offset)(
+			struct super_block *, u64 offset);
+	int (*syno_rbd_meta_file_cleanup_all)(struct inode *);
+#endif /* MY_ABC_HERE */
 };
 
 /*
@@ -1992,6 +2219,10 @@ struct super_operations {
 #define S_CASEFOLD	(1 << 15) /* Casefolded file */
 #define S_VERITY	(1 << 16) /* Verity file (using fs/verity/) */
 
+#ifdef MY_ABC_HERE
+#define S_ARCHIVE_VERSION_CACHED (1 << 31) /* Mark i_archive_version is ready to use */
+#endif /* MY_ABC_HERE */
+
 /*
  * Note that nosuid etc flags are inode-specific: setting some file-system
  * flags just means all the inodes inherit those flags by default. It might be
@@ -2018,8 +2249,14 @@ static inline bool sb_rdonly(const struct super_block *sb) { return sb->s_flags 
 #define IS_I_VERSION(inode)	__IS_FLG(inode, SB_I_VERSION)
 
 #define IS_NOQUOTA(inode)	((inode)->i_flags & S_NOQUOTA)
+#ifdef MY_ABC_HERE
+#define IS_APPEND(inode)	((inode)->i_flags & S_APPEND || syno_op_locker_is_appendable(inode))
+#define IS_IMMUTABLE(inode)	((inode)->i_flags & S_IMMUTABLE || syno_op_locker_is_immutable(inode))
+#define IS_EXPIRED(inode)	syno_op_locker_is_expired(inode)
+#else
 #define IS_APPEND(inode)	((inode)->i_flags & S_APPEND)
 #define IS_IMMUTABLE(inode)	((inode)->i_flags & S_IMMUTABLE)
+#endif /* MY_ABC_HERE */
 #define IS_POSIXACL(inode)	__IS_FLG(inode, SB_POSIXACL)
 
 #define IS_DEADDIR(inode)	((inode)->i_flags & S_DEAD)
@@ -2036,6 +2273,21 @@ static inline bool sb_rdonly(const struct super_block *sb) { return sb->s_flags 
 
 #define IS_WHITEOUT(inode)	(S_ISCHR(inode->i_mode) && \
 				 (inode)->i_rdev == WHITEOUT_DEV)
+
+#ifdef MY_ABC_HERE
+#define IS_ARCHIVE_VERSION_CACHED(inode) ((inode)->i_flags & S_ARCHIVE_VERSION_CACHED)
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+/*
+ * Usually, we hack trim function to send unused hints.
+ * This flag is used to tell if we want to send hint or trim
+ */
+enum trim_act {
+	TRIM_SEND_TRIM,
+	TRIM_SEND_HINT
+};
+#endif /* MY_ABC_HERE */
 
 static inline bool HAS_UNMAPPED_ID(struct inode *inode)
 {
@@ -2252,6 +2504,12 @@ struct file_system_type {
 	struct lock_class_key i_lock_key;
 	struct lock_class_key i_mutex_key;
 	struct lock_class_key i_mutex_dir_key;
+#ifdef MY_ABC_HERE
+	struct lock_class_key i_archive_bit_mutex_key;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	struct lock_class_key i_archive_version_mutex_key;
+#endif /* MY_ABC_HERE */
 };
 
 #define MODULE_ALIAS_FS(NAME) MODULE_ALIAS("fs-" NAME)
@@ -2328,6 +2586,9 @@ extern int current_umask(void);
 extern void ihold(struct inode * inode);
 extern void iput(struct inode *);
 extern int generic_update_time(struct inode *, struct timespec64 *, int);
+#ifdef MY_ABC_HERE
+extern int update_time(struct inode *, struct timespec64 *, int);
+#endif /* MY_ABC_HERE */
 
 /* /sys/fs */
 extern struct kobject *fs_kobj;
@@ -2564,6 +2825,9 @@ static inline bool sb_is_blkdev_sb(struct super_block *sb)
 }
 
 void emergency_thaw_all(void);
+#ifdef MY_ABC_HERE
+extern int __sync_filesystem(struct super_block *, int);
+#endif /* MY_ABC_HERE */
 extern int sync_filesystem(struct super_block *);
 extern const struct file_operations def_blk_fops;
 extern const struct file_operations def_chr_fops;
@@ -2964,6 +3228,14 @@ extern ssize_t generic_write_checks(struct kiocb *, struct iov_iter *);
 extern int generic_write_check_limits(struct file *file, loff_t pos,
 		loff_t *count);
 extern int generic_file_rw_checks(struct file *file_in, struct file *file_out);
+
+#ifdef MY_ABC_HERE
+/* The max size of receive file request is "128KB" */
+#define MAX_RECVFILE_BUF (128 * 1024)
+#define MAX_PAGES_PER_RECVFILE (MAX_RECVFILE_BUF / PAGE_SIZE)
+extern int do_recvfile(struct file *, struct socket *, loff_t , size_t , size_t * , size_t *);
+#endif /* MY_ABC_HERE */
+
 extern ssize_t generic_file_buffered_read(struct kiocb *iocb,
 		struct iov_iter *to, ssize_t already_read);
 extern ssize_t generic_file_read_iter(struct kiocb *, struct iov_iter *);
@@ -3394,6 +3666,15 @@ static inline void inode_has_no_xattr(struct inode *inode)
 		inode->i_flags |= S_NOSEC;
 }
 
+#ifdef MY_ABC_HERE
+#define SYNO_SMB_PSTRING_LEN 		1024
+#define UTF16_UPCASE_TABLE_SIZE 	0x10000		/* 64k chars */
+#define UNICODE_UTF16_BUFSIZE		4096		/* should be safe enough for namei */
+#define UNICODE_UTF8_BUFSIZE		8192
+int syno_utf8_strcmp(const u_int8_t *utf8str1,const u_int8_t *utf8str2,int len_utf8_str1, int len_utf8_str2, u_int16_t *upcasetable);
+int syno_utf8_toupper(u_int8_t *to,const u_int8_t *from, int maxlen, int clenfrom, u_int16_t *upcasetable);
+#endif /* MY_ABC_HERE */
+
 static inline bool is_root_inode(struct inode *inode)
 {
 	return inode == inode->i_sb->s_root->d_inode;
@@ -3474,5 +3755,12 @@ static inline int inode_drain_writes(struct inode *inode)
 	inode_dio_wait(inode);
 	return filemap_write_and_wait(inode->i_mapping);
 }
+
+#ifdef MY_ABC_HERE
+void inode_sync_complete(struct inode *inode);
+#endif /* MY_ABC_HERE */
+
+/* Syno filesystem helpers */
+#include <linux/syno_fs.h>
 
 #endif /* _LINUX_FS_H */

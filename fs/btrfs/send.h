@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2012 Alexander Block.  All rights reserved.
@@ -76,6 +79,12 @@ enum btrfs_send_cmd {
 
 	BTRFS_SEND_C_END,
 	BTRFS_SEND_C_UPDATE_EXTENT,
+#ifdef MY_ABC_HERE
+	BTRFS_SEND_C_SUBVOL_FLAG,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	BTRFS_SEND_C_FALLOCATE,
+#endif /* MY_ABC_HERE */
 	__BTRFS_SEND_C_MAX,
 };
 #define BTRFS_SEND_C_MAX (__BTRFS_SEND_C_MAX - 1)
@@ -114,9 +123,24 @@ enum {
 	BTRFS_SEND_A_CLONE_OFFSET,
 	BTRFS_SEND_A_CLONE_LEN,
 
+#ifdef MY_ABC_HERE
+	BTRFS_SEND_A_FLAG,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	BTRFS_SEND_A_FALLOCATE_FLAGS,
+#endif /* MY_ABC_HERE */
 	__BTRFS_SEND_A_MAX,
 };
 #define BTRFS_SEND_A_MAX (__BTRFS_SEND_A_MAX - 1)
+
+#ifdef MY_ABC_HERE
+#define BTRFS_SEND_A_FALLOCATE_FLAG_KEEP_SIZE   (1 << 0)
+#define BTRFS_SEND_A_FALLOCATE_FLAG_PUNCH_HOLE  (1 << 1)
+
+#define BTRFS_SEND_PUNCH_HOLE_FALLOC_FLAGS        \
+		(BTRFS_SEND_A_FALLOCATE_FLAG_KEEP_SIZE |  \
+		 BTRFS_SEND_A_FALLOCATE_FLAG_PUNCH_HOLE)
+#endif /* MY_ABC_HERE */
 
 #ifdef __KERNEL__
 long btrfs_ioctl_send(struct file *mnt_file, struct btrfs_ioctl_send_args *arg);

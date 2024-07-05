@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  * AMD 10Gb Ethernet driver
  *
@@ -629,7 +632,11 @@ static irqreturn_t xgbe_dma_isr(int irq, void *data)
 			disable_irq_nosync(channel->dma_irq);
 
 		/* Turn on polling */
+#ifdef MY_DEF_HERE
+		__napi_schedule(&channel->napi);
+#else /* MY_DEF_HERE */
 		__napi_schedule_irqoff(&channel->napi);
+#endif /* MY_DEF_HERE */
 	}
 
 	/* Clear Tx/Rx signals */
@@ -1296,6 +1303,8 @@ static int xgbe_start(struct xgbe_prv_data *pdata)
 	unsigned int i;
 	int ret;
 
+	pdata->ext_fixed_phy = 0;
+
 	/* Set the number of queues */
 	ret = netif_set_real_num_tx_queues(netdev, pdata->tx_ring_count);
 	if (ret) {
@@ -1367,6 +1376,7 @@ static void xgbe_stop(struct xgbe_prv_data *pdata)
 	if (test_bit(XGBE_STOPPED, &pdata->dev_state))
 		return;
 
+	pdata->ext_fixed_phy = 0;
 	netif_tx_stop_all_queues(netdev);
 	netif_carrier_off(pdata->netdev);
 
@@ -2067,12 +2077,59 @@ static int xgbe_change_mtu(struct net_device *netdev, int mtu)
 	return 0;
 }
 
+#ifdef MY_DEF_HERE
+static int xgbe_tx_poll(struct xgbe_channel *channel);
+
+static int syno_xgbe_fake_tx_timeout_check(struct net_device *netdev)
+{
+	struct xgbe_prv_data *pdata = netdev_priv(netdev);
+	int queue = 0;
+	struct xgbe_ring *ring = NULL;
+	struct xgbe_channel *channel = NULL;
+	struct netdev_queue *txq = NULL;
+	unsigned long trans_start = 0;
+
+	for (queue = 0 ; queue < pdata->tx_q_count ; queue++) {
+		txq = netdev_get_tx_queue(netdev, queue);
+		trans_start = txq->trans_start ? : dev_trans_start(netdev);
+		if (netif_xmit_stopped(txq) &&
+				time_after(jiffies, (trans_start + netdev->watchdog_timeo))) {
+
+			ring = pdata->channel[queue]->tx_ring;
+			channel = pdata->channel[queue];
+
+			/* Clear tx descriptor if possible */
+			xgbe_disable_rx_tx_int(pdata, channel);
+			xgbe_tx_poll(channel);
+
+			if (ring->dirty != ring->cur) {
+				/* tx hang */
+				return 1;
+			} else {
+				xgbe_enable_rx_tx_int(pdata, channel);
+				netdev_warn(netdev, "fake tx timeout, clear the tx descriptor \n");
+			}
+		}
+	}
+	return 0;
+}
+#endif /* MY_DEF_HERE */
+
 static void xgbe_tx_timeout(struct net_device *netdev, unsigned int txqueue)
 {
 	struct xgbe_prv_data *pdata = netdev_priv(netdev);
+#ifdef MY_DEF_HERE
+	int ret = 0;
 
+	ret = syno_xgbe_fake_tx_timeout_check(netdev);
+	if (ret) {
+		netdev_warn(netdev, "tx timeout, device restarting\n");
+		schedule_work(&pdata->restart_work);
+	}
+#else /* MY_DEF_HERE */
 	netdev_warn(netdev, "tx timeout, device restarting\n");
 	schedule_work(&pdata->restart_work);
+#endif /* MY_DEF_HERE */
 }
 
 static void xgbe_get_stats64(struct net_device *netdev,
@@ -2087,18 +2144,37 @@ static void xgbe_get_stats64(struct net_device *netdev,
 
 	s->rx_packets = pstats->rxframecount_gb;
 	s->rx_bytes = pstats->rxoctetcount_gb;
+#if defined(MY_DEF_HERE)
+	s->rx_errors = (pstats->rxframecount_gb > (pstats->rxbroadcastframes_g +
+	                                           pstats->rxmulticastframes_g +
+	                                           pstats->rxunicastframes_g))? \
+	                   (pstats->rxframecount_gb -
+	                    pstats->rxbroadcastframes_g -
+	                    pstats->rxmulticastframes_g -
+	                    pstats->rxunicastframes_g) : 0;
+#else /* MY_DEF_HERE */
 	s->rx_errors = pstats->rxframecount_gb -
 		       pstats->rxbroadcastframes_g -
 		       pstats->rxmulticastframes_g -
 		       pstats->rxunicastframes_g;
+#endif /* MY_DEF_HERE */
 	s->multicast = pstats->rxmulticastframes_g;
 	s->rx_length_errors = pstats->rxlengtherror;
 	s->rx_crc_errors = pstats->rxcrcerror;
+#if defined(MY_DEF_HERE)
+	/* Don't update RX FIFO overflow error */
+#else /* MY_DEF_HERE */
 	s->rx_fifo_errors = pstats->rxfifooverflow;
+#endif /* MY_DEF_HERE */
 
 	s->tx_packets = pstats->txframecount_gb;
 	s->tx_bytes = pstats->txoctetcount_gb;
+#if defined(MY_DEF_HERE)
+	s->tx_errors = (pstats->txframecount_gb > pstats->txframecount_g)? \
+	               pstats->txframecount_gb - pstats->txframecount_g : 0;
+#else /* MY_DEF_HERE */
 	s->tx_errors = pstats->txframecount_gb - pstats->txframecount_g;
+#endif /* MY_DEF_HERE */
 	s->tx_dropped = netdev->stats.tx_dropped;
 
 	DBGPR("<--%s\n", __func__);
@@ -2557,6 +2633,14 @@ read_again:
 			buf2_len = xgbe_rx_buf2_len(rdata, packet, len);
 			len += buf2_len;
 
+			if (buf2_len > rdata->rx.buf.dma_len) {
+				/* Hardware inconsistency within the descriptors
+				 * that has resulted in a length underflow.
+				 */
+				error = 1;
+				goto skip_data;
+			}
+
 			if (!skb) {
 				skb = xgbe_create_skb(pdata, napi, rdata,
 						      buf1_len);
@@ -2586,8 +2670,10 @@ skip_data:
 		if (!last || context_next)
 			goto read_again;
 
-		if (!skb)
+		if (!skb || error) {
+			dev_kfree_skb(skb);
 			goto next_packet;
+		}
 
 		/* Be sure we don't exceed the configured MTU */
 		max_len = netdev->mtu + ETH_HLEN;

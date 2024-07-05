@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  *  Copyright 2008 ioogle, Inc.  All rights reserved.
@@ -37,7 +40,11 @@
 #include "libata.h"
 #include "libata-transport.h"
 
+#ifdef MY_ABC_HERE
+#define ATA_PORT_ATTRS		4
+#else /* MY_ABC_HERE */
 #define ATA_PORT_ATTRS		3
+#endif /* MY_ABC_HERE */
 #define ATA_LINK_ATTRS		3
 #define ATA_DEV_ATTRS		9
 
@@ -218,6 +225,9 @@ static DEVICE_ATTR(name, S_IRUGO, show_ata_port_##name, NULL)
 ata_port_simple_attr(nr_pmp_links, nr_pmp_links, "%d\n", int);
 ata_port_simple_attr(stats.idle_irq, idle_irq, "%ld\n", unsigned long);
 ata_port_simple_attr(local_port_no, port_no, "%u\n", unsigned int);
+#ifdef MY_ABC_HERE
+ata_port_simple_attr(error_handling, error_handling, "%u\n", unsigned int);
+#endif /* MY_ABC_HERE */
 
 static DECLARE_TRANSPORT_CLASS(ata_port_class,
 			       "ata_port", NULL, NULL, NULL);
@@ -718,6 +728,9 @@ struct scsi_transport_template *ata_attach_transport(void)
 
 	i->t.eh_strategy_handler	= ata_scsi_error;
 	i->t.user_scan			= ata_scsi_user_scan;
+#ifdef MY_ABC_HERE
+	i->t.is_eunit_deepsleep		= ata_scsi_is_eunit_deepsleep;
+#endif /* MY_ABC_HERE */
 
 	i->t.host_attrs.ac.attrs = &i->port_attrs[0];
 	i->t.host_attrs.ac.class = &ata_port_class.class;
@@ -738,6 +751,9 @@ struct scsi_transport_template *ata_attach_transport(void)
 	SETUP_PORT_ATTRIBUTE(nr_pmp_links);
 	SETUP_PORT_ATTRIBUTE(idle_irq);
 	SETUP_PORT_ATTRIBUTE(port_no);
+#ifdef MY_ABC_HERE
+	SETUP_PORT_ATTRIBUTE(error_handling);
+#endif /* MY_ABC_HERE */
 	BUG_ON(count > ATA_PORT_ATTRS);
 	i->port_attrs[count] = NULL;
 

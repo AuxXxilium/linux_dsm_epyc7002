@@ -1,0 +1,82 @@
+// Copyright (c) 2000-2018 Synology Inc. All rights reserved.
+
+#include "synobios.h"
+#include "../mapping.h"
+#include "syno_ttyS.h"
+#ifdef CONFIG_SYNO_LEDS_TRIGGER
+#include "../led/led_trigger.h"
+#endif /* CONFIG_SYNO_LEDS_TRIGGER */
+#include "../common/common.h"
+
+#ifdef CONFIG_SYNO_SYSTEM_SHUTDOWN_HOOK
+#include "syno_shutdown_hook.h"
+#endif /* CONFIG_SYNO_SYSTEM_SHUTDOWN_HOOK */
+
+int GetModel(void);
+int GetGpioPin(GPIO_PIN *pPin);
+int SetGpioPin(GPIO_PIN *pPin);
+
+extern int SetUart(const char* cmd);
+extern int ReadUart(const char *szGoCmd, const char *szStopCmd, char *szResult, size_t leng);
+extern struct model_ops ds420p_ops;
+extern struct model_ops ds720p_ops;
+extern struct model_ops ds1520p_ops;
+extern struct model_ops ds220p_ops;
+extern struct model_ops ds920p_ops;
+extern struct model_ops dva1622_ops;
+extern struct model_ops ds423p_ops;
+extern struct model_ops ds224p_ops;
+
+extern struct hwmon_sensor_list ds420p_sensor_list;
+extern struct hwmon_sensor_list ds720p_sensor_list;
+extern struct hwmon_sensor_list ds1520p_sensor_list;
+extern struct hwmon_sensor_list ds220p_sensor_list;
+extern struct hwmon_sensor_list ds920p_sensor_list;
+extern struct hwmon_sensor_list dva1622_sensor_list;
+extern struct hwmon_sensor_list ds423p_sensor_list;
+extern struct hwmon_sensor_list ds224p_sensor_list;
+
+#ifdef CONFIG_SYNO_X86_PINCTRL_GPIO
+#include <linux/gpio.h>
+#endif /* CONFIG_SYNO_X86_PINCTRL_GPIO */
+#ifdef CONFIG_SYNO_X86_CORETEMP
+extern int syno_cpu_temperature(struct _SynoCpuTemp *pCpuTemp);
+#endif /* CONFIG_SYNO_X86_CORETEMP */
+
+#define SZ_UART_CMD_PREFIX         "-"
+#define SZ_UART_ALARM_LED_ON       "LA1"
+#define SZ_UART_ALARM_LED_BLINKING "LA2"
+#define SZ_UART_ALARM_LED_OFF      "LA3"
+#define SZ_UART_FAN_DUTY_CYCLE     "V"
+#define SZ_UART_FAN_FREQUENCY      "W"
+#define SZ_UART_CPUFAN_DUTY_CYCLE  "X"
+#define SZ_UART_CPUFAN_FREQUENCY   "Y"
+#define SZ_UART_PWR_LED_ON         "4"
+#define SZ_UART_PWR_LED_OFF        "6"
+
+#ifdef CONFIG_SYNO_SYSTEM_SHUTDOWN_HOOK
+extern void syno_append_shutdown_hook(SYNO_SHUTDOWN_HOOK *ops);
+extern SYNO_SHUTDOWN_HOOK ds220p_shutdown_hook;
+extern SYNO_SHUTDOWN_HOOK ds224p_shutdown_hook;
+#endif /* CONFIG_SYNO_SYSTEM_SHUTDOWN_HOOK */
+
+struct model_ops {
+	int	(*x86_init_module_type)(struct synobios_ops *ops);
+	int	(*x86_fan_speed_mapping)(FAN_SPEED speed);
+	int	(*x86_set_esata_led_status)(SYNO_DISK_LED status);
+	int	(*x86_cpufan_speed_mapping)(FAN_SPEED speed);
+	int	(*x86_get_buzzer_cleared)(unsigned char *buzzer_cleared);
+	int	(*x86_get_power_status)(POWER_INFO *power_info);
+	int	(*x86_get_fan_status)(int fanno, FAN_STATUS *pStatus);
+	void	(*x86_gpio_init)(void);
+	void	(*x86_gpio_cleanup)(void);
+};
+
+struct hwmon_sensor_list {
+	SYNO_HWMON_SENSOR_TYPE *thermal_sensor;
+	SYNO_HWMON_SENSOR_TYPE *voltage_sensor;
+	SYNO_HWMON_SENSOR_TYPE *fan_speed_rpm;
+	SYNO_HWMON_SENSOR_TYPE *psu_status;
+	SYNO_HWMON_SENSOR_TYPE *hdd_backplane;
+	SYNO_HWMON_SENSOR_TYPE *current_sensor;
+};

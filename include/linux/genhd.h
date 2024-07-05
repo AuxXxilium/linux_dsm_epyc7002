@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_GENHD_H
 #define _LINUX_GENHD_H
@@ -73,6 +76,9 @@ struct hd_struct {
 	int make_it_fail;
 #endif
 	struct rcu_work rcu_work;
+#ifdef MY_ABC_HERE
+	unsigned int syno_auto_remap;
+#endif /* MY_ABC_HERE */
 };
 
 /**
@@ -164,6 +170,27 @@ struct blk_integrity {
 	unsigned char				tag_size;
 };
 
+#ifdef MY_ABC_HERE
+struct syno_gendisk_operations {
+	bool (*is_device_disappear)(struct gendisk *);
+	int (*get_device_index)(struct gendisk *);
+#ifdef MY_ABC_HERE
+	int (*autoremap_stackable_dev_target_set)(struct block_device*, unsigned char);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	int (*check_device_status)(struct gendisk *, unsigned int flags);
+#endif /* MY_ABC_HERE */
+};
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+enum syno_disk_seq_stat {
+	SYNO_DISK_SEQ_STAT_NEAR_SEQ = 0,
+	SYNO_DISK_SEQ_STAT_SEQ = 1,
+	SYNO_DISK_SEQ_STAT_END = 2, /* Your new added entry SHOULD NOT PASS THE END! */
+};
+#define SYNO_BLOCK_RESPONSE_BUCKETS_END 4
+#endif /* MY_ABC_HERE */
+
 struct gendisk {
 	/* major, first_minor and minors are input parameters only,
 	 * don't use directly.  Use disk_devt() and disk_max_parts().
@@ -208,6 +235,22 @@ struct gendisk {
 	int node_id;
 	struct badblocks *bb;
 	struct lockdep_map lockdep_map;
+#ifdef MY_ABC_HERE
+	unsigned char syno_auto_remap;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	const struct syno_gendisk_operations *syno_ops;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	unsigned char block_latency_uuid[16];
+	u64 u64CplCmdCnt[2];
+	u64 u64RespTimeSum[2];
+	u64 u64WaitTime[2];
+	u64 u64RespTimeBuckets[2][SYNO_BLOCK_RESPONSE_BUCKETS_END][32];
+	sector_t end_sector;
+	unsigned long seq_ios[SYNO_DISK_SEQ_STAT_END];
+#endif /* MY_ABC_HERE */
+
 };
 
 #if IS_REACHABLE(CONFIG_CDROM)
@@ -408,5 +451,10 @@ static inline dev_t blk_lookup_devt(const char *name, int partno)
 	return devt;
 }
 #endif /* CONFIG_BLOCK */
+#ifdef MY_ABC_HERE
+#define SYNO_DEVICE_STATUS_IS_RBD_ENABLED		((1U << 0))
+
+bool IsSynoRbdDeviceEnabled(struct block_device *bdev);
+#endif /* MY_ABC_HERE */
 
 #endif /* _LINUX_GENHD_H */

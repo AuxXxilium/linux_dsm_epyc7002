@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2007 Red Hat.  All rights reserved.
@@ -359,6 +362,15 @@ ssize_t btrfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 			read_extent_buffer(leaf, buffer, name_ptr, name_len);
 			buffer[name_len] = '\0';
 
+#ifdef MY_ABC_HERE
+			/* Conceal the syno prefix from user space. Please refer to DSM#69101 */
+			if (!strncmp(buffer, XATTR_SYNO_PREFIX, XATTR_SYNO_PREFIX_LEN) ||
+					!strncmp(buffer, XATTR_BTRFS_PREFIX, XATTR_BTRFS_PREFIX_LEN)) {
+				total_size -= name_len + 1;
+				goto next;
+			}
+#endif /* MY_ABC_HERE */
+
 			size_left -= name_len + 1;
 			buffer += name_len + 1;
 next:
@@ -403,7 +415,7 @@ static int btrfs_xattr_handler_set_prop(const struct xattr_handler *handler,
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 
 	name = xattr_full_name(handler, name);
-	ret = btrfs_validate_prop(name, value, size);
+	ret = btrfs_validate_prop(BTRFS_I(inode), name, value, size);
 	if (ret)
 		return ret;
 
@@ -423,6 +435,131 @@ static int btrfs_xattr_handler_set_prop(const struct xattr_handler *handler,
 
 	return ret;
 }
+
+#ifdef MY_ABC_HERE
+int btrfs_xattr_syno_set_archive_bit(struct btrfs_trans_handle *trans,
+		struct inode *inode, const void *value, size_t size,
+		int flags, bool lock)
+{
+	int ret;
+
+	if (lock)
+		mutex_lock(&inode->i_archive_bit_mutex);
+
+	if (trans)
+		ret = btrfs_setxattr(trans, inode, XATTR_SYNO_ARCHIVE_BIT,
+				value, size, flags);
+	else
+		ret = btrfs_setxattr_trans(inode, XATTR_SYNO_ARCHIVE_BIT,
+				value, size, flags);
+	if (ret)
+		goto out;
+
+	if (value)
+		inode->i_archive_bit = le32_to_cpu(*(__le32 *)value);
+	else  // "buffer == NULL" means removexattr
+		inode->i_archive_bit = 0;
+
+out:
+	if (lock)
+		mutex_unlock(&inode->i_archive_bit_mutex);
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+int btrfs_xattr_syno_set_crtime(struct btrfs_trans_handle *trans,
+		struct inode *inode, struct btrfs_timespec *crtime, int flags)
+{
+	int ret;
+
+	// Notice: btrfs_settxattr will also modify ctime. 
+	if (trans)
+		ret = btrfs_setxattr(trans, inode, XATTR_SYNO_CREATE_TIME,
+				crtime, sizeof(struct btrfs_timespec), flags);
+	else
+		ret = btrfs_setxattr_trans(inode, XATTR_SYNO_CREATE_TIME,
+				crtime, sizeof(struct btrfs_timespec), flags);
+	if (!ret) {
+		BTRFS_I(inode)->i_otime.tv_sec =
+			btrfs_stack_timespec_sec(crtime);
+		BTRFS_I(inode)->i_otime.tv_nsec =
+			btrfs_stack_timespec_nsec(crtime);
+		set_bit(BTRFS_INODE_CREATE_TIME,
+			&BTRFS_I(inode)->runtime_flags);
+	}
+
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static int btrfs_xattr_handler_set_syno(const struct xattr_handler *handler,
+					struct dentry *unused, struct inode *inode,
+					const char *name, const void *buffer,
+					size_t size, int flags)
+{
+	name = xattr_full_name(handler, name);
+
+#ifdef MY_ABC_HERE
+	if (!strcmp(name, XATTR_SYNO_ARCHIVE_VERSION)) {
+		/* inode's archive version would be updated every time when
+		 * it's created or modified as super block's archive version +1.
+		 *
+		 * btrfs send will skip it, and it's also meaningless to
+		 * update from xattr. we should ignore it.
+		 */
+		return 0;
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (!strcmp(name, XATTR_SYNO_ARCHIVE_BIT)) {
+		/* inode->i_archive_bit_mutex isn't hold to avoid deadlock
+		 * from syno_archive_bit_modify()
+		 */
+		return btrfs_xattr_syno_set_archive_bit(NULL, inode,
+			buffer, size, flags, false);
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (!strcmp(name, XATTR_SYNO_CREATE_TIME)) {
+		if (size != sizeof(struct btrfs_timespec))
+			return -EINVAL;
+		/* inode_lock is required and hold in vfs_setxattr() */
+		return btrfs_xattr_syno_set_crtime(NULL, inode,
+			(struct btrfs_timespec *)buffer, flags);
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (!strcmp(name, XATTR_SYNO_LOCKER))
+		return btrfs_xattr_syno_set_locker(inode, buffer, size);
+#endif /* MY_ABC_HERE */
+
+	return btrfs_setxattr_trans(inode, name, buffer, size, flags);
+}
+
+const struct xattr_handler btrfs_xattr_syno_handler = {
+	.prefix = XATTR_SYNO_PREFIX,
+	/*
+	 * In order to avoid the issues of concurrent accessing, we
+	 * should disallow the access of these syno attributes by get/set
+	 * xattr syscalls just like what we do in other filesystems.
+	 *
+	 * BUT because of "btrfs receive" which may set syno xattr to the
+	 * received files, we decided to allow the access of syno xattr
+	 * by get/set xattr syscalls.
+	 *
+	 * The proper ways to access them are using the related syscalls
+	 * (i.g. syno_stat/syno_archive_overwrite) or per-attribute
+	 * fcntl.(i.g. F_CLEAR_ARCHIVE, F_SETSMB_ARCHIVE...)
+	 */
+	.get = btrfs_xattr_handler_get,
+	.set = btrfs_xattr_handler_set_syno,
+};
+#endif /* MY_ABC_HERE */
 
 static const struct xattr_handler btrfs_security_xattr_handler = {
 	.prefix = XATTR_SECURITY_PREFIX,
@@ -448,12 +585,22 @@ static const struct xattr_handler btrfs_btrfs_xattr_handler = {
 	.set = btrfs_xattr_handler_set_prop,
 };
 
+#ifdef MY_ABC_HERE
+extern const struct xattr_handler btrfs_xattr_synoacl_access_handler;
+#endif /* MY_ABC_HERE */
+
 const struct xattr_handler *btrfs_xattr_handlers[] = {
 	&btrfs_security_xattr_handler,
 #ifdef CONFIG_BTRFS_FS_POSIX_ACL
 	&posix_acl_access_xattr_handler,
 	&posix_acl_default_xattr_handler,
 #endif
+#ifdef MY_ABC_HERE
+	&btrfs_xattr_synoacl_access_handler,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	&btrfs_xattr_syno_handler,
+#endif /* MY_ABC_HERE */
 	&btrfs_trusted_xattr_handler,
 	&btrfs_user_xattr_handler,
 	&btrfs_btrfs_xattr_handler,

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Copyright (c) 2000-2020 Synology Inc. All rights reserved.
+
+# shellcheck source=/dev/null
+source "SynoBuildConf/_env"
+source "SynoBuildConf/_kconfig"
+
+kconfig_generate
+
+make prepare
+make headers_install
+
+# `make headers_install` will deploy all headers (*.h) in "include/uapi" and
+# "arch/$ARCH/include/uapi'. Please *DO NOT* copy the files one by one. Just
+# place your headers at the right location.
+

@@ -1,0 +1,5 @@
+config RTK_INFO_PLL
+	bool "add DebugFs for PLL info"
+	depends on ARCH_REALTEK
+	depends on DEBUG_FS
+	default y

@@ -79,6 +79,9 @@ obj-y				+= macintosh/
 obj-$(CONFIG_IDE)		+= ide/
 obj-y				+= scsi/
 obj-y				+= nvme/
+ifeq ($(CONFIG_SYNO_SATA_PWR_CTRL_SMBUS), y)
+obj-y				+= i2c/
+endif
 obj-$(CONFIG_ATA)		+= ata/
 obj-$(CONFIG_TARGET_CORE)	+= target/
 obj-$(CONFIG_MTD)		+= mtd/
@@ -111,7 +114,11 @@ obj-$(CONFIG_SERIO)		+= input/serio/
 obj-$(CONFIG_GAMEPORT)		+= input/gameport/
 obj-$(CONFIG_INPUT)		+= input/
 obj-$(CONFIG_RTC_LIB)		+= rtc/
-obj-y				+= i2c/ i3c/ media/
+ifeq ($(CONFIG_SYNO_SATA_PWR_CTRL_SMBUS), y)
+obj-y				+= i3c/ media/
+else #CONFIG_SYNO_SATA_PWR_CTRL_SMBUS
+obj-y               += i2c/ i3c/ media/
+endif #CONFIG_SYNO_SATA_PWR_CTRL_SMBUS
 obj-$(CONFIG_PPS)		+= pps/
 obj-y				+= ptp/
 obj-$(CONFIG_W1)		+= w1/
@@ -189,3 +196,5 @@ obj-$(CONFIG_GNSS)		+= gnss/
 obj-$(CONFIG_INTERCONNECT)	+= interconnect/
 obj-$(CONFIG_COUNTER)		+= counter/
 obj-$(CONFIG_MOST)		+= most/
+
+obj-y				+= syno/

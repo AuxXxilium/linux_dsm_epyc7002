@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Functions for working with the Flattened Device Tree data format
@@ -30,6 +33,160 @@
 #include <asm/page.h>
 
 #include "of_private.h"
+
+#ifdef MY_ABC_HERE
+#include <linux/synolib.h>
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+extern int gSynoInternalHddNumber;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+extern int gSynoSmbusHddAdapter;
+extern int gSynoSmbusHddAddress;
+extern char gSynoSmbusHddType[16];
+extern int gSynoSmbusSwitchCount;
+extern int gSynoSmbusSwitchAdapters[SMBUS_SWITCH_MAX_COUNT+1];
+extern int gSynoSmbusSwitchAddrs[SMBUS_SWITCH_MAX_COUNT+1];
+extern int gSynoSmbusSwitchVals[SMBUS_SWITCH_MAX_COUNT+1];
+#endif /*MY_ABC_HERE */
+
+#ifdef MY_DEF_HERE
+extern int gSynoHddPowerupSeq;
+extern int giSynoSpinupGroup[SYNO_SPINUP_GROUP_MAX];
+extern int giSynoSpinupGroupNum;
+extern int giSynoSpinupGroupDelay;
+#endif /* MY_DEF_HERE */
+
+#ifdef MY_ABC_HERE
+void __init syno_init_internal_hdd_number(void)
+{
+	int internalHDDNumber = 0;
+	struct device_node *pSlotNode = NULL;
+
+	for_each_child_of_node(of_root, pSlotNode) {
+		// get index number of internal_slot, e.g. /internal_slot@4 --> 4
+		if (!pSlotNode->full_name || 0 != strncmp(pSlotNode->full_name, DT_INTERNAL_SLOT, strlen(DT_INTERNAL_SLOT))) {
+			continue;
+		}
+		internalHDDNumber++;
+	}
+
+	gSynoInternalHddNumber = internalHDDNumber;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+void __init syno_init_smbus_hdd_pwrctl(void)
+{
+	int retReadDT = 0;
+	int smbushddadapter = 0;
+	int smbushddaddress = 0;
+	char *smbushddtype = NULL;
+	int i;
+	int smbusSwitchAdapter = 0;
+	int smbusSwitchAddr = 0;
+	int smbusSwitchVal = 0;
+
+	smbushddtype = (char *)of_get_property(of_root, DT_SYNO_HDD_SMBUS_TYPE, NULL);
+
+	if (smbushddtype != NULL) {
+		snprintf(gSynoSmbusHddType, sizeof(gSynoSmbusHddType), "%s", smbushddtype);
+		printk("SYNO Smbus Hdd Type: %s\n", gSynoSmbusHddType);
+	}
+
+	retReadDT = of_property_read_u32_index(of_root, DT_SYNO_HDD_SMBUS_ADAPTER, 0, &smbushddadapter);
+	if (0 == retReadDT) {
+		gSynoSmbusHddAdapter = smbushddadapter;
+		printk("SYNO Smbus Hdd Adapter: %d\n", gSynoSmbusHddAdapter);
+	}
+
+	retReadDT = of_property_read_u32_index(of_root, DT_SYNO_HDD_SMBUS_ADDRESS, 0, &smbushddaddress);
+	if (0 == retReadDT) {
+		gSynoSmbusHddAddress = smbushddaddress;
+		printk("SYNO Smbus Hdd Address: 0x%02x\n", gSynoSmbusHddAddress);
+	}
+	// set the smbus switch settings to open the switches early
+	// the last position in the array is used to handle the errors
+	// note:
+	//     gSynoSmbusSwitchCount is used to record the last index. When there is
+	//     an error occurs, it means the array size is stop here, and therefore 
+	//     gSynoSmbusSwitchCount is updated at that moment. After the update,  
+	//     break the for loop.
+	for (i = 0;i <= SMBUS_SWITCH_MAX_COUNT;i++){
+		retReadDT = of_property_read_u32_index(of_root, DT_SYNO_SMBUS_SWITCH_ADAPTERS, i, &smbusSwitchAdapter);
+		if (0 == retReadDT) {
+			// if the number of switches are more than the maximum setting
+			if (i == SMBUS_SWITCH_MAX_COUNT){
+				printk(KERN_ERR "Smbus switch settings are more than %d. The rest of settings will not be applied.\n",
+					SMBUS_SWITCH_MAX_COUNT);
+				gSynoSmbusSwitchCount = i;
+				break;
+			}
+			gSynoSmbusSwitchAdapters[i] = smbusSwitchAdapter;
+			printk("SYNO Smbus Switch Adapter[%d]: %d\n", i, gSynoSmbusSwitchAdapters[i]);
+		} else {
+			gSynoSmbusSwitchCount = i;
+			printk("System reads %d pairs of smbus configs", i);
+			break;
+		}
+		retReadDT = of_property_read_u32_index(of_root, DT_SYNO_SMBUS_SWITCH_ADDRS, i, &smbusSwitchAddr);
+		if (0 == retReadDT) {
+			gSynoSmbusSwitchAddrs[i] = smbusSwitchAddr;
+			printk("SYNO Smbus Switch Addr[%d]: 0x%02x\n", i, gSynoSmbusSwitchAddrs[i]);
+		} else {
+			gSynoSmbusSwitchCount = i;
+			printk("SYNO Smbus Switch Addr[%d] loads fail, please check\n", i);
+			break;
+		}
+		retReadDT = of_property_read_u32_index(of_root, DT_SYNO_SMBUS_SWITCH_VALS, i, &smbusSwitchVal);
+		if (0 == retReadDT) {
+			gSynoSmbusSwitchVals[i] = smbusSwitchVal;
+			printk("SYNO Smbus Switch Val[%d]: 0x%02x\n", i, gSynoSmbusSwitchVals[i]);
+		} else {
+			gSynoSmbusSwitchCount = i;
+			printk("SYNO Smbus Switch Val[%d] loads fail, please check\n", i);
+			break;
+		}
+	}
+	gSynoSmbusSwitchAdapters[gSynoSmbusSwitchCount] = -1;
+	gSynoSmbusSwitchAddrs[gSynoSmbusSwitchCount] = 0;
+	gSynoSmbusSwitchVals[gSynoSmbusSwitchCount] = 0xff;
+	return;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_DEF_HERE
+void __init syno_init_spinup_group(void)
+{
+	int group_num = 0, retReadDT = 0, spinupGroupMemberNum = 0, spinupGroupDelay = 0;
+	char *szSynoHddPowerupSeq = NULL;
+
+	szSynoHddPowerupSeq = (char *)of_get_property(of_root, DT_HDD_POWERUP_SEQ, NULL);
+
+	if (szSynoHddPowerupSeq && 0 == strncmp(szSynoHddPowerupSeq, "true", strlen("true"))) {
+		gSynoHddPowerupSeq = 1;
+	}
+
+	for (group_num = 0; group_num < sizeof(giSynoSpinupGroup)/sizeof(int); group_num++) {
+		retReadDT = of_property_read_u32_index(of_root, DT_SYNO_SPINUP_GROUP, group_num, &spinupGroupMemberNum);
+		// if reading DT error, this means that reading to the end of spinup_group or no spinup_group
+		if (retReadDT) {
+			break;
+		}
+		giSynoSpinupGroup[group_num] = spinupGroupMemberNum;
+		printk("SYNO Spinup Group %d: %d\n", group_num, giSynoSpinupGroup[group_num]);
+	}
+	giSynoSpinupGroupNum = group_num;
+
+	retReadDT = of_property_read_u32_index(of_root, DT_SYNO_SPINUP_GROUP_DELAY, 0, &spinupGroupDelay);
+	if (0 == retReadDT) {
+		giSynoSpinupGroupDelay = spinupGroupDelay;
+		printk("SYNO Spinup Group Delay: %d\n", giSynoSpinupGroupDelay);
+	}
+}
+#endif /* MY_DEF_HERE */
 
 /*
  * of_fdt_limit_memory - limit the number of regions in the /memory node
@@ -1235,6 +1392,17 @@ void __init unflatten_device_tree(void)
 	of_alias_scan(early_init_dt_alloc_memory_arch);
 
 	unittest_unflatten_overlay_base();
+
+	/* Synology global arguments from dts */
+#ifdef MY_ABC_HERE
+	syno_init_internal_hdd_number();
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	syno_init_smbus_hdd_pwrctl();
+#endif /* MY_ABC_HERE */
+#ifdef MY_DEF_HERE
+	syno_init_spinup_group();
+#endif /* MY_DEF_HERE */
 }
 
 /**

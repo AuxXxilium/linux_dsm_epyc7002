@@ -237,6 +237,15 @@ config POWER_RESET_SYSCON_POWEROFF
 	help
 	  Poweroff support for generic SYSCON mapped register poweroff.
 
+if SYNO_LSP_RTD1619B
+config POWER_RESET_REGMAP_POWEROFF
+	bool "Simple Regmap poweroff driver"
+	depends on OF
+	depends on REGMAP
+	help
+	  Poweroff support for Regmap mapped register poweroff
+
+endif # SYNO_LSP_RTD1619B
 config POWER_RESET_RMOBILE
 	tristate "Renesas R-Mobile reset driver"
 	depends on ARCH_RMOBILE || COMPILE_TEST
@@ -284,5 +293,20 @@ config NVMEM_REBOOT_MODE
 	  then the bootloader can read it and take different
 	  action according to the mode.
 
+if SYNO_LSP_RTD1619B
+config POWER_RESET_RTK
+	bool "Realtek reset driver"
+	depends on ARCH_REALTEK
+	default y
+	help
+	  Reboot support for Realtek SoCs.
+
+config RTK_REBOOT_MODE
+	bool "Realtek reboot mode driver"
+	depends on ARCH_REALTEK
+	help
+	  Realtek reboot mode driver.
+
+endif # SYNO_LSP_RTD1619B
 endif
 

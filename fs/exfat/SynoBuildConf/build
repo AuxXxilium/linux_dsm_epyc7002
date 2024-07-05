@@ -1,0 +1,18 @@
+#!/bin/bash
+# Copyright (c) 2000-2020 Synology Inc. All rights reserved.
+
+. ${ScriptsDir}/include/exports
+
+case "${MakeClean}" in
+	[Yy][Ee][Ss])
+		make $MAKE_FLAGS KDIR="$KDIR" clean
+		;;
+esac
+
+case "${CleanOnly}" in
+	[Yy][Ee][Ss])
+		return
+		;;
+esac
+
+make $MAKE_FLAGS KDIR="$KDIR"

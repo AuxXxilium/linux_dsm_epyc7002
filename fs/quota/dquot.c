@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Implementation of the diskquota system for the LINUX operating system. QUOTA
@@ -1259,6 +1262,9 @@ static int ignore_hardlimit(struct dquot *dquot)
 	struct mem_dqinfo *info = &sb_dqopt(dquot->dq_sb)->info[dquot->dq_id.type];
 
 	return capable(CAP_SYS_RESOURCE) &&
+#ifdef MY_ABC_HERE
+			!(dquot->dq_sb->s_flags & SB_ROOTPRJQUOTA) &&
+#endif /* MY_ABC_HERE */
 	       (info->dqi_format->qf_fmt_id != QFMT_VFS_OLD ||
 		!(info->dqi_flags & DQF_ROOT_SQUASH));
 }

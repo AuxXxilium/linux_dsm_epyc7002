@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * linux/include/linux/relay.h
@@ -51,6 +54,10 @@ struct rchan_buf
 	size_t bytes_consumed;		/* bytes consumed in cur read subbuf */
 	size_t early_bytes;		/* bytes consumed before VFS inited */
 	unsigned int cpu;		/* this buf's cpu */
+
+#ifdef MY_ABC_HERE
+	spinlock_t lock;		/* protect buffer write and read */
+#endif /* MY_ABC_HERE */
 } ____cacheline_aligned;
 
 /*

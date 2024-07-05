@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef LINUX_MMC_IOCTL_H
 #define LINUX_MMC_IOCTL_H
@@ -74,6 +77,23 @@ struct mmc_ioc_multi_cmd {
  * is enforced per ioctl call.  For larger data transfers, use the normal
  * block device operations.
  */
+#if defined(MY_DEF_HERE)
+struct mmc_blk_erase_args {
+	__u32 from;
+	__u32 nr;
+};
+#define MMCERASE _IOW(MMC_BLOCK_MAJOR, 2, struct mmc_blk_erase_args)
+
+struct mmc_euda_gpp_args {
+	unsigned long size[4];
+	char type[4];
+	int gpp_num;
+	unsigned long euda_start_addr;
+	unsigned long euda_size;
+};
+#define GPP_EUDA_SETTING _IOW(MMC_BLOCK_MAJOR, 3, struct mmc_euda_gpp_args)
+
+#endif /* MY_DEF_HERE */
 #define MMC_IOC_MAX_BYTES  (512L * 1024)
 #define MMC_IOC_MAX_CMDS    255
 #endif /* LINUX_MMC_IOCTL_H */

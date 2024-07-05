@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/ext4/dir.c
@@ -46,7 +49,11 @@ static int is_dx_dir(struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
 
+#ifdef MY_ABC_HERE
+	if ((is_syno_ext(inode->i_sb) || ext4_has_feature_dir_index(inode->i_sb)) &&
+#else /* MY_ABC_HERE */
 	if (ext4_has_feature_dir_index(inode->i_sb) &&
+#endif /* MY_ABC_HERE */
 	    ((ext4_test_inode_flag(inode, EXT4_INODE_INDEX)) ||
 	     ((inode->i_size >> sb->s_blocksize_bits) == 1) ||
 	     ext4_has_inline_data(inode)))
@@ -91,13 +98,27 @@ int __ext4_check_dir_entry(const char *function, unsigned int line,
 	else
 		return 0;
 
+#ifdef MY_ABC_HERE
+	if (filp) {
+		if (printk_ratelimit())
+			ext4_error_file(filp, function, line, bh->b_blocknr,
+					"bad entry in directory: %s - offset=%u, "
+					"inode=%u, rec_len=%d, name_len=%d, size=%d",
+					error_msg, offset, le32_to_cpu(de->inode),
+					rlen, de->name_len, size);
+	}
+#else /* MY_ABC_HERE */
 	if (filp)
 		ext4_error_file(filp, function, line, bh->b_blocknr,
 				"bad entry in directory: %s - offset=%u, "
 				"inode=%u, rec_len=%d, name_len=%d, size=%d",
 				error_msg, offset, le32_to_cpu(de->inode),
 				rlen, de->name_len, size);
+#endif /* MY_ABC_HERE */
 	else
+#ifdef MY_ABC_HERE
+		if (printk_ratelimit())
+#endif /* MY_ABC_HERE */
 		ext4_error_inode(dir, function, line, bh->b_blocknr,
 				"bad entry in directory: %s - offset=%u, "
 				"inode=%u, rec_len=%d, name_len=%d, size=%d",

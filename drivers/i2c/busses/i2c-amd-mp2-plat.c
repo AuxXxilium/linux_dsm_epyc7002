@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 /*
  * AMD MP2 platform driver
@@ -310,6 +313,10 @@ static int i2c_amd_probe(struct platform_device *pdev)
 	i2c_dev->adap.dev.parent = &pdev->dev;
 	i2c_dev->adap.algo_data = i2c_dev;
 	i2c_dev->adap.timeout = AMD_I2C_TIMEOUT;
+#if defined(MY_DEF_HERE) || defined(MY_DEF_HERE) || defined(MY_DEF_HERE)
+	i2c_dev->adap.class  = I2C_CLASS_HWMON | I2C_CLASS_SPD,
+#endif /* MY_DEF_HERE || MY_DEF_HERE || MY_DEF_HERE */
+
 	ACPI_COMPANION_SET(&i2c_dev->adap.dev, ACPI_COMPANION(&pdev->dev));
 	i2c_dev->adap.dev.of_node = pdev->dev.of_node;
 	snprintf(i2c_dev->adap.name, sizeof(i2c_dev->adap.name),

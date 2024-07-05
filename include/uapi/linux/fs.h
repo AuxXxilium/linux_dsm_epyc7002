@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _UAPI_LINUX_FS_H
 #define _UAPI_LINUX_FS_H
@@ -106,6 +109,79 @@ struct inodes_stat_t {
 	long dummy[5];		/* padding for sysctl ABI compatibility */
 };
 
+#ifdef MY_ABC_HERE
+enum locker_mode {
+	LM_NONE         = 0,
+	LM_ENTERPRISE   = 1,
+	LM_COMPLIANCE   = 2,
+	LM_INHOUSE      = 3,
+	LM_MAX          = LM_INHOUSE
+};
+
+enum locker_state {
+	LS_OPEN         = 0,
+	LS_IMMUTABLE    = 1,
+	LS_APPENDABLE   = 2,
+	LS_EXPIRED_I    = 3,
+	LS_EXPIRED_A    = 4,
+	LS_W_IMMUTABLE  = 5,
+	LS_W_APPENDABLE = 6,
+	LS_MAX          = LS_W_APPENDABLE
+};
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+/* request */
+#define SYNO_SPACE_USAGE_REQUEST_DATA_USED (1ULL << 0) /* Want/got data used */
+#define SYNO_SPACE_USAGE_REQUEST_DATA_DELAY_ALLOCATED (1ULL << 1) /* Want/got data delay allocated */
+#define SYNO_SPACE_USAGE_REQUEST_METADATA_USED (1ULL << 2) /* Want/got metadata used */
+
+/* flags */
+#define SYNO_SPACE_USAGE_FLAG_RESCAN (1ULL << 0)
+
+struct syno_space_usage_info {
+	/* in */
+	__u64 request_mask;
+	/* out */
+	__u64 result_mask;
+	__u64 flags;
+	__u64 data_used;
+	__u64 data_delay_allocated;
+	__u64 metadata_used;
+	__u64 reserved[10]; /* pad to 128 bytes */
+};
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+enum SYNO_RBD_META_IOCTL_ACT {
+	SYNO_RBD_META_ACTIVATE = 1,
+	SYNO_RBD_META_DEACTIVATE = 2,
+	SYNO_RBD_META_MAPPING = 3,
+	SYNO_RBD_META_SET_FIRST_OFFSET = 4,
+	SYNO_RBD_META_CLEANUP_ALL = 5,
+	SYNO_RBD_META_MAPPING_COUNT = 6,
+};
+
+struct syno_rbd_meta_file_mapping {
+	__u64 dev_offset;
+	__u64 length;
+};
+
+struct syno_rbd_meta_ioctl_args {
+	unsigned int act; /* enum SYNO_RBD_META_IOCTL_ACT */
+	union {
+		struct {
+			__u64 first_offset;
+		};
+		struct {
+			__u64 start;
+			size_t size;
+			__u64 cnt;
+		};
+	};
+	struct syno_rbd_meta_file_mapping mappings[0];
+};
+#endif /* MY_ABC_HERE */
 
 #define NR_FILE  8192	/* this can well be larger on a larger system */
 
@@ -184,6 +260,9 @@ struct fsxattr {
 #define BLKSECDISCARD _IO(0x12,125)
 #define BLKROTATIONAL _IO(0x12,126)
 #define BLKZEROOUT _IO(0x12,127)
+#ifdef MY_ABC_HERE
+#define BLKHINTUNUSED _IO(0x12, 140)
+#endif /* MY_ABC_HERE */
 /*
  * A jump here: 130-131 are reserved for zoned block devices
  * (see uapi/linux/blkzoned.h)
@@ -199,7 +278,25 @@ struct fsxattr {
 #define FICLONERANGE	_IOW(0x94, 13, struct file_clone_range)
 #define FIDEDUPERANGE	_IOWR(0x94, 54, struct file_dedupe_range)
 
+#ifdef MY_ABC_HERE
+#define FIGETVERSION                    _IOWR('x', 122, unsigned int)   /* get syno archive version */
+#define FISETVERSION                    _IOWR('x', 123, unsigned int)   /* set syno archive version */
+#define FIINCVERSION                    _IO('x', 124)   /* increase syno archive version by 1 */
+#define FISETFILEVERSION                _IOWR('x', 125, unsigned int)   /* set file syno archive version */
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#define FIHINTUNUSED			_IOWR('x', 129, unsigned int)	/* search unused space as hints */
+#endif /* MY_ABC_HERE */
+
 #define FSLABEL_MAX 256	/* Max chars for the interface; each fs may differ */
+#ifdef MY_ABC_HERE
+#define FICTRRBDMETA			_IOWR('x', 130, unsigned int)	/* control syno rbd meta */
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#define FISPACEUSAGE			_IOWR('x', 131, struct syno_space_usage_info)	/* get space usage */
+#endif /* MY_ABC_HERE */
 
 #define	FS_IOC_GETFLAGS			_IOR('f', 1, long)
 #define	FS_IOC_SETFLAGS			_IOW('f', 2, long)
@@ -303,5 +400,6 @@ typedef int __bitwise __kernel_rwf_t;
 /* mask of flags supported by the kernel */
 #define RWF_SUPPORTED	(RWF_HIPRI | RWF_DSYNC | RWF_SYNC | RWF_NOWAIT |\
 			 RWF_APPEND)
+
 
 #endif /* _UAPI_LINUX_FS_H */

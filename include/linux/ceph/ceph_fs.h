@@ -288,6 +288,7 @@ enum {
 	CEPH_SESSION_FLUSHMSG_ACK,
 	CEPH_SESSION_FORCE_RO,
 	CEPH_SESSION_REJECT,
+	CEPH_SESSION_REQUEST_FLUSH_MDLOG,
 };
 
 extern const char *ceph_session_op_name(int op);
@@ -352,6 +353,9 @@ extern const char *ceph_mds_op_name(int op);
 #define CEPH_SETATTR_ATIME 16
 #define CEPH_SETATTR_SIZE  32
 #define CEPH_SETATTR_CTIME 64
+#ifdef CONFIG_SYNO_CEPH_CREATE_TIME
+#define CEPH_SETATTR_BTIME 512
+#endif /* CONFIG_SYNO_CEPH_CREATE_TIME */
 
 /*
  * Ceph setxattr request flags.
@@ -385,9 +389,15 @@ extern const char *ceph_mds_op_name(int op);
 #define CEPH_O_DIRECTORY	00200000
 #define CEPH_O_NOFOLLOW		00400000
 
+#ifdef CONFIG_SYNO_CEPH_CASELESS_STAT
+#define CEPH_GETATTR_CASELESS	(1<<0)
+#endif /* CONFIG_SYNO_CEPH_CASELESS_STAT */
 union ceph_mds_request_args {
 	struct {
 		__le32 mask;                 /* CEPH_CAP_* */
+#ifdef CONFIG_SYNO_CEPH_CASELESS_STAT
+		__le32 flags;
+#endif /* CONFIG_SYNO_CEPH_CASELESS_STAT */
 	} __attribute__ ((packed)) getattr;
 	struct {
 		__le32 mode;
@@ -397,6 +407,9 @@ union ceph_mds_request_args {
 		struct ceph_timespec atime;
 		__le64 size, old_size;       /* old_size needed by truncate */
 		__le32 mask;                 /* CEPH_SETATTR_* */
+#ifdef CONFIG_SYNO_CEPH_CREATE_TIME
+		struct ceph_timespec btime;
+#endif /* CONFIG_SYNO_CEPH_CREATE_TIME */
 	} __attribute__ ((packed)) setattr;
 	struct {
 		__le32 frag;                 /* which dir fragment */
@@ -424,6 +437,7 @@ union ceph_mds_request_args {
 	} __attribute__ ((packed)) open;
 	struct {
 		__le32 flags;
+		__le32 osdmap_epoch; /* used for setting file/dir layouts */
 	} __attribute__ ((packed)) setxattr;
 	struct {
 		struct ceph_file_layout_legacy layout;
@@ -445,11 +459,25 @@ union ceph_mds_request_args {
 	} __attribute__ ((packed)) lookupino;
 } __attribute__ ((packed));
 
+union ceph_mds_request_args_ext {
+	union ceph_mds_request_args old;
+	struct {
+		__le32 mode;
+		__le32 uid;
+		__le32 gid;
+		struct ceph_timespec mtime;
+		struct ceph_timespec atime;
+		__le64 size, old_size;       /* old_size needed by truncate */
+		__le32 mask;                 /* CEPH_SETATTR_* */
+		struct ceph_timespec btime;
+	} __attribute__ ((packed)) setattr_ext;
+};
+
 #define CEPH_MDS_FLAG_REPLAY		1 /* this is a replayed op */
 #define CEPH_MDS_FLAG_WANT_DENTRY	2 /* want dentry in reply */
 #define CEPH_MDS_FLAG_ASYNC		4 /* request is asynchronous */
 
-struct ceph_mds_request_head {
+struct ceph_mds_request_head_old {
 	__le64 oldest_client_tid;
 	__le32 mdsmap_epoch;           /* on client */
 	__le32 flags;                  /* CEPH_MDS_FLAG_* */
@@ -460,6 +488,22 @@ struct ceph_mds_request_head {
 	__le64 ino;                    /* use this ino for openc, mkdir, mknod,
 					  etc. (if replaying) */
 	union ceph_mds_request_args args;
+} __attribute__ ((packed));
+
+#define CEPH_MDS_REQUEST_HEAD_VERSION  1
+
+struct ceph_mds_request_head {
+	__le16 version;                /* struct version */
+	__le64 oldest_client_tid;
+	__le32 mdsmap_epoch;           /* on client */
+	__le32 flags;                  /* CEPH_MDS_FLAG_* */
+	__u8 num_retry, num_fwd;       /* count retry, fwd attempts */
+	__le16 num_releases;           /* # include cap/lease release records */
+	__le32 op;                     /* mds op code */
+	__le32 caller_uid, caller_gid;
+	__le64 ino;                    /* use this ino for openc, mkdir, mknod,
+					  etc. (if replaying) */
+	union ceph_mds_request_args_ext args;
 } __attribute__ ((packed));
 
 /* cap/lease release record */

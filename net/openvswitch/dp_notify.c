@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2007-2012 Nicira, Inc.
@@ -68,6 +71,43 @@ static int dp_device_event(struct notifier_block *unused, unsigned long event,
 
 	if (!vport)
 		return NOTIFY_DONE;
+
+#ifdef MY_ABC_HERE
+	if (dev->priv_flags & IFF_OVS_DATAPATH &&
+		(NETDEV_CHANGE == event ||
+		 NETDEV_UP == event ||
+		 NETDEV_DOWN == event)) {
+		struct net_device *ovs_eth_dev = syno_ovs_eth_get_from_eth(dev);
+		struct net_device *ovs_bond_dev = syno_ovs_bond_get_from_eth(dev);
+
+		if (unlikely(ovs_eth_dev && ovs_bond_dev)) {
+			net_warn_ratelimited("%s: is slave of %s and %s.\n",
+						 dev->name,
+						 ovs_eth_dev->name,
+						 ovs_bond_dev->name);
+
+			dev_put(ovs_eth_dev);
+			dev_put(ovs_bond_dev);
+
+			return NOTIFY_DONE;
+		} else if (ovs_eth_dev) {
+			if (netif_carrier_ok(dev) != netif_carrier_ok(ovs_eth_dev)) {
+				if (netif_carrier_ok(dev))
+					netif_carrier_on(ovs_eth_dev);
+				else
+					netif_carrier_off(ovs_eth_dev);
+			}
+
+			dev_put(ovs_eth_dev);
+		} else if (ovs_bond_dev) {
+			syno_ovs_bond_set_carrier(ovs_bond_dev);
+
+			dev_put(ovs_bond_dev);
+		}
+
+		return NOTIFY_OK;
+	}
+#endif /* MY_ABC_HERE */
 
 	if (event == NETDEV_UNREGISTER) {
 		/* upper_dev_unlink and decrement promisc immediately */

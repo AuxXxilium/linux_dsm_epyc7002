@@ -425,7 +425,9 @@ config TEXTSEARCH_FSM
 	tristate
 
 config BTREE
-	bool
+	bool "Enable BTREE"
+	help
+	  Enable BTREE for external kernel modules
 
 config INTERVAL_TREE
 	bool
@@ -571,7 +573,8 @@ config SIGNATURE
 	  Implementation is done using GnuPG MPI library
 
 config DIMLIB
-	bool
+	bool "Enable DIMLIB"
+	default n
 	help
 	  Dynamic Interrupt Moderation library.
 	  Implements an algorithm for dynamically changing CQ moderation values

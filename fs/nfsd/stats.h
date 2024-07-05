@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Statistics for NFS server.
@@ -8,6 +11,9 @@
 #define _NFSD_STATS_H
 
 #include <uapi/linux/nfsd/stats.h>
+#ifdef MY_ABC_HERE
+#include <linux/sunrpc/svc.h>
+#endif /* MY_ABC_HERE */
 
 
 struct nfsd_stats {
@@ -30,6 +36,10 @@ struct nfsd_stats {
 					 * in the cache (10percentiles). [10] = not found */
 #ifdef CONFIG_NFSD_V4
 	unsigned int	nfs4_opcount[LAST_NFS4_OP + 1];	/* count of individual nfsv4 operations */
+#ifdef MY_ABC_HERE
+	/* latency record of individual nfsv4 operations */
+	struct svc_lat	nfs4_oplatency[LAST_NFS4_OP + 1];
+#endif /* MY_ABC_HERE */
 #endif
 
 };

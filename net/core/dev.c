@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *      NET3    Protocol independent device support routines.
@@ -146,6 +149,9 @@
 #include <net/devlink.h>
 #include <linux/pm_runtime.h>
 #include <linux/prandom.h>
+#if defined(MY_ABC_HERE)
+#include <linux/synolib.h>
+#endif /* MY_ABC_HERE */
 
 #include "net-sysfs.h"
 
@@ -167,6 +173,167 @@ static int call_netdevice_notifiers_extack(unsigned long val,
 					   struct net_device *dev,
 					   struct netlink_ext_ack *extack);
 static struct napi_struct *napi_by_id(unsigned int napi_id);
+#ifdef MY_ABC_HERE
+static unsigned int str_to_hex(char ch)
+{
+	if ((ch >= '0') && (ch <= '9'))
+		return (ch - '0');
+
+	if ((ch >= 'a') && (ch <= 'f'))
+		return (ch - 'a' + 10);
+
+	if ((ch >= 'A') && (ch <= 'F'))
+		return (ch - 'A' + 10);
+
+	return 0;
+}
+
+void convert_str_to_mac(char *source , char *dest)
+{
+	dest[0] = (str_to_hex(source[0]) << 4) + str_to_hex(source[1]);
+	dest[1] = (str_to_hex(source[2]) << 4) + str_to_hex(source[3]);
+	dest[2] = (str_to_hex(source[4]) << 4) + str_to_hex(source[5]);
+	dest[3] = (str_to_hex(source[6]) << 4) + str_to_hex(source[7]);
+	dest[4] = (str_to_hex(source[8]) << 4) + str_to_hex(source[9]);
+	dest[5] = (str_to_hex(source[10]) << 4) + str_to_hex(source[11]);
+}
+
+/**
+ * Check if the target interface should not use vender mac when bonding
+ *
+ * eg. RC18015xs+ has a special heartbeat interface mon.hb0 (using the 5th vender mac)
+ * but an external NIC on RC18015xs+ with interface eth4 should not use 5th
+ * vender mac when bonding, a grub parameter skip_bond_vender_mac_interfaces is
+ * used to skip these interfaces
+ * eg. skip_bond_vender_mac_interfaces=4,5,6,7 means eth4,5,6,7 will be skipped
+ * using vender mac when bonding
+ *
+ * return 1 if need to skip this interface
+ *        0 if not
+ *       -1 if error
+ */
+static int syno_skip_bond_vender_mac(int iMacIndex)
+{
+	extern const char gszSkipVenderMacInterfaces[256];
+	char szDupIfns[256] = {'\0'};
+	char *token = NULL;
+	char *ptr = NULL;
+	long iSkipIndex = 0;
+	int iMatch = 0;
+
+	if (0 == strlen(gszSkipVenderMacInterfaces)) {
+		goto END;
+	}
+
+	snprintf(szDupIfns, sizeof(szDupIfns), "%s", gszSkipVenderMacInterfaces);
+	ptr = szDupIfns;
+	// eg. szDupIfns="4,5,6,7"
+	while (NULL != (token = strsep(&ptr, ","))) {
+		if (0 != kstrtol(token, 10, &iSkipIndex)) {
+			// something error
+			iMatch = -1;
+			goto END;
+		}
+		if ((long)iMacIndex == iSkipIndex) {
+			iMatch = 1;
+			goto END;
+		}
+		if (!ptr) {
+			break;
+		}
+	}
+
+END:
+	return iMatch;
+}
+
+#ifdef MY_ABC_HERE
+static bool syno_internal_eth_check(int ethIndex)
+{
+	extern long g_internal_netif_num;
+	long netif_num = g_internal_netif_num;
+	bool ret = false;
+
+	if (0 > ethIndex) {
+		goto END;
+	}
+
+	if (dev_get_by_name(&init_net, "eth99")) {
+		if (99 == ethIndex) {
+			ret = true;
+			goto END;
+		}
+		netif_num--;
+	}
+	if (netif_num > ethIndex) {
+		ret = true;
+	}
+
+END:
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
+#define SYNO_VENDOR_MAC_SUCCESS     0
+#define SYNO_VENDOR_MAC_EMPTY       1
+#define SYNO_VENDOR_MAC_FAIL        2
+int syno_get_dev_vendor_mac(const char *szDev, char *szMac, int bufSize)
+{
+	extern unsigned char grgbLanMac[SYNO_MAC_MAX_NUMBER][16];
+	int err = SYNO_VENDOR_MAC_FAIL;
+	char szIFPrefix[IFNAMSIZ] = "eth";
+	int iMacIndex = 0;
+	const char *pMacIndex = NULL;
+	int iMatch = 0;
+	struct net_device *dev;
+
+	if (!szMac || !szDev)
+		goto ERR;
+
+	// According to function __dev_get_by_name
+	// we can use strncmp & IFNAMSIZ to replace memcmp to avoid #48870
+	if (!strncmp(szDev, szIFPrefix, strlen(szIFPrefix))) {
+		pMacIndex = szDev + strlen(szIFPrefix);
+		iMacIndex = simple_strtol(pMacIndex, NULL, 10);
+#ifdef MY_ABC_HERE
+		if (!syno_internal_eth_check(iMacIndex)) {
+			err = SYNO_VENDOR_MAC_FAIL;
+			goto ERR;
+		}
+#endif /* MY_ABC_HERE */
+		if (1 == (iMatch = syno_skip_bond_vender_mac(iMacIndex))) {
+			err = SYNO_VENDOR_MAC_EMPTY;
+			goto ERR;
+		} else if (-1 == iMatch) {
+			printk(KERN_ERR "Error when match bond vender mac\n");
+			err = SYNO_VENDOR_MAC_FAIL;
+			goto ERR;
+		}
+
+		if (99 == iMacIndex) {
+			if (NULL == (dev = dev_get_by_name(&init_net, "eth99")) ||
+				bufSize < dev->addr_len) {
+				err = SYNO_VENDOR_MAC_FAIL;
+				goto ERR;
+			}
+			memcpy(szMac, dev->perm_addr, dev->addr_len);
+		} else {
+			if (!strcmp(grgbLanMac[iMacIndex], "")) {
+				err = SYNO_VENDOR_MAC_EMPTY;
+				goto ERR;
+			}
+			convert_str_to_mac(grgbLanMac[iMacIndex], szMac);
+		}
+	} else {
+		goto ERR;
+	}
+
+	err = SYNO_VENDOR_MAC_SUCCESS;
+ERR:
+	return err;
+}
+EXPORT_SYMBOL(syno_get_dev_vendor_mac);
+#endif /* MY_ABC_HERE */
 
 /*
  * The @dev_base_head list is protected by @dev_base_lock and the rtnl
@@ -10448,7 +10615,11 @@ struct rtnl_link_stats64 *dev_get_stats(struct net_device *dev,
 	} else {
 		netdev_stats_to_stats64(storage, &dev->stats);
 	}
+#if defined(MY_ABC_HERE)
+	/* skip the rx_drop from kernel core, only count rx_drop by device driver */
+#else /* MY_ABC_HERE */
 	storage->rx_dropped += (unsigned long)atomic_long_read(&dev->rx_dropped);
+#endif /* MY_ABC_HERE */
 	storage->tx_dropped += (unsigned long)atomic_long_read(&dev->tx_dropped);
 	storage->rx_nohandler += (unsigned long)atomic_long_read(&dev->rx_nohandler);
 	return storage;

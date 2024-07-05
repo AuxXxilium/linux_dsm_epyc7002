@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  *  Copyright (C) 1991, 1992  Linus Torvalds
@@ -1115,7 +1118,42 @@ static ssize_t file_tty_write(struct file *file, struct kiocb *iocb, struct iov_
 	if (!ld->ops->write)
 		ret = -EIO;
 	else
+#ifdef MY_ABC_HERE
+	{
+		if (0 == strcmp(tty->name, "ttyS1")) {
+			char *prefix = "-";
+			struct kvec iov = {
+				.iov_base	= (void *)prefix,
+				.iov_len	= 1,
+			};
+			struct iov_iter iter;
+#ifdef MY_ABC_HERE
+			char first_char = '\0';
+
+			if (copy_from_iter(&first_char, 1, from) != 1)
+				printk(KERN_ERR "error attempted to copy_from_iter\n");
+			else
+				iov_iter_revert(from, 1);
+
+			if ('+' == first_char) {
+				goto skip_uP_prefix;
+			}
+#endif /* MY_ABC_HERE */
+			iov_iter_kvec(&iter, WRITE, &iov, 1, iov.iov_len);
+			ret = do_tty_write(ld->ops->write, tty, file, &iter);
+			if (0 > ret) {
+				printk(KERN_ERR "Write uP control prefix fail!\n");
+			}
+		}
+
+#ifdef MY_ABC_HERE
+skip_uP_prefix:
+#endif /* MY_ABC_HERE */
 		ret = do_tty_write(ld->ops->write, tty, file, from);
+	}
+#else /* MY_ABC_HERE */
+		ret = do_tty_write(ld->ops->write, tty, file, from);
+#endif /* MY_ABC_HERE */
 	tty_ldisc_deref(ld);
 	return ret;
 }
@@ -3123,6 +3161,63 @@ int tty_put_char(struct tty_struct *tty, unsigned char ch)
 	return tty->ops->write(tty, &ch, 1);
 }
 EXPORT_SYMBOL_GPL(tty_put_char);
+
+#ifdef MY_ABC_HERE
+int syno_ttys_write(const int index, const char* szBuf)
+{
+	int err = -1;
+	struct tty_driver *drv = NULL;
+	struct tty_struct *tty = NULL;
+	char *szX64Buf = NULL;
+	size_t cbX64Buf = strlen(szBuf) + 2;
+
+	szX64Buf = kmalloc(cbX64Buf, GFP_KERNEL);
+	if (!szX64Buf) {
+		err = -ENOMEM;
+		goto Error;
+	}
+
+	mutex_lock(&tty_mutex);
+	list_for_each_entry(drv, &tty_drivers, tty_drivers) {
+		if (strcmp(drv->name, "ttyS")) {
+		    continue;
+		}
+		if (index < 0 || index >= drv->num) {
+		    continue;
+		}
+		if (NULL == drv->ttys || NULL == drv->ttys[index]) {
+		    continue;
+		}
+		tty = drv->ttys[index];
+	}
+	if (!IS_ERR(tty))
+		tty_kref_get(tty);
+	else
+		tty = NULL;
+	mutex_unlock(&tty_mutex);
+
+	if (!tty) {
+		err = -ENODEV;
+		goto Error;
+	}
+
+	memset(szX64Buf, 0, cbX64Buf);
+	snprintf(szX64Buf, cbX64Buf, "%c%s", '-', szBuf);
+
+	syno_uart_write(tty->port, szX64Buf, strlen(szX64Buf));
+
+	mutex_lock(&tty_mutex);
+	tty_kref_put(tty);
+	mutex_unlock(&tty_mutex);
+
+	err = 0;
+Error:
+	if (szX64Buf)
+		kfree(szX64Buf);
+	return err;
+}
+EXPORT_SYMBOL(syno_ttys_write);
+#endif /* MY_ABC_HERE */
 
 struct class *tty_class;
 

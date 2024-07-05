@@ -74,6 +74,9 @@ source "drivers/phy/motorola/Kconfig"
 source "drivers/phy/mscc/Kconfig"
 source "drivers/phy/qualcomm/Kconfig"
 source "drivers/phy/ralink/Kconfig"
+if SYNO_LSP_RTD1619B
+source "drivers/phy/realtek/Kconfig"
+endif # SYNO_LSP_RTD1619B
 source "drivers/phy/renesas/Kconfig"
 source "drivers/phy/rockchip/Kconfig"
 source "drivers/phy/samsung/Kconfig"

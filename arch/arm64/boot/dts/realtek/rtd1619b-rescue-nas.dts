@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (c) 2019-2021 Realtek Semiconductor Corp.
+ */
+
+/dts-v1/;
+
+#include "rtd16xxb-rescue.dtsi"
+
+/ {
+	model = "Realtek RTD1619B Rescue for Pure NAS";
+
+	memory@40000 {
+		device_type = "memory";
+		reg = <0x00040000 0x3ffc0000>; /* 1 GiB */
+	};
+};
+
+&protected_mem {
+	status = "disabled";
+};
+
+&rpc_comm {
+	status = "disabled";
+};
+
+&rpc_ringbuf {
+	status = "disabled";
+};
+
+&video_fw_ve3 {
+	status = "disabled";
+};
+
+&audio_heap {
+	status = "disabled";
+};
+
+&media_heap {
+	status = "disabled";
+};
+
+&cma_resrved_1 {
+	status = "disabled";
+};
+
+&cma_resrved_2 {
+	status = "disabled";
+};
+
+&cma_resrved_4 {
+	status = "disabled";
+};
+
+&cma_resrved_5 {
+	status = "disabled";
+};
+
+&cma_resrved_6 {
+	status = "disabled";
+};
+
+&cma_resrved_7 {
+	status = "disabled";
+};
+
+&cma_resrved_8 {
+	status = "disabled";
+};
+
+&cma_resrved_9 {
+	status = "disabled";
+};
+
+&rtk_ion {
+	status = "disabled";
+
+};
+
+&tee {
+	status = "disabled";
+};
+
+&hifi {
+	status = "disabled";
+};
+
+&rpc {
+	status = "disabled";
+};
+
+&rtk_fw_pm {
+	status = "disabled";
+};

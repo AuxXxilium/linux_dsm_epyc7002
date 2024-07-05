@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 
 #ifndef BTRFS_SYSFS_H
@@ -9,6 +12,9 @@ enum btrfs_feature_set {
 	FEAT_COMPAT,
 	FEAT_COMPAT_RO,
 	FEAT_INCOMPAT,
+#ifdef MY_ABC_HERE
+	FEAT_SYNO_CAPABILITY,
+#endif /* MY_ABC_HERE */
 	FEAT_MAX
 };
 
@@ -39,5 +45,9 @@ void btrfs_sysfs_del_qgroups(struct btrfs_fs_info *fs_info);
 int btrfs_sysfs_add_qgroups(struct btrfs_fs_info *fs_info);
 void btrfs_sysfs_del_one_qgroup(struct btrfs_fs_info *fs_info,
 				struct btrfs_qgroup *qgroup);
+#ifdef MY_ABC_HERE
+int btrfs_debugfs_add_mounted(struct btrfs_fs_info *fs_info);
+void btrfs_debugfs_remove_mounted(struct btrfs_fs_info *fs_info);
+#endif /* MY_ABC_HERE */
 
 #endif

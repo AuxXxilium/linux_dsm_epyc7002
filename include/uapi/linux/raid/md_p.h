@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0+ WITH Linux-syscall-note */
 /*
    md_p.h : physical layout of Linux RAID devices
@@ -85,6 +88,9 @@
 #define MD_DISK_CANDIDATE	5 /* disk is added as spare (local) until confirmed
 				   * For clustered enviroments only.
 				   */
+#ifdef MY_ABC_HERE
+#define MD_DISK_SYNO_ERROR	6 /* disk error in degraded mode */
+#endif /* MY_ABC_HERE */
 #define MD_DISK_FAILFAST	10 /* Send REQ_FAILFAST if there are multiple
 				    * devices available - and don't try to
 				    * correct read errors.
@@ -96,10 +102,14 @@
 				   */
 #define MD_DISK_JOURNAL		18 /* disk is used as the write journal in RAID-5/6 */
 
+#ifdef MY_ABC_HERE
+#define MD_DISK_ROLE_SYNO_ERROR_PREFIX 0x8000
+#endif /* MY_ABC_HERE */
 #define MD_DISK_ROLE_SPARE	0xffff
 #define MD_DISK_ROLE_FAULTY	0xfffe
 #define MD_DISK_ROLE_JOURNAL	0xfffd
 #define MD_DISK_ROLE_MAX	0xff00 /* max value of regular disk role */
+
 
 typedef struct mdp_device_descriptor_s {
 	__u32 number;		/* 0 Device number in the entire set	      */

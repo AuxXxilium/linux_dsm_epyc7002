@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2013 Facebook.  All rights reserved.
@@ -11,6 +14,8 @@
 #include "../qgroup.h"
 #include "../backref.h"
 
+#ifdef MY_ABC_HERE
+#else
 static int insert_normal_tree_ref(struct btrfs_root *root, u64 bytenr,
 				  u64 num_bytes, u64 parent, u64 root_objectid)
 {
@@ -534,3 +539,4 @@ out:
 	btrfs_free_dummy_fs_info(fs_info);
 	return ret;
 }
+#endif /* MY_ABC_HERE */

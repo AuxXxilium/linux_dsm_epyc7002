@@ -32,6 +32,10 @@ obj-$(CONFIG_VMD) += vmd.o
 obj-$(CONFIG_PCIE_BRCMSTB) += pcie-brcmstb.o
 obj-$(CONFIG_PCI_LOONGSON) += pci-loongson.o
 obj-$(CONFIG_PCIE_HISI_ERR) += pcie-hisi-error.o
+ifeq ($(CONFIG_SYNO_LSP_RTD1619B), y)
+obj-$(CONFIG_PCIE_RTD) += pcie-rtd.o
+obj-$(CONFIG_PCIE_RTD_TRANS) += pcie-rtd-trans.o
+endif # CONFIG_SYNO_LSP_RTD1619B
 # pcie-hisi.o quirks are needed even without CONFIG_PCIE_DW
 obj-y				+= dwc/
 obj-y				+= mobiveil/

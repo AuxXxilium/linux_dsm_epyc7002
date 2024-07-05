@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /**
  * io.h - DesignWare USB3 DRD IO Header
@@ -16,10 +19,25 @@
 #include "debug.h"
 #include "core.h"
 
+#if defined(MY_DEF_HERE)
+#if 0//def CONFIG_USB_PATCH_ON_RTK
+/* Add global lock for emmc issue*/
+#include <soc/realtek/rtd129x_lockapi.h>
+#endif // CONFIG_USB_PATCH_ON_RTK
+
+#endif /* MY_DEF_HERE */
 static inline u32 dwc3_readl(void __iomem *base, u32 offset)
 {
 	u32 value;
 
+#if defined(MY_DEF_HERE)
+#if 0//def CONFIG_USB_PATCH_ON_RTK
+	/* Add global lock for emmc issue*/
+	unsigned long flags;
+	rtk_lockapi_lock(flags, __FUNCTION__);
+#endif // CONFIG_USB_PATCH_ON_RTK
+
+#endif /* MY_DEF_HERE */
 	/*
 	 * We requested the mem region starting from the Globals address
 	 * space, see dwc3_probe in core.c.
@@ -27,6 +45,13 @@ static inline u32 dwc3_readl(void __iomem *base, u32 offset)
 	 */
 	value = readl(base + offset - DWC3_GLOBALS_REGS_START);
 
+#if defined(MY_DEF_HERE)
+#if 0//def CONFIG_USB_PATCH_ON_RTK
+	/* Add global lock for emmc issue*/
+	rtk_lockapi_unlock(flags,__FUNCTION__);
+#endif // CONFIG_USB_PATCH_ON_RTK
+
+#endif /* MY_DEF_HERE */
 	/*
 	 * When tracing we want to make it easy to find the correct address on
 	 * documentation, so we revert it back to the proper addresses, the
@@ -39,6 +64,12 @@ static inline u32 dwc3_readl(void __iomem *base, u32 offset)
 
 static inline void dwc3_writel(void __iomem *base, u32 offset, u32 value)
 {
+#if defined(MY_DEF_HERE)
+#if 0//def CONFIG_USB_PATCH_ON_RTK
+	unsigned long flags;
+	rtk_lockapi_lock(flags, __FUNCTION__);
+#endif // CONFIG_USB_PATCH_ON_RTK
+#endif /* MY_DEF_HERE */
 	/*
 	 * We requested the mem region starting from the Globals address
 	 * space, see dwc3_probe in core.c.
@@ -46,6 +77,12 @@ static inline void dwc3_writel(void __iomem *base, u32 offset, u32 value)
 	 */
 	writel(value, base + offset - DWC3_GLOBALS_REGS_START);
 
+#if defined(MY_DEF_HERE)
+#if 0//def CONFIG_USB_PATCH_ON_RTK
+	rtk_lockapi_unlock(flags,__FUNCTION__);
+#endif // CONFIG_USB_PATCH_ON_RTK
+
+#endif /* MY_DEF_HERE */
 	/*
 	 * When tracing we want to make it easy to find the correct address on
 	 * documentation, so we revert it back to the proper addresses, the

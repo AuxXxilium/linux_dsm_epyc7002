@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/net/sunrpc/clnt.c
@@ -75,7 +78,11 @@ static int	rpc_encode_header(struct rpc_task *task,
 static int	rpc_decode_header(struct rpc_task *task,
 				  struct xdr_stream *xdr);
 static int	rpc_ping(struct rpc_clnt *clnt);
-static void	rpc_check_timeout(struct rpc_task *task);
+static void	rpc_check_timeout(struct rpc_task *task
+#ifdef MY_ABC_HERE
+				  , const char *stage
+#endif /* MY_ABC_HERE */
+				  );
 
 static void rpc_register_client(struct rpc_clnt *clnt)
 {
@@ -2015,7 +2022,11 @@ out_next:
 retry_timeout:
 	task->tk_status = 0;
 	task->tk_action = call_bind;
-	rpc_check_timeout(task);
+	rpc_check_timeout(task
+#ifdef MY_ABC_HERE
+			  , "bind"
+#endif /* MY_ABC_HERE */
+			  );
 }
 
 /*
@@ -2116,7 +2127,11 @@ out_next:
 out_retry:
 	/* Check for timeouts before looping back to call_bind */
 	task->tk_action = call_bind;
-	rpc_check_timeout(task);
+	rpc_check_timeout(task
+#ifdef MY_ABC_HERE
+			  , "connect"
+#endif /* MY_ABC_HERE */
+			  );
 }
 
 /*
@@ -2206,7 +2221,11 @@ call_transmit_status(struct rpc_task *task)
 		task->tk_status = 0;
 		break;
 	}
-	rpc_check_timeout(task);
+	rpc_check_timeout(task
+#ifdef MY_ABC_HERE
+			  , "transmit"
+#endif /* MY_ABC_HERE */
+			  );
 }
 
 #if defined(CONFIG_SUNRPC_BACKCHANNEL)
@@ -2351,7 +2370,11 @@ call_status(struct rpc_task *task)
 	}
 	task->tk_action = call_encode;
 	if (status != -ECONNRESET && status != -ECONNABORTED)
-		rpc_check_timeout(task);
+		rpc_check_timeout(task
+#ifdef MY_ABC_HERE
+				  , "call status"
+#endif /* MY_ABC_HERE */
+				  );
 	return;
 out_exit:
 	rpc_call_rpcerror(task, status);
@@ -2367,7 +2390,11 @@ rpc_check_connected(const struct rpc_rqst *req)
 }
 
 static void
-rpc_check_timeout(struct rpc_task *task)
+rpc_check_timeout(struct rpc_task *task
+#ifdef MY_ABC_HERE
+		  , const char *stage
+#endif /* MY_ABC_HERE */
+		  )
 {
 	struct rpc_clnt	*clnt = task->tk_client;
 
@@ -2379,6 +2406,10 @@ rpc_check_timeout(struct rpc_task *task)
 	if (xprt_adjust_timeout(task->tk_rqstp) == 0)
 		return;
 
+#ifdef MY_ABC_HERE
+	pr_warn_ratelimited(KERN_WARNING "RPC: %5u call_timeout in %s stage\n",
+			    task->tk_pid, stage);
+#endif /* MY_ABC_HERE */
 	trace_rpc_timeout_status(task);
 	task->tk_timeouts++;
 
@@ -2487,11 +2518,19 @@ out:
 			xprt_conditional_disconnect(req->rq_xprt,
 						    req->rq_connect_cookie);
 		task->tk_action = call_encode;
-		rpc_check_timeout(task);
+		rpc_check_timeout(task
+#ifdef MY_ABC_HERE
+				  , "call decode"
+#endif /* MY_ABC_HERE */
+				  );
 		break;
 	case -EKEYREJECTED:
 		task->tk_action = call_reserve;
-		rpc_check_timeout(task);
+		rpc_check_timeout(task
+#ifdef MY_ABC_HERE
+				  , "call decode"
+#endif /* MY_ABC_HERE */
+				  );
 		rpcauth_invalcred(task);
 		/* Ensure we obtain a new XID if we retry! */
 		xprt_release(task);

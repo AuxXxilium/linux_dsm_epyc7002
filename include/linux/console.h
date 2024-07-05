@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  *  linux/include/linux/console.h
  *
@@ -151,6 +154,11 @@ struct console {
 	short	index;
 	int	cflag;
 	void	*data;
+#ifdef MY_ABC_HERE
+	void __iomem * pcimapaddress;
+	unsigned long pcimapsize;
+	void	(*deinit)(void);
+#endif /* MY_ABC_HERE */
 	struct	 console *next;
 };
 

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/fs/file_table.c
@@ -31,6 +34,12 @@
 #include <linux/atomic.h>
 
 #include "internal.h"
+
+#ifdef MY_ABC_HERE
+#include <linux/dcache.h>
+#include "mount.h"
+static spinlock_t files_list_lock;
+#endif /*MY_ABC_HERE*/
 
 /* sysctl tunables... */
 struct files_stat_struct files_stat = {
@@ -109,6 +118,9 @@ static struct file *__alloc_file(int flags, const struct cred *cred)
 		return ERR_PTR(error);
 	}
 
+#ifdef MY_ABC_HERE
+	INIT_LIST_HEAD(&f->open_list);
+#endif /* MY_ABC_HERE */
 	atomic_long_set(&f->f_count, 1);
 	rwlock_init(&f->f_owner.lock);
 	spin_lock_init(&f->f_lock);
@@ -162,6 +174,9 @@ over:
 	}
 	return ERR_PTR(-ENFILE);
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL_GPL(alloc_empty_file);
+#endif /* MY_ABC_HERE */
 
 /*
  * Variant of alloc_empty_file() that doesn't check and modify nr_files.
@@ -337,6 +352,10 @@ void fput_many(struct file *file, unsigned int refs)
 	if (atomic_long_sub_and_test(refs, &file->f_count)) {
 		struct task_struct *task = current;
 
+#ifdef MY_ABC_HERE
+		file_sb_list_del(file);
+#endif /* MY_ABC_HERE */
+
 		if (likely(!in_interrupt() && !(task->flags & PF_KTHREAD))) {
 			init_task_work(&file->f_u.fu_rcuhead, ____fput);
 			if (!task_work_add(task, &file->f_u.fu_rcuhead, TWA_RESUME))
@@ -370,17 +389,26 @@ void __fput_sync(struct file *file)
 {
 	if (atomic_long_dec_and_test(&file->f_count)) {
 		struct task_struct *task = current;
+
+#ifdef MY_ABC_HERE
+		file_sb_list_del(file);
+#endif /* MY_ABC_HERE */
+
 		BUG_ON(!(task->flags & PF_KTHREAD));
 		__fput(file);
 	}
 }
 
 EXPORT_SYMBOL(fput);
+EXPORT_SYMBOL(__fput_sync);
 
 void __init files_init(void)
 {
 	filp_cachep = kmem_cache_create("filp", sizeof(struct file), 0,
 			SLAB_HWCACHE_ALIGN | SLAB_PANIC | SLAB_ACCOUNT, NULL);
+#ifdef MY_ABC_HERE
+	spin_lock_init(&files_list_lock);
+#endif /* MY_ABC_HERE */
 	percpu_counter_init(&nr_files, 0, GFP_KERNEL);
 }
 
@@ -399,3 +427,118 @@ void __init files_maxfiles_init(void)
 
 	files_stat.max_files = max_t(unsigned long, n, NR_FILE);
 }
+#ifdef MY_ABC_HERE
+static inline int file_list_cpu(struct file *file)
+{
+#ifdef CONFIG_SMP
+	return file->f_sb_list_cpu;
+#else /* CONFIG_SMP */
+	return smp_processor_id();
+#endif /* CONFIG_SMP */
+}
+
+/* helper for file_sb_list_add to reduce ifdefs */
+static inline void __file_sb_list_add(struct file *file, struct super_block *sb)
+{
+	struct list_head *list;
+#ifdef CONFIG_SMP
+	int cpu = smp_processor_id();
+
+	file->f_sb_list_cpu = cpu;
+	list = per_cpu_ptr(sb->s_files, cpu);
+#else /* CONFIG_SMP */
+	list = &sb->s_files;
+#endif /* CONFIG_SMP */
+	list_add(&file->open_list, list);
+	memcpy(file->comm, current->comm, TASK_COMM_LEN);
+	file->pid = current->pid;
+}
+
+/**
+ * file_sb_list_add - add a file to the sb's file list
+ * @file: file to add
+ *
+ * Use this function to associate a file with the superblock of the inode it
+ * refers to.
+ */
+void file_sb_list_add(struct file *file)
+{
+	unsigned long flags;
+	struct super_block *sb = file->f_inode->i_sb;
+
+	spin_lock_irqsave(&files_list_lock, flags);
+	__file_sb_list_add(file, sb);
+	spin_unlock_irqrestore(&files_list_lock, flags);
+}
+
+/**
+ * file_sb_list_del - remove a file from the sb's file list
+ * @file: file to remove
+ *
+ * Use this function to remove a file from its superblock.
+ */
+void file_sb_list_del(struct file *file)
+{
+	unsigned long flags;
+
+	if (!list_empty(&file->open_list)) {
+		spin_lock_irqsave(&files_list_lock, flags);
+		list_del_init(&file->open_list);
+		spin_unlock_irqrestore(&files_list_lock, flags);
+	}
+}
+
+#ifdef CONFIG_SMP
+
+/*
+ * These macros iterate all files on all CPUs for a given superblock.
+ * files_list_lock must be held globally.
+ */
+#define do_file_list_for_each_entry(__sb, __file)		\
+{								\
+	int i;							\
+	for_each_possible_cpu(i) {				\
+		struct list_head *list;				\
+		list = per_cpu_ptr((__sb)->s_files, i);		\
+		list_for_each_entry((__file), list, open_list)
+
+#define while_file_list_for_each_entry				\
+	}							\
+}
+
+#else /* CONFIG_SMP */
+
+#define do_file_list_for_each_entry(__sb, __file)		\
+{								\
+	struct list_head *list;					\
+	list = &(__sb)->s_files;				\
+	list_for_each_entry((__file), list, open_list)
+
+#define while_file_list_for_each_entry				\
+}
+
+#endif /* CONFIG_SMP */
+
+void fs_show_opened_file(struct mount *mnt,
+			 const char *mnt_point_name, char *file_name_buf, int buflen)
+{
+	struct file *file;
+	char *file_name;
+	char comm[TASK_COMM_LEN + 1] = {0};
+	unsigned long flags;
+
+	spin_lock_irqsave(&files_list_lock, flags);
+	do_file_list_for_each_entry(mnt->mnt.mnt_sb, file) {
+		file_name = dentry_path_raw(file->f_path.dentry, file_name_buf, buflen - 1);
+		if (IS_ERR(file_name)) {
+			pr_warn("VFS: list file in mnt_point:%s error", mnt_point_name);
+			continue;
+		}
+		memcpy(comm, file->comm, TASK_COMM_LEN);
+		if (__ratelimit(&mnt->mnt.mnt_sb->rs))
+			pr_warn("VFS: opened file in mnt_point: (%s), file: (%s), comm: (%s), pid:(%d)",
+					mnt_point_name, file_name, comm, file->pid);
+	} while_file_list_for_each_entry;
+	spin_unlock_irqrestore(&files_list_lock, flags);
+}
+#endif /* MY_ABC_HERE */

@@ -798,7 +798,12 @@ static int decode_pool(void **p, void *end, struct ceph_pg_pool_info *pi)
 	pi->pg_num = ceph_decode_32(p);
 	pi->pgp_num = ceph_decode_32(p);
 
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+	pi->placement_seed = ceph_decode_16(p);
+	*p += 2 + 4;  /* skip padding and lpgp_num */
+#else
 	*p += 4 + 4;  /* skip lpg* */
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 	*p += 4;      /* skip last_change */
 	*p += 8 + 4;  /* skip snap_seq, snap_epoch */
 
@@ -1263,7 +1268,11 @@ static int osdmap_set_crush(struct ceph_osdmap *map, struct crush_map *crush)
 	return 0;
 }
 
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+#define OSDMAP_WRAPPER_COMPAT_VER	128
+#else
 #define OSDMAP_WRAPPER_COMPAT_VER	7
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 #define OSDMAP_CLIENT_DATA_COMPAT_VER	1
 
 /*
@@ -2452,10 +2461,18 @@ static u32 raw_pg_to_pps(struct ceph_pg_pool_info *pi,
  */
 #define CEPH_DEFAULT_CHOOSE_ARGS	-1
 
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+int do_crush(struct ceph_osdmap *map, int ruleno, int x,
+#else
 static int do_crush(struct ceph_osdmap *map, int ruleno, int x,
+#endif
 		    int *result, int result_max,
 		    const __u32 *weight, int weight_max,
-		    s64 choose_args_index)
+		    s64 choose_args_index
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+		    , int pool_ps
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
+		    )
 {
 	struct crush_choose_arg_map *arg_map;
 	struct crush_work *work;
@@ -2472,7 +2489,11 @@ static int do_crush(struct ceph_osdmap *map, int ruleno, int x,
 	work = get_workspace(&map->crush_wsm, map->crush);
 	r = crush_do_rule(map->crush, ruleno, x, result, result_max,
 			  weight, weight_max, work,
-			  arg_map ? arg_map->args : NULL);
+			  arg_map ? arg_map->args : NULL
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+			  , pool_ps
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
+			  );
 	put_workspace(&map->crush_wsm, work);
 	return r;
 }
@@ -2515,7 +2536,11 @@ static void pg_to_raw_osds(struct ceph_osdmap *osdmap,
 			   struct ceph_pg_pool_info *pi,
 			   const struct ceph_pg *raw_pgid,
 			   struct ceph_osds *raw,
-			   u32 *ppps)
+			   u32 *ppps
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+			  , u32 pool_ps
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
+			   )
 {
 	u32 pps = raw_pg_to_pps(pi, raw_pgid);
 	int ruleno;
@@ -2541,7 +2566,11 @@ static void pg_to_raw_osds(struct ceph_osdmap *osdmap,
 	}
 
 	len = do_crush(osdmap, ruleno, pps, raw->osds, pi->size,
-		       osdmap->osd_weight, osdmap->max_osd, pi->id);
+		       osdmap->osd_weight, osdmap->max_osd, pi->id
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+		       , pool_ps
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
+		       );
 	if (len < 0) {
 		pr_err("error %d from crush rule %d: pool %lld ruleset %d type %d size %d\n",
 		       len, ruleno, pi->id, pi->crush_ruleset, pi->type,
@@ -2786,11 +2815,21 @@ void ceph_pg_to_up_acting_osds(struct ceph_osdmap *osdmap,
 {
 	struct ceph_pg pgid;
 	u32 pps;
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+	u32 pool_ps;
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 
 	WARN_ON(pi->id != raw_pgid->pool);
 	raw_pg_to_pg(pi, raw_pgid, &pgid);
 
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+	pool_ps = (pi->flags & CEPH_POOL_FLAG_HASHPSPOOL) ?
+		       crush_hash32(CRUSH_HASH_RJENKINS1, pi->placement_seed) : pi->placement_seed;
+
+	pg_to_raw_osds(osdmap, pi, raw_pgid, up, &pps, pool_ps);
+#else
 	pg_to_raw_osds(osdmap, pi, raw_pgid, up, &pps);
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 	apply_upmap(osdmap, &pgid, up);
 	raw_to_up_osds(osdmap, pi, up);
 	apply_primary_affinity(osdmap, pi, pps, up);

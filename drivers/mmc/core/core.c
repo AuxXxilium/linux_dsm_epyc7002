@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/drivers/mmc/core/core.c
@@ -46,6 +49,15 @@
 #include "sd_ops.h"
 #include "sdio_ops.h"
 
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_MMC_SDHCI_OF_RTK
+#include "../host/sdhci-rtk.h"
+#endif /* CONFIG_MMC_SDHCI_OF_RTK */
+
+/* If the device is not responding */
+#define MMC_CORE_TIMEOUT_MS	(10 * 60 * 1000) /* 10 minute timeout */
+
+#endif /* MY_DEF_HERE */
 /* The max erase timeout, used when host->max_busy_timeout isn't specified */
 #define MMC_ERASE_TIMEOUT_MS	(60 * 1000) /* 60 s */
 #define SD_DISCARD_TIMEOUT_MS	(250)
@@ -60,6 +72,19 @@ static const unsigned freqs[] = { 400000, 300000, 200000, 100000 };
 bool use_spi_crc = 1;
 module_param(use_spi_crc, bool, 0);
 
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_MMC_SDHCI_OF_RTK
+bool SDIO_flag = false;
+bool SDIO_fini = false;
+extern bool SDIO_card;
+#endif /* CONFIG_MMC_SDHCI_OF_RTK */
+
+#ifdef CONFIG_MMC_RTK_SDMMC
+void rtk_sdmmc_close_clk(struct mmc_host *host);
+int rtk_sdmmc_clk_cls_chk(struct mmc_host *host);
+#endif /* CONFIG_MMC_RTK_SDMMC */
+
+#endif /* MY_DEF_HERE */
 static int mmc_schedule_delayed_work(struct delayed_work *work,
 				     unsigned long delay)
 {
@@ -2126,6 +2151,12 @@ EXPORT_SYMBOL(mmc_sw_reset);
 
 static int mmc_rescan_try_freq(struct mmc_host *host, unsigned freq)
 {
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_MMC_SDHCI_OF_RTK
+	int ret = 0;
+#endif /* CONFIG_MMC_SDHCI_OF_RTK */
+
+#endif /* MY_DEF_HERE */
 	host->f_init = freq;
 
 	pr_debug("%s: %s: trying to init card at %u Hz\n",
@@ -2154,9 +2185,26 @@ static int mmc_rescan_try_freq(struct mmc_host *host, unsigned freq)
 		mmc_send_if_cond(host, host->ocr_avail);
 
 	/* Order's important: probe SDIO, then SD, then MMC */
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_MMC_SDHCI_OF_RTK
+	if (!(host->caps2 & MMC_CAP2_NO_SDIO)) {
+		if (!(ret = mmc_attach_sdio(host))) {
+			SDIO_flag = true;
+			return 0;
+		}
+		if(ret == -110)
+			SDIO_fini = true;
+	}
+#else
 	if (!(host->caps2 & MMC_CAP2_NO_SDIO))
 		if (!mmc_attach_sdio(host))
 			return 0;
+#endif /* CONFIG_MMC_SDHCI_OF_RTK */
+#else /* MY_DEF_HERE */
+	if (!(host->caps2 & MMC_CAP2_NO_SDIO))
+		if (!mmc_attach_sdio(host))
+			return 0;
+#endif /* MY_DEF_HERE */
 
 	if (!(host->caps2 & MMC_CAP2_NO_SD))
 		if (!mmc_attach_sd(host))
@@ -2261,8 +2309,21 @@ void mmc_rescan(struct work_struct *work)
 	mmc_bus_get(host);
 
 	/* Verify a registered card to be functional, else remove it. */
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_MMC_RTK_SDMMC
+	if (host->bus_ops && !host->bus_dead) {
+		host->bus_ops->detect(host);
+		if(!(host->caps2 & MMC_CAP2_NO_SD))
+			rtk_sdmmc_close_clk(host);
+	}
+#else
 	if (host->bus_ops && !host->bus_dead)
 		host->bus_ops->detect(host);
+#endif /* CONFIG_MMC_RTK_SDMMC */
+#else /* MY_DEF_HERE */
+	if (host->bus_ops && !host->bus_dead)
+		host->bus_ops->detect(host);
+#endif /* MY_DEF_HERE */
 
 	host->detect_change = 0;
 
@@ -2310,6 +2371,20 @@ void mmc_rescan(struct work_struct *work)
  out:
 	if (host->caps & MMC_CAP_NEEDS_POLL)
 		mmc_schedule_delayed_work(&host->detect, HZ);
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_MMC_SDHCI_OF_RTK
+	if(SDIO_fini==true && SDIO_flag == false && SDIO_card==false) {
+		SDIO_fini= false;
+		host->caps2 |=  MMC_CAP2_NO_SDIO;
+		rtk_sdhci_close_clk();
+	}
+#endif /* CONFIG_MMC_SDHCI_OF_RTK */
+
+#ifdef CONFIG_MMC_RTK_SDMMC
+	if(!(host->caps2 & MMC_CAP2_NO_SD) && rtk_sdmmc_clk_cls_chk(host))
+		rtk_sdmmc_close_clk(host);
+#endif /* CONFIG_MMC_RTK_SDMMC */
+#endif /* MY_DEF_HERE */
 }
 
 void mmc_start_host(struct mmc_host *host)

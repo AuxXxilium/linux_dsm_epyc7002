@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2007 Oracle.  All rights reserved.
@@ -12,6 +15,9 @@
 #include "extent_io.h"
 #include "ordered-data.h"
 #include "delayed-inode.h"
+#ifdef MY_ABC_HERE
+#include "delalloc-space.h"
+#endif /* MY_ABC_HERE */
 
 /*
  * ordered_data_close is set by truncate when a file that used
@@ -51,6 +57,20 @@ enum {
 	 * the file range, inode's io_tree).
 	 */
 	BTRFS_INODE_NO_DELALLOC_FLUSH,
+#ifdef MY_ABC_HERE
+	BTRFS_INODE_CREATE_TIME,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	/* these two bits are mutually exclusive */
+	BTRFS_INODE_LOCKER_NOLOCK,
+	BTRFS_INODE_LOCKER_LOCKABLE,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	BTRFS_INODE_SYNO_WRITEBACK_LRU_LIST,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	BTRFS_INODE_USRQUOTA_META_RESERVED,
+#endif /* MY_ABC_HERE */
 };
 
 /* in memory btrfs inode */
@@ -66,7 +86,8 @@ struct btrfs_inode {
 	/*
 	 * Lock for counters and all fields used to determine if the inode is in
 	 * the log or not (last_trans, last_sub_trans, last_log_commit,
-	 * logged_trans).
+	 * logged_trans), to access/update new_delalloc_bytes and to update the
+	 * VFS' inode number of bytes used.
 	 */
 	spinlock_t lock;
 
@@ -98,6 +119,10 @@ struct btrfs_inode {
 	 * to walk them all.
 	 */
 	struct list_head delalloc_inodes;
+
+#ifdef MY_ABC_HERE
+	struct list_head syno_dirty_lru_inode;
+#endif /* MY_ABC_HERE */
 
 	/* node for the red-black tree that links inodes in subvolume root */
 	struct rb_node rb_node;
@@ -230,6 +255,46 @@ struct btrfs_inode {
 	struct rw_semaphore dio_sem;
 
 	struct inode vfs_inode;
+#ifdef MY_ABC_HERE
+	union {
+		enum locker_state __locker_state;
+		const enum locker_state locker_state;
+	};
+	union {
+		time64_t __locker_update_time;          // in volume clock
+		const time64_t locker_update_time;
+	};
+	union {
+		time64_t __locker_period_begin;         // in volume clock
+		const time64_t locker_period_begin;
+	};
+	union {
+		time64_t __locker_period_end;           // in volume clock
+		const time64_t locker_period_end;
+	};
+	bool locker_dirty;
+	spinlock_t locker_lock;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	struct list_head free_extent_map_inode;
+	atomic_t free_extent_map_counts;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	// For chown, used by quota v2 and v1.
+	u64 uq_reserved;
+
+	// For chown, used by quota v1.
+	u64 uq_rfer_used;
+
+	// Reserve meta for user quota v1 update.
+	atomic_t syno_uq_refs;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	struct list_head syno_rbd_meta_file;
+#endif /* MY_ABC_HERE */
 };
 
 static inline u32 btrfs_inode_sectorsize(const struct btrfs_inode *inode)
@@ -330,6 +395,17 @@ static inline int btrfs_inode_in_log(struct btrfs_inode *inode, u64 generation)
 	return ret;
 }
 
+/*
+ * Check if the inode has flags compatible with compression
+ */
+static inline bool btrfs_inode_can_compress(const struct btrfs_inode *inode)
+{
+	if (inode->flags & BTRFS_INODE_NODATACOW ||
+	    inode->flags & BTRFS_INODE_NODATASUM)
+		return false;
+	return true;
+}
+
 struct btrfs_dio_private {
 	struct inode *inode;
 	u64 logical_offset;
@@ -354,7 +430,11 @@ struct btrfs_dio_private {
 #define CSUM_FMT_VALUE(size, bytes)		size, bytes
 
 static inline void btrfs_print_data_csum_error(struct btrfs_inode *inode,
-		u64 logical_start, u8 *csum, u8 *csum_expected, int mirror_num)
+		u64 logical_start, u8 *csum, u8 *csum_expected, int mirror_num
+#ifdef MY_ABC_HERE
+		, enum syno_data_correction_suppress_log_status flag
+#endif /* MY_ABC_HERE */
+		)
 {
 	struct btrfs_root *root = inode->root;
 	struct btrfs_super_block *sb = root->fs_info->super_copy;
@@ -362,7 +442,11 @@ static inline void btrfs_print_data_csum_error(struct btrfs_inode *inode,
 
 	/* Output minus objectid, which is more meaningful */
 	if (root->root_key.objectid >= BTRFS_LAST_FREE_OBJECTID)
+#ifdef MY_ABC_HERE
+		btrfs_data_correction_print(root->fs_info, flag,
+#else /* MY_ABC_HERE */
 		btrfs_warn_rl(root->fs_info,
+#endif /* MY_ABC_HERE */
 "csum failed root %lld ino %lld off %llu csum " CSUM_FMT " expected csum " CSUM_FMT " mirror %d",
 			root->root_key.objectid, btrfs_ino(inode),
 			logical_start,
@@ -370,7 +454,11 @@ static inline void btrfs_print_data_csum_error(struct btrfs_inode *inode,
 			CSUM_FMT_VALUE(csum_size, csum_expected),
 			mirror_num);
 	else
+#ifdef MY_ABC_HERE
+		btrfs_data_correction_print(root->fs_info, flag,
+#else /* MY_ABC_HERE */
 		btrfs_warn_rl(root->fs_info,
+#endif /* MY_ABC_HERE */
 "csum failed root %llu ino %llu off %llu csum " CSUM_FMT " expected csum " CSUM_FMT " mirror %d",
 			root->root_key.objectid, btrfs_ino(inode),
 			logical_start,
@@ -378,5 +466,63 @@ static inline void btrfs_print_data_csum_error(struct btrfs_inode *inode,
 			CSUM_FMT_VALUE(csum_size, csum_expected),
 			mirror_num);
 }
+
+#ifdef MY_ABC_HERE
+static inline bool btrfs_usrquota_fast_chown_enable(struct inode *inode)
+{
+	struct btrfs_fs_info *fs_info;
+
+	if (unlikely(!inode || !BTRFS_I(inode)->root))
+		return false;
+
+	fs_info = BTRFS_I(inode)->root->fs_info;
+	if (!test_bit(BTRFS_FS_SYNO_USRQUOTA_V1_ENABLED, &fs_info->flags))
+		return false;
+	if (btrfs_root_disable_quota(BTRFS_I(inode)->root))
+		return false;
+	if (!btrfs_usrquota_compat_inode_quota(fs_info))
+		return false;
+	if (!(BTRFS_I(inode)->flags & BTRFS_INODE_UQ_REF_USED))
+		return false;
+	return true;
+}
+
+static inline struct inode *syno_usrquota_inode_get(struct inode *inode)
+{
+	if (!btrfs_usrquota_fast_chown_enable(inode))
+		return NULL;
+
+	inode = igrab(inode);
+	if (inode)
+		atomic_inc(&BTRFS_I(inode)->syno_uq_refs);
+	return inode;
+}
+
+static inline void syno_usrquota_inode_put(struct inode *inode)
+{
+	struct btrfs_fs_info *fs_info;
+	bool free_reserve = false;
+
+	if (!btrfs_usrquota_fast_chown_enable(inode))
+		return;
+
+	fs_info = BTRFS_I(inode)->root->fs_info;
+	WARN_ON(atomic_read(&BTRFS_I(inode)->syno_uq_refs) == 0);
+	if (atomic_dec_and_test(&BTRFS_I(inode)->syno_uq_refs)) {
+		spin_lock(&BTRFS_I(inode)->lock);
+		if (test_and_clear_bit(BTRFS_INODE_USRQUOTA_META_RESERVED,
+			       &BTRFS_I(inode)->runtime_flags)) {
+			btrfs_calculate_inode_block_rsv_size(fs_info, BTRFS_I(inode));
+			free_reserve = true;
+		}
+		spin_unlock(&BTRFS_I(inode)->lock);
+		if (free_reserve)
+			// Use 0 bytes, see the comment in btrfs_inode_rsv_release().
+			btrfs_block_rsv_release(fs_info, &BTRFS_I(inode)->block_rsv, 0, NULL);
+	}
+
+	btrfs_add_delayed_iput(inode);
+}
+#endif /* MY_ABC_HERE */
 
 #endif

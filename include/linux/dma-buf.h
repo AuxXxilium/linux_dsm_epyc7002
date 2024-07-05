@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Header file for dma buffer sharing framework.
@@ -265,6 +268,34 @@ struct dma_buf_ops {
 	 */
 	int (*mmap)(struct dma_buf *, struct vm_area_struct *vma);
 
+#if defined(MY_DEF_HERE)
+	/**
+	 * @map:
+	 *
+	 * Maps a page from the buffer into kernel address space. The page is
+	 * specified by offset into the buffer in PAGE_SIZE units.
+	 *
+	 * This callback is optional.
+	 *
+	 * Returns:
+	 *
+	 * Virtual address pointer where requested page can be accessed. NULL
+	 * on error or when this function is unimplemented by the exporter.
+	 */
+	void *(*map)(struct dma_buf *, unsigned long);
+
+	/**
+	 * @unmap:
+	 *
+	 * Unmaps a page from the buffer. Page offset and address pointer should
+	 * be the same as the one passed to and returned by matching call to map.
+	 *
+	 * This callback is optional.
+	 */
+	void (*unmap)(struct dma_buf *, unsigned long, void *);
+
+
+#endif /* MY_DEF_HERE */
 	void *(*vmap)(struct dma_buf *);
 	void (*vunmap)(struct dma_buf *, void *vaddr);
 };
@@ -500,6 +531,11 @@ int dma_buf_begin_cpu_access(struct dma_buf *dma_buf,
 int dma_buf_end_cpu_access(struct dma_buf *dma_buf,
 			   enum dma_data_direction dir);
 
+#if defined(MY_DEF_HERE)
+void *dma_buf_kmap(struct dma_buf *, unsigned long);
+void dma_buf_kunmap(struct dma_buf *, unsigned long, void *);
+
+#endif /* MY_DEF_HERE */
 int dma_buf_mmap(struct dma_buf *, struct vm_area_struct *,
 		 unsigned long);
 void *dma_buf_vmap(struct dma_buf *);

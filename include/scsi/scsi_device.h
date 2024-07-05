@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _SCSI_SCSI_DEVICE_H
 #define _SCSI_SCSI_DEVICE_H
@@ -8,6 +11,10 @@
 #include <linux/blkdev.h>
 #include <scsi/scsi.h>
 #include <linux/atomic.h>
+
+#ifdef MY_ABC_HERE
+#include <linux/synolib.h>
+#endif /* MY_ABC_HERE */
 
 struct device;
 struct request_queue;
@@ -124,6 +131,11 @@ struct scsi_device {
 
 	unsigned int id, channel;
 	u64 lun;
+
+#ifdef MY_ABC_HERE
+	char syno_disk_name[BDEVNAME_SIZE];		/* name of major driver */
+#endif /* MY_ABC_HERE */
+
 	unsigned int manufacturer;	/* Manufacturer of device, for using 
 					 * vendor-specific cmd's */
 	unsigned sector_size;	/* size in bytes */
@@ -204,6 +216,12 @@ struct scsi_device {
 	unsigned unmap_limit_for_ws:1;	/* Use the UNMAP limit for WRITE SAME */
 	unsigned rpm_autosuspend:1;	/* Enable runtime autosuspend at device
 					 * creation time */
+#ifdef MY_ABC_HERE
+	unsigned power_loss_during_reboot:1;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	unsigned default_disable_fua:1;	/* Default disable FUA or not */
+#endif /* MY_ABC_HERE */
 
 	bool offline_already;		/* Device offline message logged */
 
@@ -221,6 +239,15 @@ struct scsi_device {
 	atomic_t iodone_cnt;
 	atomic_t ioerr_cnt;
 
+#ifdef MY_ABC_HERE
+	unsigned long   last_accessed;   /* last accessed time in jiffies */
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	unsigned char	spindown;
+	unsigned char   nospindown;
+	unsigned char   do_standby_syncing;
+#endif /* MY_ABC_HERE */
+
 	struct device		sdev_gendev,
 				sdev_dev;
 
@@ -236,7 +263,46 @@ struct scsi_device {
 	unsigned char		access_state;
 	struct mutex		state_mutex;
 	enum scsi_device_state sdev_state;
+
+#ifdef MY_DEF_HERE
+	/* Which queue is this disk in.
+	 * 0 indicates none and should spin up immediately. */
+	unsigned int	    spinup_queue_id;
+	/* Which queue is this disk in. Maybe NULL (id = 0). */
+	struct SpinupQueue *spinup_queue;
+	/* list_head to link against queue */
+	struct list_head    spinup_list;
+	/* Indicates the disk is already spinning up */
+	unsigned int	    spinup_in_process;
+	/* Timer for spinup time */
+	unsigned long		spinup_timer;
+	struct work_struct	spinup_work;
+#define SYNO_SPINUP_RESEND_TIMER 30 * HZ
+#endif /* MY_DEF_HERE */
+
 	struct task_struct	*quiesced_by;
+
+#ifdef MY_ABC_HERE
+	unsigned int        scmd_timeout_sec;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#define SERIAL_NUM_SIZE        36      /* Largest string for a scsi device serial number */
+	char syno_disk_serial[SERIAL_NUM_SIZE + 1];
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#define BLOCK_INFO_SIZE        512     /* Largest string for a scsi device block information */
+	char syno_block_info[BLOCK_INFO_SIZE];
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	struct work_struct sendScsiErrorEventTask;
+	SYNOBIOS_EVENT_PARM scsiErrorEventParm;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_DEF_HERE
+	unsigned long sas_sata_standby_flag;
+#endif
+
 	unsigned long		sdev_data[];
 } __attribute__((aligned(sizeof(unsigned long))));
 
@@ -335,6 +401,12 @@ static inline struct scsi_target *scsi_target(struct scsi_device *sdev)
 
 #define starget_printk(prefix, starget, fmt, a...)	\
 	dev_printk(prefix, &(starget)->dev, fmt, ##a)
+
+#ifdef MY_DEF_HERE
+int SynoSpinupBegin(struct scsi_device *device);
+void SynoSpinupEnd(struct scsi_device *sdev);
+int SynoSpinupRemove(struct scsi_device *sdev);
+#endif /* MY_DEF_HERE */
 
 extern struct scsi_device *__scsi_add_device(struct Scsi_Host *,
 		uint, uint, u64, void *hostdata);

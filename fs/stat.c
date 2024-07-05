@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/stat.c
@@ -23,6 +26,10 @@
 
 #include "internal.h"
 #include "mount.h"
+
+#ifdef MY_ABC_HERE
+#include <linux/syno_acl.h>
+#endif /* MY_ABC_HERE */
 
 /**
  * generic_fillattr - Fill in the basic attributes from the inode struct
@@ -90,6 +97,18 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
 
 	stat->attributes_mask |= (STATX_ATTR_AUTOMOUNT |
 				  STATX_ATTR_DAX);
+#ifdef MY_ABC_HERE
+	if (IS_SYNOACL(path->dentry)) {
+		int retval = 0;
+		if (inode->i_op->getattr)
+			retval = inode->i_op->getattr(path, stat, request_mask, query_flags);
+		else
+			generic_fillattr(inode, stat);
+
+		synoacl_op_to_mode(path->dentry, stat);
+		return retval;
+	}
+#endif /* MY_ABC_HERE */
 
 	if (inode->i_op->getattr)
 		return inode->i_op->getattr(path, stat, request_mask,
@@ -215,6 +234,86 @@ int vfs_fstatat(int dfd, const char __user *filename,
 	return vfs_statx(dfd, filename, flags | AT_NO_AUTOMOUNT,
 			 stat, STATX_BASIC_STATS);
 }
+
+#ifdef MY_ABC_HERE
+int __always_inline syno_vfs_getattr(struct path *path, struct kstat *stat,
+		u32 request_mask, unsigned int query_flags, unsigned int syno_flags)
+{
+	int error = 0;
+
+	error = vfs_getattr(path, stat, request_mask, query_flags);
+	if (error)
+		goto out;
+
+	error = syno_op_getattr(path->dentry, stat, syno_flags);
+out:
+	return error;
+}
+
+// copy from vfs_fstat
+int syno_vfs_fstat(unsigned int fd, struct kstat *stat, unsigned int syno_flags)
+{
+	struct fd f;
+	int error;
+
+	f = fdget_raw(fd);
+	if (!f.file)
+		return -EBADF;
+	error = syno_vfs_getattr(&f.file->f_path, stat,
+			STATX_BASIC_STATS, 0, syno_flags);
+	fdput(f);
+	return error;
+}
+EXPORT_SYMBOL(syno_vfs_fstat);
+
+// copy from vfs_statx
+int syno_vfs_statx(const char __user *filename, struct kstat *stat,
+		unsigned int query_flags, unsigned int syno_flags)
+{
+	struct path path;
+	unsigned lookup_flags = 0;
+	int error;
+
+	if (query_flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
+	                   AT_EMPTY_PATH | AT_STATX_SYNC_TYPE))
+		return -EINVAL;
+
+	if (!(query_flags & AT_SYMLINK_NOFOLLOW))
+		lookup_flags |= LOOKUP_FOLLOW;
+	if (!(query_flags & AT_NO_AUTOMOUNT))
+		lookup_flags |= LOOKUP_AUTOMOUNT;
+	if (query_flags & AT_EMPTY_PATH)
+		lookup_flags |= LOOKUP_EMPTY;
+
+retry:
+	error = user_path_at(AT_FDCWD, filename, lookup_flags, &path);
+	if (error)
+		goto out;
+
+	error = syno_vfs_getattr(&path, stat, STATX_BASIC_STATS, query_flags, syno_flags);
+	stat->mnt_id = real_mount(path.mnt)->mnt_id;
+	stat->result_mask |= STATX_MNT_ID;
+	if (path.mnt->mnt_root == path.dentry)
+		stat->attributes |= STATX_ATTR_MOUNT_ROOT;
+	stat->attributes_mask |= STATX_ATTR_MOUNT_ROOT;
+	path_put(&path);
+	if (retry_estale(error, lookup_flags)) {
+		lookup_flags |= LOOKUP_REVAL;
+		goto retry;
+	}
+out:
+	return error;
+}
+
+// copy from vfs_fstatat
+int syno_vfs_fstatat(const char __user *filename, struct kstat *stat,
+		unsigned int query_flags, unsigned int syno_flags)
+{
+	return syno_vfs_statx(filename, stat, query_flags | AT_NO_AUTOMOUNT,
+			syno_flags);
+}
+EXPORT_SYMBOL(syno_vfs_fstatat);
+#endif /* MY_ABC_HERE */
 
 #ifdef __ARCH_WANT_OLD_STAT
 
@@ -696,6 +795,219 @@ COMPAT_SYSCALL_DEFINE2(newfstat, unsigned int, fd,
 }
 #endif
 
+#ifdef MY_ABC_HERE
+/* This stat is used by caseless protocol.
+ * The filename will be convert to real filename and return to user space.
+ * In caller, the length of filename must equal or be larger than SYNO_SMB_PSTRING_LEN.
+*/
+int __syno_caseless_stat(char __user * filename, bool no_follow,
+		struct kstat *stat, unsigned int syno_flags)
+{
+	struct path path;
+	int error;
+	int f;
+	char *real_filename = NULL;
+	int real_filename_len = 0;
+
+	real_filename = kmalloc(SYNO_SMB_PSTRING_LEN, GFP_KERNEL);
+	if (!real_filename)
+		return -ENOMEM;
+
+	if (no_follow)
+		f = LOOKUP_CASELESS_COMPARE;
+	else
+		f = LOOKUP_FOLLOW|LOOKUP_CASELESS_COMPARE;
+
+	error = syno_user_path_at(AT_FDCWD, filename, f, &path,
+				  &real_filename, &real_filename_len);
+	if (!error) {
+#ifdef MY_ABC_HERE
+		error = syno_vfs_getattr(&path, stat, STATX_BASIC_STATS, 0, syno_flags);
+#else
+		error = vfs_getattr(&path, stat, STATX_BASIC_STATS, 0);
+#endif /* MY_ABC_HERE */
+		path_put(&path);
+		if (real_filename_len) {
+			error = copy_to_user(filename,
+					     real_filename, real_filename_len) ? -EFAULT : error;
+		}
+	}
+
+	kfree(real_filename);
+	return error;
+}
+EXPORT_SYMBOL(__syno_caseless_stat);
+
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+SYSCALL_DEFINE2(syno_caseless_stat, char __user *, filename, struct stat __user *, statbuf)
+{
+#ifdef MY_ABC_HERE
+	long error = -1;
+	struct kstat stat;
+
+	memset(&stat, 0, sizeof(stat));
+	error = __syno_caseless_stat(filename, false, &stat, 0);
+	if (!error)
+		error = cp_new_stat(&stat, statbuf);
+
+	return error;
+#else
+	return -EOPNOTSUPP;
+#endif /* MY_ABC_HERE */
+}
+
+SYSCALL_DEFINE2(syno_caseless_lstat, char __user *, filename, struct stat __user *, statbuf)
+{
+#ifdef MY_ABC_HERE
+	long error = -1;
+	struct kstat stat;
+
+	memset(&stat, 0, sizeof(stat));
+	error = __syno_caseless_stat(filename, true, &stat, 0);
+	if (!error)
+		error = cp_new_stat(&stat, statbuf);
+
+	return error;
+#else
+	return -EOPNOTSUPP;
+#endif /* MY_ABC_HERE */
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static int cp_to_synostat(struct kstat *kst, unsigned int syno_flags,
+		struct SYNOSTAT __user *synostat)
+{
+	int error = -EFAULT;
+
+	if (!synostat) {
+		error = -EINVAL;
+		goto out;
+	}
+
+	if (syno_flags & SYNOST_STAT) {
+		error = cp_new_stat(kst, &synostat->st);
+		if(error)
+			goto out;
+	}
+
+	error = __put_user(kst->syno_flags, &synostat->ext.flags);
+	if (error)
+		goto out;
+
+	if (syno_flags & SYNOST_COMPRESSION) {
+		if (copy_to_user(&synostat->ext.compressed,
+		                 &kst->syno_compressed,
+		                 sizeof(synostat->ext.compressed))) {
+			error = -EFAULT;
+			goto out;
+		}
+	}
+
+#ifdef MY_ABC_HERE
+	if (syno_flags & SYNOST_ARCHIVE_BIT) {
+		error = __put_user(kst->syno_archive_bit,
+				&synostat->ext.archive_bit);
+		if (error)
+			goto out;
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (syno_flags & SYNOST_ARCHIVE_VER) {
+		error = __put_user(kst->syno_archive_version,
+				&synostat->ext.archive_version);
+		if (error)
+			goto out;
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (syno_flags & SYNOST_CREATE_TIME) {
+		struct __kernel_old_timespec tmp;
+
+		tmp.tv_sec = kst->syno_create_time.tv_sec;
+		tmp.tv_nsec = kst->syno_create_time.tv_nsec;
+		if (copy_to_user(&synostat->ext.create_time, &tmp, sizeof(tmp))) {
+			error = -EFAULT;
+			goto out;
+		}
+	}
+#endif /* MY_ABC_HERE */
+
+	error = 0;
+out:
+	return error;
+}
+
+static int do_syno_stat(char __user *filename, bool no_follow,
+		unsigned int syno_flags, struct SYNOSTAT __user *synostat)
+{
+	long error = -EINVAL;
+	struct kstat kst;
+
+	memset(&kst, 0, sizeof(kst));
+	if (syno_flags & SYNOST_IS_CASELESS) {
+#ifdef MY_ABC_HERE
+		error = __syno_caseless_stat(filename, no_follow, &kst, syno_flags);
+#else
+		error = -EOPNOTSUPP;
+#endif /* MY_ABC_HERE */
+	} else {
+		if (no_follow)
+			error = syno_vfs_fstatat(filename, &kst, AT_SYMLINK_NOFOLLOW, syno_flags);
+		else
+			error = syno_vfs_fstatat(filename, &kst, 0, syno_flags);
+	}
+
+	if (error)
+		goto out;
+
+	error = cp_to_synostat(&kst, syno_flags, synostat);
+out:
+	return error;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+SYSCALL_DEFINE3(syno_stat, char __user *, filename, unsigned int, syno_flags, struct SYNOSTAT __user *, synostat)
+{
+#ifdef MY_ABC_HERE
+	return do_syno_stat(filename, false, syno_flags, synostat);
+#else
+	return -EOPNOTSUPP;
+#endif /* MY_ABC_HERE */
+}
+
+SYSCALL_DEFINE3(syno_fstat, unsigned int, fd, unsigned int, syno_flags, struct SYNOSTAT __user *, synostat)
+{
+#ifdef MY_ABC_HERE
+	int error;
+        struct kstat kst;
+
+        memset(&kst, 0, sizeof(kst));
+        error = syno_vfs_fstat(fd, &kst, syno_flags);
+        if (error)
+                return error;
+
+        return cp_to_synostat(&kst, syno_flags, synostat);
+#else
+	return -EOPNOTSUPP;
+#endif /* MY_ABC_HERE */
+}
+
+SYSCALL_DEFINE3(syno_lstat, char __user *, filename, unsigned int, syno_flags, struct SYNOSTAT __user *, synostat)
+{
+#ifdef MY_ABC_HERE
+	return do_syno_stat(filename, true, syno_flags, synostat);
+#else
+	return -EOPNOTSUPP;
+#endif /* MY_ABC_HERE */
+}
+#endif /* MY_ABC_HERE */
+
 /* Caller is here responsible for sufficient locking (ie. inode->i_lock) */
 void __inode_add_bytes(struct inode *inode, loff_t bytes)
 {
@@ -761,3 +1073,24 @@ void inode_set_bytes(struct inode *inode, loff_t bytes)
 }
 
 EXPORT_SYMBOL(inode_set_bytes);
+
+#ifdef MY_ABC_HERE
+int vfs_quota_query(struct file *file, u64 *used, u64 *reserved, u64 *limit)
+{
+	if (!file->f_op->quota_query)
+		return -EOPNOTSUPP;
+	return file->f_op->quota_query(file, used, reserved, limit);
+}
+EXPORT_SYMBOL(vfs_quota_query);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+int vfs_syno_space_usage(struct file *file, struct syno_space_usage_info *info)
+{
+	if (!file->f_op->syno_space_usage)
+		return -EOPNOTSUPP;
+	return file->f_op->syno_space_usage(file, info);
+}
+EXPORT_SYMBOL(vfs_syno_space_usage);
+#endif /* MY_ABC_HERE */
+

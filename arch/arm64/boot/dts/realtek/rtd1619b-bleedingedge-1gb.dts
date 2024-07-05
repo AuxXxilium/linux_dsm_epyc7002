@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: (GPL-2.0-or-later OR BSD-2-Clause)
+/*
+ * Copyright (c) 2020 Realtek Semiconductor Corp.
+ */
+
+/dts-v1/;
+
+#include "rtd1619b-bleedingedge.dtsi"
+
+/ {
+	compatible = "realtek,bleeding-edge", "realtek,rtd1619b";
+	model = "Realtek Bleeding Edge EVB (2GB)";
+
+	memory@4000 {
+		device_type = "memory";
+		reg = <0x00004000 0x3fffc000>; /* 1 GiB */
+	};
+
+};
+
+&pcie1 {
+	status = "disabled";
+};
+
+&sata_phy {
+	status = "okay";
+};
+
+&sata_phy0 {
+	status = "okay";
+};
+
+&ahci_sata {
+        status = "okay";
+};
+
+&sata_port0 {
+        status = "okay";
+};
+
+&audio_heap {
+	compatible = "audio_heap";
+	reg = <0x04400000 0xc0000>;
+};
+
+&media_heap {
+	compatible = "media_heap";
+	reg = <0x04e00000 0x02000000>;
+};
+
+&cma_resrved_0 {
+	status = "disabled";
+};
+
+&cma_resrved_1 {
+	status = "disabled";
+};
+
+&cma_resrved_2 {
+	size = <0x400000>;
+	status = "disabled";
+};
+
+&cma_resrved_3 {
+	size = <0xa000000>;
+};
+
+&cma_resrved_4 {
+	status = "disabled";
+};
+
+&cma_resrved_5 {
+	size = <0x800000>;
+};
+
+&cma_resrved_6 {
+	size = <0x1c00000>;
+};
+
+&cma_resrved_7 {
+	size = <0x400000>;
+};
+
+&cma_resrved_8 {
+	size = <0x6000000>;
+	status = "disabled";
+};
+
+&cma_resrved_9 {
+	size = <0x4000000>;
+	status = "disabled";
+};
+
+&rtk_ion {
+	rtk,ion-heap@7 {
+		rtk,memory-reserve = <0x04e00000 0x02000000 0x0000008e
+				      0x00C40000 0x003C4000 0x000004ec>;
+	};
+
+	rtk,ion-heap@8 {
+		rtk,memory-reserve = <0x04400000 0x000c0000 0x0000008e>;
+	};
+};
+
+&reserved_memory {
+	ramoops@22000000  {
+		compatible = "ramoops";
+		reg = <0x22000000 0x00200000>;
+		console-size = <0x00100000>;
+		record-size = <0x00004000>;
+		ftrace-size = <0x00004000>;
+	};
+};

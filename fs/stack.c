@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 #include <linux/export.h>
 #include <linux/fs.h>
@@ -71,6 +74,10 @@ void fsstack_copy_attr_all(struct inode *dest, const struct inode *src)
 	dest->i_ctime = src->i_ctime;
 	dest->i_blkbits = src->i_blkbits;
 	dest->i_flags = src->i_flags;
+#ifdef MY_ABC_HERE
+	//For ecryptfs archive bit
+	dest->i_archive_bit = src->i_archive_bit;
+#endif /* MY_ABC_HERE */
 	set_nlink(dest, src->i_nlink);
 }
 EXPORT_SYMBOL_GPL(fsstack_copy_attr_all);

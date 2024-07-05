@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * coretemp.c - Linux kernel module for hardware monitoring
@@ -100,6 +103,10 @@ struct platform_data {
 static int max_zones __read_mostly;
 /* Array of zone pointers. Serialized by cpu hotplug lock */
 static struct platform_device **zone_devices;
+
+#ifdef MY_DEF_HERE
+static DEFINE_MUTEX(pdev_list_mutex);
+#endif /* MY_DEF_HERE */
 
 static ssize_t show_label(struct device *dev,
 				struct device_attribute *devattr, char *buf)
@@ -442,6 +449,13 @@ static struct temp_data *init_temp_data(unsigned int cpu, int pkg_flag)
 	tdata->is_pkg_data = pkg_flag;
 	tdata->cpu = cpu;
 	tdata->cpu_core_id = TO_CORE_ID(cpu);
+#ifdef MY_DEF_HERE
+	/*
+	 * if the cpu temp can't read, syno_cpu_temperature() still return this value,
+	 * so we must set a valid value(default 20 degree C) when init
+	 */
+	tdata->temp = 20 * 1000;
+#endif /* MY_DEF_HERE */
 	tdata->attr_size = MAX_CORE_ATTRS;
 	mutex_init(&tdata->update_lock);
 	return tdata;
@@ -760,6 +774,139 @@ static void __exit coretemp_exit(void)
 	kfree(zone_devices);
 }
 module_exit(coretemp_exit)
+
+#ifdef MY_DEF_HERE
+#include <linux/synobios.h>
+/* update core temp
+ * p.s. copy from "show_temp(..)"
+ *
+ * @param tdata [IN/OUT]: the temperature data, should not be NULL
+ **/
+static void syno_update_temp(struct temp_data *tdata)
+{
+	u32 eax, edx;
+
+	mutex_lock(&tdata->update_lock);
+	/* Check whether the time interval has elapsed */
+	if (!tdata->valid || time_after(jiffies, tdata->last_updated + HZ)) {
+		rdmsr_on_cpu(tdata->cpu, tdata->status_reg, &eax, &edx);
+		tdata->valid = 0;
+		/* Check whether the data is valid */
+		if (eax & 0x80000000) {
+			tdata->temp = tdata->tjmax -
+					((eax >> 16) & 0x7f) * 1000;
+			tdata->valid = 1;
+		}
+		tdata->last_updated = jiffies;
+	}
+	mutex_unlock(&tdata->update_lock);
+}
+
+/* Get the core number and highest temp of cores
+ *
+ * @param
+ * pCpuTemp [OUT]: the result
+ *
+ * @return
+ *  0: success
+ *  others: fail
+ **/
+int syno_cpu_temperature(struct _SynoCpuTemp *pCpuTemp)
+{
+	struct platform_data *pdata = NULL;
+	struct temp_data *tdata = NULL;
+	int    iCpuCount = 0;
+	int    iIndex = 0;
+	int    i = 0;
+
+	if (NULL == pCpuTemp) {
+		printk("coretemp: parameter error.\n");
+		return -1;
+	}
+
+	mutex_lock(&pdev_list_mutex);
+	for (i = 0; i < max_zones; i++) {
+		if (!zone_devices[i]) {
+			continue;
+		}
+
+		pdata = dev_get_drvdata(&(zone_devices[i]->dev));
+		if (!pdata) {
+			continue;
+		}
+
+		iIndex = TO_ATTR_NO(pdata->pkg_id);
+		tdata = pdata->core_data[iIndex];
+		if (!tdata) {
+			printk("Can't get Core %d temperature data\n", pdata->pkg_id);
+			continue;
+		}
+		if (MAX_CPU <= iCpuCount) {
+			printk("CPU count larger than MAX_CPU %d: %d\n", MAX_CPU, iCpuCount);
+		} else {
+			/* no need to check tdata->valid, so even !tdata->valid we also return tdata->temp which
+			 * is the last valid temperature. */
+			syno_update_temp(tdata);
+			pCpuTemp->cpu_temp[iCpuCount] = tdata->temp / 1000;
+			++iCpuCount;
+		}
+	}
+	mutex_unlock(&pdev_list_mutex);
+	pCpuTemp->cpu_num = iCpuCount;
+
+	return 0;
+}
+EXPORT_SYMBOL(syno_cpu_temperature);
+
+/* Get the tjmax
+ *
+ * @return
+ *  others:	success
+ *  -1:		fail
+ **/
+int syno_cpu_tjmax(int cpu_no, int *tjmax)
+{
+	struct platform_data *pdata = NULL;
+	struct temp_data *tdata = NULL;
+	int    iIndex = 0;
+	int    ret = -1;
+	int    i = 0;
+
+	if (tjmax == NULL) {
+		goto RET;
+	}
+
+	mutex_lock(&pdev_list_mutex);
+	for (i = 0; i < max_zones; i++) {
+		if (!zone_devices[i]) {
+			continue;
+		}
+
+		pdata = dev_get_drvdata(&(zone_devices[i]->dev));
+		if (!pdata) {
+			continue;
+		}
+
+		if (cpu_no != pdata->pkg_id) {
+			continue;
+		}
+
+		iIndex = TO_ATTR_NO(pdata->pkg_id);
+		tdata = pdata->core_data[iIndex];
+		if (!tdata) {
+			printk("Can't get Core %d temperature data\n", pdata->pkg_id);
+			continue;
+		}
+		*tjmax = tdata->tjmax / 1000;
+		ret = 0;
+		break;
+	}
+	mutex_unlock(&pdev_list_mutex);
+RET:
+	return ret;
+}
+EXPORT_SYMBOL(syno_cpu_tjmax);
+#endif /* MY_DEF_HERE */
 
 MODULE_AUTHOR("Rudolf Marek <r.marek@assembler.cz>");
 MODULE_DESCRIPTION("Intel Core temperature monitor");

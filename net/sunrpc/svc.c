@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * linux/net/sunrpc/svc.c
@@ -44,7 +47,11 @@ static void svc_unregister(const struct svc_serv *serv, struct net *net);
  * Setup once during sunrpc initialisation.
  */
 struct svc_pool_map svc_pool_map = {
+#ifdef MY_ABC_HERE
+	.mode = SVC_POOL_PERNODE
+#else /* MY_ABC_HERE */
 	.mode = SVC_POOL_DEFAULT
+#endif /* MY_ABC_HERE */
 };
 EXPORT_SYMBOL_GPL(svc_pool_map);
 

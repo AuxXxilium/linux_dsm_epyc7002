@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * net-sysfs.c - network device class and attributes
@@ -23,6 +26,11 @@
 #include <linux/of.h>
 #include <linux/of_net.h>
 #include <linux/cpu.h>
+#ifdef MY_ABC_HERE
+#include <linux/pci.h>
+#include <linux/synolib.h>
+#include <linux/platform_device.h>
+#endif /* MY_ABC_HERE */
 
 #include "net-sysfs.h"
 
@@ -329,6 +337,57 @@ static ssize_t carrier_down_count_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(carrier_down_count);
 
+#ifdef MY_ABC_HERE
+extern int syno_pciepath_dts_pattern_get(struct pci_dev *pdev, char *szPciePath, const int size);
+static void syno_pciepath_enum(struct device *dev, char *buf) {
+	struct pci_dev *pdev = NULL;
+	char sztemp[SYNO_DTS_PROPERTY_CONTENT_LENGTH] = {'\0'};
+
+	if (NULL == buf || NULL == dev) {
+		return;
+	}
+	pdev = to_pci_dev(dev);
+
+	if (-1 == syno_pciepath_dts_pattern_get(pdev, sztemp, sizeof(sztemp))) {
+		return;
+	}
+
+	snprintf(buf, 512, "%spciepath=%s", buf, sztemp);
+}
+
+static void syno_platdev_path_enum(struct device *dev, char *buf) {
+	struct platform_device *pdev = NULL;
+
+	if (NULL == buf || NULL == dev) {
+		return;
+	}
+	pdev = to_platform_device(dev);
+
+	if (NULL != pdev->name) {
+		snprintf(buf, 512, "%splatdev_path=%s", buf, pdev->name);
+	}
+}
+
+static ssize_t syno_eth_info_show(struct device *dev,
+				    struct device_attribute *attr,
+				    char *buf)
+{
+	struct net_device *netdev = to_net_dev(dev);
+	char szDevPath[SYNO_DTS_PROPERTY_CONTENT_LENGTH] = {'\0'};
+
+	if (netdev->dev.parent) {
+		if (dev_is_pci(netdev->dev.parent)) {
+			syno_pciepath_enum(netdev->dev.parent, szDevPath);
+		} else if (dev_is_platform(netdev->dev.parent)) {
+			syno_platdev_path_enum(netdev->dev.parent, szDevPath);
+		}
+	}
+
+	return sprintf(buf, "%s\n", szDevPath);
+}
+static DEVICE_ATTR_RO(syno_eth_info);
+#endif /* MY_ABC_HERE */
+
 /* read-write attributes */
 
 static int change_mtu(struct net_device *dev, unsigned long new_mtu)
@@ -570,6 +629,9 @@ static struct attribute *net_class_attrs[] __ro_after_init = {
 	&dev_attr_proto_down.attr,
 	&dev_attr_carrier_up_count.attr,
 	&dev_attr_carrier_down_count.attr,
+#ifdef MY_ABC_HERE
+	&dev_attr_syno_eth_info.attr,
+#endif /* MY_ABC_HERE */
 	NULL,
 };
 ATTRIBUTE_GROUPS(net_class);

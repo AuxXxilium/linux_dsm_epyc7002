@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2007 Oracle.  All rights reserved.
@@ -9,7 +12,11 @@
 
 struct root_name_map {
 	u64 id;
+#ifdef MY_ABC_HERE
+	char name[32];
+#else
 	char name[16];
+#endif /* MY_ABC_HERE */
 };
 
 static const struct root_name_map root_map[] = {
@@ -20,10 +27,18 @@ static const struct root_name_map root_map[] = {
 	{ BTRFS_FS_TREE_OBJECTID,		"FS_TREE"		},
 	{ BTRFS_CSUM_TREE_OBJECTID,		"CSUM_TREE"		},
 	{ BTRFS_TREE_LOG_OBJECTID,		"TREE_LOG"		},
+#ifdef MY_ABC_HERE
+	{ BTRFS_SYNO_QUOTA_V2_TREE_OBJECTID,	"SYNO_V2_QUOTA_TREE"	},
+	{ BTRFS_SYNO_USRQUOTA_V2_TREE_OBJECTID,	"SYNO_V2_USRQUOTA_TREE"	},
+#else
 	{ BTRFS_QUOTA_TREE_OBJECTID,		"QUOTA_TREE"		},
+#endif /* MY_ABC_HERE */
 	{ BTRFS_UUID_TREE_OBJECTID,		"UUID_TREE"		},
 	{ BTRFS_FREE_SPACE_TREE_OBJECTID,	"FREE_SPACE_TREE"	},
 	{ BTRFS_DATA_RELOC_TREE_OBJECTID,	"DATA_RELOC_TREE"	},
+#ifdef MY_ABC_HERE
+	{ BTRFS_BLOCK_GROUP_HINT_TREE_OBJECTID,	"BG_HINT_TREE"},
+#endif /* MY_ABC_HERE */
 };
 
 const char *btrfs_root_name(const struct btrfs_key *key, char *buf)

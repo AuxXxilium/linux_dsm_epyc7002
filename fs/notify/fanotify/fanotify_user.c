@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/fanotify.h>
 #include <linux/fcntl.h>
@@ -25,6 +28,10 @@
 #include "../../mount.h"
 #include "../fdinfo.h"
 #include "fanotify.h"
+
+#ifdef MY_ABC_HERE
+#include <linux/syno_acl.h>
+#endif /* MY_ABC_HERE */
 
 #define FANOTIFY_DEFAULT_MAX_EVENTS	16384
 #define FANOTIFY_DEFAULT_MAX_MARKS	8192
@@ -702,6 +709,11 @@ static int fanotify_find_path(int dfd, const char __user *filename,
 	}
 
 	/* you can only watch an inode if you have read permissions on it */
+#ifdef MY_ABC_HERE
+	if (IS_SYNOACL(path->dentry))
+		ret = synoacl_op_permission(path->dentry, MAY_READ);
+	else
+#endif /* MY_ABC_HERE */
 	ret = inode_permission(path->dentry->d_inode, MAY_READ);
 	if (ret) {
 		path_put(path);

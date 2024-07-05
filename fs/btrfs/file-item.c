@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2007 Oracle.  All rights reserved.
@@ -122,6 +125,227 @@ static inline u32 max_ordered_sum_bytes(struct btrfs_fs_info *fs_info,
 	return ncsums * fs_info->sectorsize;
 }
 
+#ifdef MY_ABC_HERE
+/*
+ * search the tree again to find next BTRFS_EXTENT_DATA_KEY for this file
+ * returns 0 if it found something
+ * returns 1 if there are no more BTRFS_EXTENT_DATA_KEY for this file
+ * returns < 0 on io errors
+ */
+int btrfs_search_next_file_extent(struct btrfs_key *key,
+				  struct btrfs_root *root,
+				  struct btrfs_path *path)
+{
+	int ret = 1;
+	struct btrfs_key next;
+
+	path->slots[0]++;
+
+	if (path->slots[0] < btrfs_header_nritems(path->nodes[0])) {
+		goto get_key;
+	}
+
+	ret = btrfs_next_leaf(root, path);
+	if (ret) {
+		goto out;
+	}
+
+get_key:
+	btrfs_item_key_to_cpu(path->nodes[0], &next, path->slots[0]);
+	if (next.objectid != key->objectid || next.type != BTRFS_EXTENT_DATA_KEY) {
+		ret = 1;
+		goto out;
+	}
+
+	memcpy(key, &next, sizeof(struct btrfs_key));
+	ret = 0;
+
+out:
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static int file_extent_deduped_check(struct btrfs_path *path,
+				     struct btrfs_root *root,
+				     u64 inode_num, u64 offset)
+{
+	int ret = 0;
+	struct extent_buffer *leaf = NULL;
+	struct btrfs_file_extent_item *fi = NULL;
+
+	ret = btrfs_lookup_file_extent_by_file_offset(NULL, root, path,
+						      inode_num, offset, 0);
+	if (0 > ret)
+		goto out;
+
+	leaf = path->nodes[0];
+	fi = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_file_extent_item);
+	if (BTRFS_FILE_EXTENT_REG != btrfs_file_extent_type(leaf, fi) ||
+	    btrfs_file_extent_disk_bytenr(leaf, fi) == 0) {
+		btrfs_info(root->fs_info,
+			   "file_extent_deduped_check inode %llu start %llu not found",
+			   inode_num, offset);
+		ret = -1;
+		goto out;
+	}
+
+	ret = (BTRFS_FILE_EXTENT_DEDUPED & btrfs_file_extent_syno_flag(leaf, fi))
+	       ? 1 : 0;
+
+out:
+	btrfs_release_path(path);
+	return ret;
+}
+
+static inline void file_extent_deduped_set_leaf(struct extent_buffer *leaf,
+						int slots, bool on_off)
+{
+	int flag = 0;
+	struct btrfs_file_extent_item *fi = NULL;
+
+	fi = btrfs_item_ptr(leaf, slots, struct btrfs_file_extent_item);
+	flag = btrfs_file_extent_syno_flag(leaf, fi);
+	if (on_off) {
+		flag |= BTRFS_FILE_EXTENT_DEDUPED;
+	} else {
+		flag &= ~BTRFS_FILE_EXTENT_DEDUPED;
+	}
+	btrfs_set_file_extent_syno_flag(leaf, fi, flag);
+	btrfs_mark_buffer_dirty(leaf);
+}
+
+int btrfs_file_extent_deduped_clear(struct btrfs_trans_handle *trans,
+				    struct btrfs_inode *inode, u64 file_offset)
+{
+	int ret = -1;
+	u64 inode_num = 0;
+	struct btrfs_root *root = NULL;
+	struct btrfs_path *path = NULL;
+
+	if (!inode || !trans) {
+		return -EINVAL;
+	}
+	if (inode->flags & BTRFS_INODE_NODEDUPE) {
+		return 0;
+	}
+	path = btrfs_alloc_path();
+	if (!path) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	inode_num = btrfs_ino(inode);
+	root = inode->root;
+	ret = file_extent_deduped_check(path, root, inode_num, file_offset);
+	if (0 >= ret)
+		goto out;
+
+	ret = btrfs_lookup_file_extent_by_file_offset(trans, root, path,
+						      inode_num, file_offset, 1);
+	if (0 > ret)
+		goto out;
+
+	file_extent_deduped_set_leaf(path->nodes[0], path->slots[0], false);
+
+out:
+	btrfs_free_path(path);
+	return ret;
+}
+
+int btrfs_file_extent_deduped_set_range(struct inode *inode, u64 offset,
+					u64 len, bool on_off)
+{
+	int ret = 0;
+	u64 ino = 0;
+	u64 end = offset + len;
+	struct btrfs_key key;
+	struct btrfs_path *path = NULL;
+	struct extent_buffer *leaf = NULL;
+	struct btrfs_trans_handle *trans = NULL;
+	struct btrfs_root *root = NULL;
+
+	if (!inode) {
+		return -EINVAL;
+	}
+
+	path = btrfs_alloc_path();
+	if (!path)
+		return -ENOMEM;
+
+	ino = btrfs_ino(BTRFS_I(inode));
+	root = BTRFS_I(inode)->root;
+
+	trans = btrfs_start_transaction(root, 2);
+	if (IS_ERR(trans)) {
+		ret = PTR_ERR(trans);
+		trans = NULL;
+		goto out;
+	}
+
+	ret = btrfs_lookup_file_extent_by_file_offset(trans, root, path,
+						      ino, offset, 1);
+	if (0 > ret)
+		goto out;
+
+	leaf = path->nodes[0];
+	btrfs_item_key_to_cpu(leaf, &key, path->slots[0]);
+	while (key.objectid == ino && key.type == BTRFS_EXTENT_DATA_KEY && key.offset < end) {
+		file_extent_deduped_set_leaf(leaf, path->slots[0], on_off);
+
+		path->slots[0]++;
+		if (path->slots[0] < btrfs_header_nritems(leaf)) {
+			btrfs_item_key_to_cpu(leaf, &key, path->slots[0]);
+			continue;
+		}
+
+		ret = btrfs_next_leaf(root, path);
+		if (ret) {
+			if (0 < ret)
+				ret = 0;
+			break;
+		}
+
+		btrfs_item_key_to_cpu(path->nodes[0], &key, path->slots[0]);
+		if (key.objectid != ino || key.type != BTRFS_EXTENT_DATA_KEY || key.offset >= end)
+			break;
+
+		/* do end transaction and go to next leaf */
+		btrfs_release_path(path);
+		ret = btrfs_update_inode(trans, root, inode);
+		if (ret) {
+			btrfs_end_transaction(trans);
+			trans = NULL;
+			break;
+		}
+		btrfs_end_transaction(trans);
+
+		trans = btrfs_start_transaction(root, 2);
+		if (IS_ERR(trans)) {
+			ret = PTR_ERR(trans);
+			trans = NULL;
+			break;
+		}
+		ret = btrfs_lookup_file_extent(trans, root, path, ino, key.offset, 1);
+		if (0 > ret)
+			break;
+
+		leaf = path->nodes[0];
+		btrfs_item_key_to_cpu(leaf, &key, path->slots[0]);
+	}
+
+out:
+	// we should release path before btrfs_end_transaction(), or it will deadlock.
+	btrfs_free_path(path);
+	if (trans) {
+		ret = btrfs_update_inode(trans, root, inode);
+		btrfs_end_transaction(trans);
+	}
+
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
 int btrfs_insert_file_extent(struct btrfs_trans_handle *trans,
 			     struct btrfs_root *root,
 			     u64 objectid, u64 pos,
@@ -161,6 +385,9 @@ int btrfs_insert_file_extent(struct btrfs_trans_handle *trans,
 	btrfs_set_file_extent_compression(leaf, item, compression);
 	btrfs_set_file_extent_encryption(leaf, item, encryption);
 	btrfs_set_file_extent_other_encoding(leaf, item, other_encoding);
+#ifdef MY_ABC_HERE
+	btrfs_set_file_extent_syno_flag(leaf, item, 0);
+#endif /* MY_ABC_HERE */
 
 	btrfs_mark_buffer_dirty(leaf);
 out:
@@ -221,6 +448,35 @@ fail:
 		ret = -ENOENT;
 	return ERR_PTR(ret);
 }
+
+#ifdef MY_ABC_HERE
+int btrfs_lookup_file_extent_by_file_offset(struct btrfs_trans_handle *trans,
+					    struct btrfs_root *root,
+					    struct btrfs_path *path, u64 inode_num,
+					    u64 file_offset, int mod)
+{
+	int ret;
+	struct btrfs_key key;
+	struct extent_buffer *leaf = NULL;
+	struct btrfs_file_extent_item *fi = NULL;
+
+	ret = btrfs_lookup_file_extent(trans, root, path, inode_num, file_offset, mod);
+	if (0 >= ret)
+		return ret;
+
+	path->slots[0]--;
+	leaf = path->nodes[0];
+	btrfs_item_key_to_cpu(leaf, &key, path->slots[0]);
+	fi = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_file_extent_item);
+	if (key.objectid != inode_num ||
+	    key.type != BTRFS_EXTENT_DATA_KEY ||
+	    key.offset + btrfs_file_extent_num_bytes(leaf, fi) < file_offset) {
+		return -ENOENT;
+	}
+
+	return 0;
+}
+#endif /* MY_ABC_HERE */
 
 int btrfs_lookup_file_extent(struct btrfs_trans_handle *trans,
 			     struct btrfs_root *root,
@@ -926,8 +1182,10 @@ again:
 	}
 
 	btrfs_release_path(path);
+	path->search_for_extension = 1;
 	ret = btrfs_search_slot(trans, root, &file_key, path,
 				csum_size, 1);
+	path->search_for_extension = 0;
 	if (ret < 0)
 		goto out;
 

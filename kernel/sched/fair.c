@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Completely Fair Scheduling (CFS) Class (SCHED_NORMAL/SCHED_BATCH)
@@ -3072,6 +3075,22 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 } while (0)
 
 #ifdef CONFIG_SMP
+#ifdef MY_ABC_HERE
+static inline void
+enqueue_runnable_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
+{
+	cfs_rq->avg.runnable_avg += se->avg.runnable_avg;
+	cfs_rq->avg.runnable_sum += se->avg.runnable_sum;
+}
+
+static inline void
+dequeue_runnable_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
+{
+	sub_positive(&cfs_rq->avg.runnable_avg, se->avg.runnable_avg);
+	sub_positive(&cfs_rq->avg.runnable_sum, se->avg.runnable_sum);
+}
+#endif /* MY_ABC_HERE */
+
 static inline void
 enqueue_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
@@ -3086,6 +3105,12 @@ dequeue_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	sub_positive(&cfs_rq->avg.load_sum, se_weight(se) * se->avg.load_sum);
 }
 #else
+#ifdef MY_ABC_HERE
+static inline void
+enqueue_runnable_avg(struct cfs_rq *cfs_rq, struct sched_entity *se) { }
+dequeue_runnable_avg(struct cfs_rq *cfs_rq, struct sched_entity *se) { }
+#endif /* MY_ABC_HERE */
+
 static inline void
 enqueue_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se) { }
 static inline void
@@ -3679,8 +3704,11 @@ update_cfs_rq_load_avg(u64 now, struct cfs_rq *cfs_rq)
 		sa->util_sum = sa->util_avg * divider;
 
 		r = removed_runnable;
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 		sub_positive(&sa->runnable_avg, r);
 		sa->runnable_sum = sa->runnable_avg * divider;
+#endif /* MY_ABC_HERE */
 
 		/*
 		 * removed_runnable is the unweighted version of removed_load so we
@@ -3747,8 +3775,11 @@ static void attach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *s
 	enqueue_load_avg(cfs_rq, se);
 	cfs_rq->avg.util_avg += se->avg.util_avg;
 	cfs_rq->avg.util_sum += se->avg.util_sum;
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 	cfs_rq->avg.runnable_avg += se->avg.runnable_avg;
 	cfs_rq->avg.runnable_sum += se->avg.runnable_sum;
+#endif /* MY_ABC_HERE */
 
 	add_tg_cfs_propagate(cfs_rq, se->avg.load_sum);
 
@@ -3776,8 +3807,11 @@ static void detach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *s
 	dequeue_load_avg(cfs_rq, se);
 	sub_positive(&cfs_rq->avg.util_avg, se->avg.util_avg);
 	cfs_rq->avg.util_sum = cfs_rq->avg.util_avg * divider;
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 	sub_positive(&cfs_rq->avg.runnable_avg, se->avg.runnable_avg);
 	cfs_rq->avg.runnable_sum = cfs_rq->avg.runnable_avg * divider;
+#endif /* MY_ABC_HERE */
 
 	add_tg_cfs_propagate(cfs_rq, -se->avg.load_sum);
 
@@ -4259,6 +4293,9 @@ enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	 *   - Add its new weight to cfs_rq->load.weight
 	 */
 	update_load_avg(cfs_rq, se, UPDATE_TG | DO_ATTACH);
+#ifdef MY_ABC_HERE
+	enqueue_runnable_avg(cfs_rq, se);
+#endif /* MY_ABC_HERE */
 	se_update_runnable(se);
 	update_cfs_group(se);
 	account_entity_enqueue(cfs_rq, se);
@@ -4349,6 +4386,9 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 	 *     of its group cfs_rq.
 	 */
 	update_load_avg(cfs_rq, se, UPDATE_TG);
+#ifdef MY_ABC_HERE
+	dequeue_runnable_avg(cfs_rq, se);
+#endif /* MY_ABC_HERE */
 	se_update_runnable(se);
 
 	update_stats_dequeue(cfs_rq, se, flags);
@@ -5853,7 +5893,11 @@ wake_affine_weight(struct sched_domain *sd, struct task_struct *p,
 	s64 this_eff_load, prev_eff_load;
 	unsigned long task_load;
 
+#ifdef MY_ABC_HERE
+	this_eff_load = cpu_runnable(cpu_rq(this_cpu));
+#else /* MY_ABC_HERE */
 	this_eff_load = cpu_load(cpu_rq(this_cpu));
+#endif /* MY_ABC_HERE */
 
 	if (sync) {
 		unsigned long current_load = task_h_load(current);
@@ -5871,7 +5915,11 @@ wake_affine_weight(struct sched_domain *sd, struct task_struct *p,
 		this_eff_load *= 100;
 	this_eff_load *= capacity_of(prev_cpu);
 
+#ifdef MY_ABC_HERE
+	prev_eff_load = cpu_runnable(cpu_rq(prev_cpu));
+#else /* MY_ABC_HERE */
 	prev_eff_load = cpu_load(cpu_rq(prev_cpu));
+#endif /* MY_ABC_HERE */
 	prev_eff_load -= task_load;
 	if (sched_feat(WA_BIAS))
 		prev_eff_load *= 100 + (sd->imbalance_pct - 100) / 2;
@@ -7569,7 +7617,7 @@ int can_migrate_task(struct task_struct *p, struct lb_env *env)
 		return 0;
 
 	/* Disregard pcpu kthreads; they are where they need to be. */
-	if ((p->flags & PF_KTHREAD) && kthread_is_per_cpu(p))
+	if (kthread_is_per_cpu(p))
 		return 0;
 
 	if (!cpumask_test_cpu(env->dst_cpu, p->cpus_ptr)) {

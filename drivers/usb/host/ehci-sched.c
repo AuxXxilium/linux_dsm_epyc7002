@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2001-2004 by David Brownell
@@ -6,6 +9,13 @@
 
 /* this file is part of ehci-hcd.c */
 
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_USB_PATCH_ON_RTK
+/* Add Workaround to fixed EHCI/OHCI Wrapper can't work simultaneously */
+extern int RTK_ohci_force_suspend(const char *func);
+#endif // CONFIG_USB_PATCH_ON_RTK
+
+#endif /* MY_DEF_HERE */
 /*-------------------------------------------------------------------------*/
 
 /*
@@ -909,6 +919,16 @@ static int intr_submit(
 	/* get endpoint and transfer/schedule data */
 	epnum = urb->ep->desc.bEndpointAddress;
 
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_USB_PATCH_ON_RTK
+#ifdef CONFIG_USB_OHCI_RTK
+	/* Add Workaround to fixed EHCI/OHCI Wrapper can't work simultaneously */
+	/* When EHCI schedule actived, force suspend OHCI*/
+	RTK_ohci_force_suspend(__func__);
+#endif
+#endif // CONFIG_USB_PATCH_ON_RTK
+
+#endif /* MY_DEF_HERE */
 	spin_lock_irqsave(&ehci->lock, flags);
 
 	if (unlikely(!HCD_HW_ACCESSIBLE(ehci_to_hcd(ehci)))) {

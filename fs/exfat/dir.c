@@ -7,7 +7,6 @@
 #include <linux/bio.h>
 #include <linux/buffer_head.h>
 
-#include "exfat_raw.h"
 #include "exfat_fs.h"
 
 static int exfat_extract_uni_name(struct exfat_dentry *ep,
@@ -59,10 +58,10 @@ static void exfat_get_uniname_from_ext_entry(struct super_block *sb,
 }
 
 /* read a directory entry from the opened directory */
-static int exfat_readdir(struct inode *inode, loff_t *cpos, struct exfat_dir_entry *dir_entry)
+static int exfat_readdir(struct inode *inode, struct exfat_dir_entry *dir_entry)
 {
-	int i, dentries_per_clu, dentries_per_clu_bits = 0, num_ext;
-	unsigned int type, clu_offset, max_dentries;
+	int i, dentries_per_clu, dentries_per_clu_bits = 0;
+	unsigned int type, clu_offset;
 	sector_t sector;
 	struct exfat_chain dir, clu;
 	struct exfat_uni_name uni_name;
@@ -70,7 +69,7 @@ static int exfat_readdir(struct inode *inode, loff_t *cpos, struct exfat_dir_ent
 	struct super_block *sb = inode->i_sb;
 	struct exfat_sb_info *sbi = EXFAT_SB(sb);
 	struct exfat_inode_info *ei = EXFAT_I(inode);
-	unsigned int dentry = EXFAT_B_TO_DEN(*cpos) & 0xFFFFFFFF;
+	unsigned int dentry = ei->rwoffset & 0xFFFFFFFF;
 	struct buffer_head *bh;
 
 	/* check if the given file ID is opened */
@@ -85,8 +84,6 @@ static int exfat_readdir(struct inode *inode, loff_t *cpos, struct exfat_dir_ent
 
 	dentries_per_clu = sbi->dentries_per_clu;
 	dentries_per_clu_bits = ilog2(dentries_per_clu);
-	max_dentries = (unsigned int)min_t(u64, MAX_EXFAT_DENTRIES,
-					   (u64)sbi->num_clusters << dentries_per_clu_bits);
 
 	clu_offset = dentry >> dentries_per_clu_bits;
 	exfat_chain_dup(&clu, &dir);
@@ -110,7 +107,7 @@ static int exfat_readdir(struct inode *inode, loff_t *cpos, struct exfat_dir_ent
 		}
 	}
 
-	while (clu.dir != EXFAT_EOF_CLUSTER && dentry < max_dentries) {
+	while (clu.dir != EXFAT_EOF_CLUSTER) {
 		i = dentry & (dentries_per_clu - 1);
 
 		for ( ; i < dentries_per_clu; i++, dentry++) {
@@ -129,7 +126,6 @@ static int exfat_readdir(struct inode *inode, loff_t *cpos, struct exfat_dir_ent
 				continue;
 			}
 
-			num_ext = ep->dentry.file.num_ext;
 			dir_entry->attr = le16_to_cpu(ep->dentry.file.attr);
 			exfat_get_entry_time(sbi, &dir_entry->crtime,
 					ep->dentry.file.create_tz,
@@ -160,13 +156,12 @@ static int exfat_readdir(struct inode *inode, loff_t *cpos, struct exfat_dir_ent
 				return -EIO;
 			dir_entry->size =
 				le64_to_cpu(ep->dentry.stream.valid_size);
-			dir_entry->entry = dentry;
 			brelse(bh);
 
 			ei->hint_bmap.off = dentry >> dentries_per_clu_bits;
 			ei->hint_bmap.clu = clu.dir;
 
-			*cpos = EXFAT_DEN_TO_B(dentry + 1 + num_ext);
+			ei->rwoffset = ++dentry;
 			return 0;
 		}
 
@@ -182,7 +177,7 @@ static int exfat_readdir(struct inode *inode, loff_t *cpos, struct exfat_dir_ent
 	}
 
 	dir_entry->namebuf.lfn[0] = '\0';
-	*cpos = EXFAT_DEN_TO_B(dentry);
+	ei->rwoffset = dentry;
 	return 0;
 }
 
@@ -212,9 +207,17 @@ static void exfat_free_namebuf(struct exfat_dentry_namebuf *nb)
 
 /* skip iterating emit_dots when dir is empty */
 #define ITER_POS_FILLED_DOTS    (2)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0)
 static int exfat_iterate(struct file *filp, struct dir_context *ctx)
+#else
+static int exfat_iterate(struct file *filp, void *dirent, filldir_t filldir)
+#endif
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,9,0)
+	struct inode *inode = file_inode(filp);
+#else
 	struct inode *inode = filp->f_path.dentry->d_inode;
+#endif
 	struct super_block *sb = inode->i_sb;
 	struct inode *tmp;
 	struct exfat_dir_entry de;
@@ -225,8 +228,9 @@ static int exfat_iterate(struct file *filp, struct dir_context *ctx)
 	int err = 0, fake_offset = 0;
 
 	exfat_init_namebuf(nb);
-	mutex_lock(&EXFAT_SB(sb)->s_lock);
+	__lock_super(sb);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0)
 	cpos = ctx->pos;
 	if (!dir_emit_dots(filp, ctx))
 		goto unlock;
@@ -235,6 +239,26 @@ static int exfat_iterate(struct file *filp, struct dir_context *ctx)
 		cpos = 0;
 		fake_offset = 1;
 	}
+#else
+	cpos = filp->f_pos;
+	/* Fake . and .. for the root directory. */
+	while (filp->f_pos < 2) {
+		if (inode->i_ino == EXFAT_ROOT_INO)
+			inum = EXFAT_ROOT_INO;
+		else if (filp->f_pos == 0)
+			inum = inode->i_ino;
+		else /* (filp->f_pos == 1) */
+			inum = parent_ino(filp->f_path.dentry);
+
+		if (filldir(dirent, "..", filp->f_pos+1, filp->f_pos, inum, DT_DIR) < 0)
+			goto unlock;
+		filp->f_pos++;
+	}
+	if (filp->f_pos == ITER_POS_FILLED_DOTS) {
+		cpos = 0;
+		fake_offset = 1;
+	}
+#endif
 
 	if (cpos & (DENTRY_SIZE - 1)) {
 		err = -ENOENT;
@@ -246,10 +270,12 @@ static int exfat_iterate(struct file *filp, struct dir_context *ctx)
 	if (err)
 		goto unlock;
 get_new:
-	if (ei->flags == ALLOC_NO_FAT_CHAIN && cpos >= i_size_read(inode))
+	ei->rwoffset = EXFAT_B_TO_DEN(cpos);
+
+	if (cpos >= i_size_read(inode))
 		goto end_of_dir;
 
-	err = exfat_readdir(inode, &cpos, &de);
+	err = exfat_readdir(inode, &de);
 	if (err) {
 		/*
 		 * At least we tried to read a sector.  Move cpos to next sector
@@ -264,10 +290,13 @@ get_new:
 		goto end_of_dir;
 	}
 
+	cpos = EXFAT_DEN_TO_B(ei->rwoffset);
+
 	if (!nb->lfn[0])
 		goto end_of_dir;
 
-	i_pos = ((loff_t)ei->start_clu << 32) |	(de.entry & 0xffffffff);
+	i_pos = ((loff_t)ei->start_clu << 32) |
+		((ei->rwoffset - 1) & 0xffffffff);
 	tmp = exfat_iget(sb, i_pos);
 	if (tmp) {
 		inum = tmp->i_ino;
@@ -281,20 +310,33 @@ get_new:
 	 * Because page fault can occur in dir_emit() when the size
 	 * of buffer given from user is larger than one page size.
 	 */
-	mutex_unlock(&EXFAT_SB(sb)->s_lock);
+	__unlock_super(sb);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0)
 	if (!dir_emit(ctx, nb->lfn, strlen(nb->lfn), inum,
 			(de.attr & ATTR_SUBDIR) ? DT_DIR : DT_REG))
+#else
+	if (filldir(dirent, nb->lfn, strlen(nb->lfn), filp->f_pos, inum,
+			(de.attr & ATTR_SUBDIR) ? DT_DIR : DT_REG) < 0)
+#endif
 		goto out_unlocked;
-	mutex_lock(&EXFAT_SB(sb)->s_lock);
+	__lock_super(sb);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0)
 	ctx->pos = cpos;
+#else
+	filp->f_pos = cpos;
+#endif
 	goto get_new;
 
 end_of_dir:
 	if (!cpos && fake_offset)
 		cpos = ITER_POS_FILLED_DOTS;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0)
 	ctx->pos = cpos;
+#else
+	filp->f_pos = cpos;
+#endif
 unlock:
-	mutex_unlock(&EXFAT_SB(sb)->s_lock);
+	__unlock_super(sb);
 out_unlocked:
 	/*
 	 * To improve performance, free namebuf after unlock sb_lock.
@@ -307,7 +349,11 @@ out_unlocked:
 const struct file_operations exfat_dir_operations = {
 	.llseek		= generic_file_llseek,
 	.read		= generic_read_dir,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0)
 	.iterate	= exfat_iterate,
+#else
+	.readdir	= exfat_iterate,
+#endif
 	.fsync		= exfat_file_fsync,
 };
 
@@ -439,7 +485,11 @@ int exfat_init_dir_entry(struct inode *inode, struct exfat_chain *p_dir,
 {
 	struct super_block *sb = inode->i_sb;
 	struct exfat_sb_info *sbi = EXFAT_SB(sb);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,9,0)
 	struct timespec64 ts = current_time(inode);
+#else
+	struct timespec ts = CURRENT_TIME_SEC;
+#endif
 	sector_t sector;
 	struct exfat_dentry *ep;
 	struct buffer_head *bh;
@@ -910,6 +960,7 @@ enum {
 /*
  * return values:
  *   >= 0	: return dir entiry position with the name in dir
+ *   -EEXIST	: (root dir, ".") it is the root dir itself
  *   -ENOENT	: entry with the name does not exist
  *   -EIO	: I/O error
  */
@@ -977,8 +1028,11 @@ rewind:
 					if (ei->hint_femp.eidx ==
 							EXFAT_HINT_NONE ||
 						candi_empty.eidx <=
-							 ei->hint_femp.eidx)
-						ei->hint_femp = candi_empty;
+							 ei->hint_femp.eidx) {
+						memcpy(&ei->hint_femp,
+							&candi_empty,
+							sizeof(candi_empty));
+					}
 				}
 
 				brelse(bh);

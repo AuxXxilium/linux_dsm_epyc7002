@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: (GPL-2.0-or-later OR BSD-2-Clause)
+/*
+ * Copyright (c) 2020 Realtek Semiconductor Corp.
+ */
+
+/dts-v1/;
+
+#include "rtd1619b-bleedingedge.dtsi"
+
+/ {
+	compatible = "realtek,bleeding-edge", "realtek,rtd1619b";
+	model = "Realtek Bleeding Edge EVB (2GB)";
+
+	memory@4000 {
+		device_type = "memory";
+		reg = <0x00004000 0x7fffc000>; /* 2 GB */
+	};
+
+	chosen {
+		bootargs = "earlycon=uart8250,mmio32,0x98007800 console=ttyS0,460800 init=/init loop.max_part=7 androidboot.storage=emmc androidboot.hardware=stark";
+	};
+};
+
+&pcie1 {
+	status = "disabled";
+};
+
+&sata_phy {
+	status = "okay";
+};
+
+&sata_phy0 {
+	status = "okay";
+};
+
+&ahci_sata {
+	status = "okay";
+};
+
+&sata_port0 {
+	status = "okay";
+};
+
+&reserved_memory {
+	ramoops@22000000  {
+		compatible = "ramoops";
+		reg = <0x22000000 0x00200000>;
+		console-size = <0x00100000>;
+		record-size = <0x00004000>;
+		ftrace-size = <0x00004000>;
+	};
+};

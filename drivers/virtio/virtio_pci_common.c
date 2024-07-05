@@ -254,7 +254,7 @@ void vp_del_vqs(struct virtio_device *vdev)
 
 	if (vp_dev->msix_affinity_masks) {
 		for (i = 0; i < vp_dev->msix_vectors; i++)
-			if (vp_dev->msix_affinity_masks[i])
+			if (cpumask_available(vp_dev->msix_affinity_masks[i]))
 				free_cpumask_var(vp_dev->msix_affinity_masks[i]);
 	}
 

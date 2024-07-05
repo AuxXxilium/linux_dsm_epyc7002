@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2011 STRATO.  All rights reserved.
@@ -17,10 +20,21 @@
 
 /* Just an arbitrary number so we can be sure this happened */
 #define BACKREF_FOUND_SHARED 6
+#ifdef MY_ABC_HERE
+#define BACKREF_NEXT_ITEM 253
+#define BACKREF_FOUND_SHARED_ROOT 254
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#define BACKREF_FOUND_ROOT_INO 255
+#endif /* MY_ABC_HERE */
 
 struct extent_inode_elem {
 	u64 inum;
 	u64 offset;
+#ifdef MY_ABC_HERE
+	int extent_type;
+#endif /* MY_ABC_HERE */
 	struct extent_inode_elem *next;
 };
 
@@ -57,6 +71,9 @@ static int check_extent_in_eb(const struct btrfs_key *key,
 	e->next = *eie;
 	e->inum = key->objectid;
 	e->offset = key->offset + offset;
+#ifdef MY_ABC_HERE
+	e->extent_type = btrfs_file_extent_type(eb, fi);
+#endif /* MY_ABC_HERE */
 	*eie = e;
 
 	return 0;
@@ -112,6 +129,54 @@ static int find_extent_in_eb(const struct extent_buffer *eb,
 	return 0;
 }
 
+#ifdef MY_ABC_HERE
+// Copied from find_extent_in_eb().
+static int find_ino_extent_in_eb(struct extent_buffer *eb,
+				u64 wanted_disk_byte, u64 ino, u64 offset)
+{
+	u64 disk_byte;
+	struct btrfs_key key;
+	struct btrfs_file_extent_item *fi;
+	int slot;
+	int nritems;
+	int extent_type;
+
+	/*
+	 * from the shared data ref, we only have the leaf but we need
+	 * the key. thus, we must look into all items and see that we
+	 * find one (some) with a reference to our extent item.
+	 */
+	nritems = btrfs_header_nritems(eb);
+	for (slot = 0; slot < nritems; ++slot) {
+		btrfs_item_key_to_cpu(eb, &key, slot);
+		if (key.objectid > ino)
+			break;
+		if (key.type != BTRFS_EXTENT_DATA_KEY)
+			continue;
+		fi = btrfs_item_ptr(eb, slot, struct btrfs_file_extent_item);
+		extent_type = btrfs_file_extent_type(eb, fi);
+		if (extent_type == BTRFS_FILE_EXTENT_INLINE)
+			continue;
+		/* don't skip BTRFS_FILE_EXTENT_PREALLOC, we can handle that */
+		disk_byte = btrfs_file_extent_disk_bytenr(eb, fi);
+		if (disk_byte != wanted_disk_byte)
+			continue;
+
+		if (key.objectid == ino) {
+			if (key.offset >= offset)
+				return 0;
+			/*
+			 * For offset != (u64)-1, ulist could avoid calling check for
+			 * same extent multiple times.
+			 */
+			return 1;
+		}
+	}
+
+	return 0;
+}
+#endif /* MY_ABC_HERE */
+
 struct preftree {
 	struct rb_root_cached root;
 	unsigned int count;
@@ -125,6 +190,18 @@ struct preftrees {
 	struct preftree indirect_missing_keys;
 };
 
+#ifdef MY_ABC_HERE
+enum share_check_mode {
+	SC_FIND_SHARED,
+	SC_FIND_SHARED_ROOT,
+};
+
+enum found_state_bits {
+	DIRECT,
+	INDIRECT,
+};
+#endif /* MY_ABC_HERE */
+
 /*
  * Checks for a shared extent during backref search.
  *
@@ -137,10 +214,77 @@ struct share_check {
 	u64 root_objectid;
 	u64 inum;
 	int share_count;
+#ifdef MY_ABC_HERE
+	enum share_check_mode mode;
+	unsigned long found_state;
+	struct ulist *shared_roots;
+	u64 direct_backref_lowest_bytenr;
+	u64 indirect_backref_highest_rootid;
+	u64 indirect_backref_lowest_inum;
+	u64 indirect_backref_lowest_offset;
+	u64 parent_bytenr;
+	u64 offset;
+	u64 datao;
+#endif /* MY_ABC_HERE */
 };
+
+#ifdef MY_ABC_HERE
+static inline void
+share_check_update_direct_if_need(struct share_check *sc, u64 offset)
+{
+	WARN_ON_ONCE(!sc || sc->mode != SC_FIND_SHARED_ROOT);
+
+	if (!test_and_set_bit(DIRECT, &sc->found_state) ||
+	    offset < sc->direct_backref_lowest_bytenr)
+		sc->direct_backref_lowest_bytenr = offset;
+}
+
+static inline void
+share_check_update_indirect_if_need(struct share_check *sc,
+				    u64 root, struct btrfs_key *key)
+{
+	WARN_ON_ONCE(!sc || sc->mode != SC_FIND_SHARED_ROOT);
+
+	if (!test_and_set_bit(INDIRECT, &sc->found_state) ||
+	    root > sc->indirect_backref_highest_rootid ||
+	    (root == sc->indirect_backref_highest_rootid &&
+	     key->objectid < sc->indirect_backref_lowest_inum) ||
+	    (root == sc->indirect_backref_highest_rootid &&
+	     key->objectid == sc->indirect_backref_lowest_inum &&
+	     key->offset < sc->indirect_backref_lowest_offset)) {
+		sc->indirect_backref_highest_rootid = root;
+		sc->indirect_backref_lowest_inum = key->objectid;
+		sc->indirect_backref_lowest_offset = key->offset;
+	}
+}
+
+/*
+ * Only called by find_parent_nodes_shared_root()
+ * , aka sc->mode == SC_FIND_SHARED_ROOT
+ */
+static inline bool backref_check_shared_not_in_sc(struct share_check *sc)
+{
+	WARN_ON_ONCE(!sc || sc->mode != SC_FIND_SHARED_ROOT);
+
+	if (test_bit(DIRECT, &sc->found_state) &&
+	    sc->direct_backref_lowest_bytenr != sc->parent_bytenr)
+		return true;
+	else if (test_bit(INDIRECT, &sc->found_state) &&
+		 (sc->indirect_backref_highest_rootid != sc->root_objectid ||
+		  sc->indirect_backref_lowest_inum != sc->inum ||
+		  sc->indirect_backref_lowest_offset != sc->offset -
+		  sc->datao))
+		return true;
+
+	return false;
+}
+#endif /* MY_ABC_HERE */
 
 static inline int extent_is_shared(struct share_check *sc)
 {
+#ifdef MY_ABC_HERE
+	WARN_ON_ONCE(sc && sc->mode != SC_FIND_SHARED);
+#endif /* MY_ABC_HERE */
 	return (sc && sc->share_count > 1) ? BACKREF_FOUND_SHARED : 0;
 }
 
@@ -359,7 +503,13 @@ static int add_prelim_ref(const struct btrfs_fs_info *fs_info,
 	ref->parent = parent;
 	ref->wanted_disk_byte = wanted_disk_byte;
 	prelim_ref_insert(fs_info, preftree, ref, sc);
+#ifdef MY_ABC_HERE
+	if (sc && sc->mode == SC_FIND_SHARED)
+		return extent_is_shared(sc);
+	return 0;
+#else /* MY_ABC_HERE */
 	return extent_is_shared(sc);
+#endif /* MY_ABC_HERE */
 }
 
 /* direct refs use root == 0, key == NULL */
@@ -416,7 +566,15 @@ static int add_all_parents(struct btrfs_root *root, struct btrfs_path *path,
 			   struct ulist *parents,
 			   struct preftrees *preftrees, struct prelim_ref *ref,
 			   int level, u64 time_seq, const u64 *extent_item_pos,
-			   bool ignore_offset)
+			   bool ignore_offset
+#ifdef MY_ABC_HERE
+			   , struct share_check *sc
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+			   , struct quota_check *qc
+#endif /* MY_ABC_HERE */
+			   )
+
 {
 	int ret = 0;
 	int slot;
@@ -429,6 +587,10 @@ static int add_all_parents(struct btrfs_root *root, struct btrfs_path *path,
 	u64 wanted_disk_byte = ref->wanted_disk_byte;
 	u64 count = 0;
 	u64 data_offset;
+#ifdef MY_ABC_HERE
+	u64 datao;
+	u64 ram_bytes = SZ_256M;
+#endif /* MY_ABC_HERE */
 
 	if (level != 0) {
 		eb = path->nodes[level];
@@ -486,6 +648,12 @@ static int add_all_parents(struct btrfs_root *root, struct btrfs_path *path,
 		disk_byte = btrfs_file_extent_disk_bytenr(eb, fi);
 		data_offset = btrfs_file_extent_offset(eb, fi);
 
+#ifdef MY_ABC_HERE
+		if (key_for_search->type == BTRFS_EXTENT_DATA_KEY &&
+		    key.offset >= key_for_search->offset + ram_bytes)
+			break;
+#endif /* MY_ABC_HERE */
+
 		if (disk_byte == wanted_disk_byte) {
 			eie = NULL;
 			old = NULL;
@@ -493,6 +661,33 @@ static int add_all_parents(struct btrfs_root *root, struct btrfs_path *path,
 				count++;
 			else
 				goto next;
+#ifdef MY_ABC_HERE
+			if (sc && sc->mode == SC_FIND_SHARED_ROOT &&
+			    ref->level == 0 &&
+			    ref->root_id == sc->root_objectid &&
+			    ref->key_for_search.objectid == sc->inum &&
+			    ref->key_for_search.offset == sc->offset -
+			    sc->datao && key.offset < sc->offset) {
+				/*
+				 * goto out, the return value will be set to
+				 * 0, so return it directly, the caller can
+				 * handle it.
+				 */
+				return BACKREF_NEXT_ITEM;
+			}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+			ram_bytes = btrfs_file_extent_ram_bytes(eb, fi);
+			if (qc) {
+				datao = key.offset - btrfs_file_extent_offset(eb, fi);
+				if (datao != key_for_search->offset)
+					goto next;
+				if (key.offset >= qc->offset)
+					break;
+			}
+#endif /* MY_ABC_HERE */
+
 			if (extent_item_pos) {
 				ret = check_extent_in_eb(&key, eb, fi,
 						*extent_item_pos,
@@ -535,7 +730,14 @@ static int resolve_indirect_ref(struct btrfs_fs_info *fs_info,
 				struct btrfs_path *path, u64 time_seq,
 				struct preftrees *preftrees,
 				struct prelim_ref *ref, struct ulist *parents,
-				const u64 *extent_item_pos, bool ignore_offset)
+				const u64 *extent_item_pos, bool ignore_offset
+#ifdef MY_ABC_HERE
+				, struct share_check *sc
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+				, struct quota_check *qc
+#endif /* MY_ABC_HERE */
+				)
 {
 	struct btrfs_root *root;
 	struct extent_buffer *eb;
@@ -629,7 +831,14 @@ static int resolve_indirect_ref(struct btrfs_fs_info *fs_info,
 	}
 
 	ret = add_all_parents(root, path, parents, preftrees, ref, level,
-			      time_seq, extent_item_pos, ignore_offset);
+			      time_seq, extent_item_pos, ignore_offset
+#ifdef MY_ABC_HERE
+			      , sc
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+			      , qc
+#endif /* MY_ABC_HERE */
+			      );
 out:
 	btrfs_put_root(root);
 out_free:
@@ -666,7 +875,11 @@ static int resolve_indirect_refs(struct btrfs_fs_info *fs_info,
 				 struct btrfs_path *path, u64 time_seq,
 				 struct preftrees *preftrees,
 				 const u64 *extent_item_pos,
-				 struct share_check *sc, bool ignore_offset)
+				 struct share_check *sc, bool ignore_offset
+#ifdef MY_ABC_HERE
+				 , struct quota_check *qc
+#endif /* MY_ABC_HERE */
+				)
 {
 	int err;
 	int ret = 0;
@@ -704,6 +917,9 @@ static int resolve_indirect_refs(struct btrfs_fs_info *fs_info,
 		}
 
 		if (sc && sc->root_objectid &&
+#ifdef MY_ABC_HERE
+		    sc->mode == SC_FIND_SHARED &&
+#endif /* MY_ABC_HERE */
 		    ref->root_id != sc->root_objectid) {
 			free_pref(ref);
 			ret = BACKREF_FOUND_SHARED;
@@ -711,7 +927,14 @@ static int resolve_indirect_refs(struct btrfs_fs_info *fs_info,
 		}
 		err = resolve_indirect_ref(fs_info, path, time_seq, preftrees,
 					   ref, parents, extent_item_pos,
-					   ignore_offset);
+					   ignore_offset
+#ifdef MY_ABC_HERE
+					   , sc
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+					   , qc
+#endif /* MY_ABC_HERE */
+					   );
 		/*
 		 * we can only tolerate ENOENT,otherwise,we should catch error
 		 * and return directly.
@@ -814,7 +1037,11 @@ static int add_missing_keys(struct btrfs_fs_info *fs_info,
  */
 static int add_delayed_refs(const struct btrfs_fs_info *fs_info,
 			    struct btrfs_delayed_ref_head *head, u64 seq,
-			    struct preftrees *preftrees, struct share_check *sc)
+			    struct preftrees *preftrees, struct share_check *sc
+#ifdef MY_ABC_HERE
+			    , struct quota_check *qc
+#endif /* MY_ABC_HERE */
+			   )
 {
 	struct btrfs_delayed_ref_node *node;
 	struct btrfs_delayed_extent_op *extent_op = head->extent_op;
@@ -880,15 +1107,43 @@ static int add_delayed_refs(const struct btrfs_fs_info *fs_info,
 			key.type = BTRFS_EXTENT_DATA_KEY;
 			key.offset = ref->offset;
 
+#ifdef MY_ABC_HERE
+			if (qc) {
+				WARN_ON(!qc->ino || !qc->root_objectid);
+				if (key.objectid != qc->ino)
+					break;
+				if (key.offset < LLONG_MAX && key.offset >= qc->offset)
+					break;
+
+				/*
+				 * Only when we check if an inode has reference to extent_item,
+				 * could we break now. Otherwise, we need to run into the
+				 * leaf block.
+				 */
+				if (qc->offset == (u64)-1 && ref->root == qc->root_objectid) {
+					ret = BACKREF_FOUND_ROOT_INO;
+					break;
+				}
+				goto add_ref;
+			}
+#endif /* MY_ABC_HERE */
+
 			/*
 			 * Found a inum that doesn't match our known inum, we
 			 * know it's shared.
 			 */
-			if (sc && sc->inum && ref->objectid != sc->inum) {
+			if (sc && sc->inum && ref->objectid != sc->inum
+#ifdef MY_ABC_HERE
+			    && sc->mode == SC_FIND_SHARED
+#endif /* MY_ABC_HERE */
+			    ) {
 				ret = BACKREF_FOUND_SHARED;
 				goto out;
 			}
 
+#ifdef MY_ABC_HERE
+add_ref:
+#endif /* MY_ABC_HERE */
 			ret = add_indirect_ref(fs_info, preftrees, ref->root,
 					       &key, 0, node->bytenr, count, sc,
 					       GFP_ATOMIC);
@@ -915,7 +1170,11 @@ static int add_delayed_refs(const struct btrfs_fs_info *fs_info,
 		if (ret && (ret != BACKREF_FOUND_SHARED))
 			break;
 	}
-	if (!ret)
+	if (!ret
+#ifdef MY_ABC_HERE
+	    && sc && sc->mode == SC_FIND_SHARED
+#endif /* MY_ABC_HERE */
+	    )
 		ret = extent_is_shared(sc);
 out:
 	spin_unlock(&head->lock);
@@ -930,7 +1189,11 @@ out:
 static int add_inline_refs(const struct btrfs_fs_info *fs_info,
 			   struct btrfs_path *path, u64 bytenr,
 			   int *info_level, struct preftrees *preftrees,
-			   struct share_check *sc)
+			   struct share_check *sc
+#ifdef MY_ABC_HERE
+			   , struct quota_check *qc
+#endif /* MY_ABC_HERE */
+			  )
 {
 	int ret = 0;
 	int slot;
@@ -996,6 +1259,10 @@ static int add_inline_refs(const struct btrfs_fs_info *fs_info,
 			struct btrfs_shared_data_ref *sdref;
 			int count;
 
+#ifdef MY_ABC_HERE
+			if (sc && sc->mode == SC_FIND_SHARED_ROOT)
+				share_check_update_direct_if_need(sc, offset);
+#endif /* MY_ABC_HERE */
 			sdref = (struct btrfs_shared_data_ref *)(iref + 1);
 			count = btrfs_shared_data_ref_count(leaf, sdref);
 
@@ -1004,6 +1271,13 @@ static int add_inline_refs(const struct btrfs_fs_info *fs_info,
 			break;
 		}
 		case BTRFS_TREE_BLOCK_REF_KEY:
+#ifdef MY_ABC_HERE
+			if (sc && sc->mode == SC_FIND_SHARED_ROOT &&
+			    !ulist_search(sc->shared_roots, offset)) {
+				ret = BACKREF_FOUND_SHARED_ROOT;
+				break;
+			}
+#endif /* MY_ABC_HERE */
 			ret = add_indirect_ref(fs_info, preftrees, offset,
 					       NULL, *info_level + 1,
 					       bytenr, 1, NULL, GFP_NOFS);
@@ -1020,12 +1294,46 @@ static int add_inline_refs(const struct btrfs_fs_info *fs_info,
 			key.type = BTRFS_EXTENT_DATA_KEY;
 			key.offset = btrfs_extent_data_ref_offset(leaf, dref);
 
-			if (sc && sc->inum && key.objectid != sc->inum) {
+			if (sc && sc->inum && key.objectid != sc->inum
+#ifdef MY_ABC_HERE
+			    && sc->mode == SC_FIND_SHARED
+#endif /* MY_ABC_HERE */
+			    ) {
 				ret = BACKREF_FOUND_SHARED;
 				break;
 			}
 
 			root = btrfs_extent_data_ref_root(leaf, dref);
+
+#ifdef MY_ABC_HERE
+			if (sc && sc->mode == SC_FIND_SHARED_ROOT) {
+				if (!ulist_search(sc->shared_roots, root)) {
+					ret = BACKREF_FOUND_SHARED_ROOT;
+					break;
+				}
+				share_check_update_indirect_if_need(sc, root,
+								    &key);
+			}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+			if (qc) {
+				WARN_ON(!qc->ino || !qc->root_objectid);
+				if (key.objectid != qc->ino)
+					break;
+				if (key.offset < LLONG_MAX && key.offset >= qc->offset)
+					break;
+				/*
+				 * Only when we check if an inode has reference to extent_item,
+				 * could we break now. Otherwise, we need to run into the
+				 * leaf block.
+				 */
+				if (qc->offset == (u64)-1 && root == qc->root_objectid) {
+					ret = BACKREF_FOUND_ROOT_INO;
+					break;
+				}
+			}
+#endif /* MY_ABC_HERE */
 
 			ret = add_indirect_ref(fs_info, preftrees, root,
 					       &key, 0, bytenr, count,
@@ -1051,7 +1359,11 @@ static int add_inline_refs(const struct btrfs_fs_info *fs_info,
 static int add_keyed_refs(struct btrfs_fs_info *fs_info,
 			  struct btrfs_path *path, u64 bytenr,
 			  int info_level, struct preftrees *preftrees,
-			  struct share_check *sc)
+			  struct share_check *sc
+#ifdef MY_ABC_HERE
+			  , struct quota_check *qc
+#endif /* MY_ABC_HERE */
+			  )
 {
 	struct btrfs_root *extent_root = fs_info->extent_root;
 	int ret;
@@ -1091,6 +1403,11 @@ static int add_keyed_refs(struct btrfs_fs_info *fs_info,
 			struct btrfs_shared_data_ref *sdref;
 			int count;
 
+#ifdef MY_ABC_HERE
+			if (sc && sc->mode == SC_FIND_SHARED_ROOT)
+				share_check_update_direct_if_need(sc,
+								  key.offset);
+#endif /* MY_ABC_HERE */
 			sdref = btrfs_item_ptr(leaf, slot,
 					      struct btrfs_shared_data_ref);
 			count = btrfs_shared_data_ref_count(leaf, sdref);
@@ -1100,6 +1417,13 @@ static int add_keyed_refs(struct btrfs_fs_info *fs_info,
 			break;
 		}
 		case BTRFS_TREE_BLOCK_REF_KEY:
+#ifdef MY_ABC_HERE
+			if (sc && sc->mode == SC_FIND_SHARED_ROOT &&
+			    !ulist_search(sc->shared_roots, key.offset)) {
+				ret = BACKREF_FOUND_SHARED_ROOT;
+				break;
+			}
+#endif /* MY_ABC_HERE */
 			/* NORMAL INDIRECT METADATA backref */
 			ret = add_indirect_ref(fs_info, preftrees, key.offset,
 					       NULL, info_level + 1, bytenr,
@@ -1119,12 +1443,47 @@ static int add_keyed_refs(struct btrfs_fs_info *fs_info,
 			key.type = BTRFS_EXTENT_DATA_KEY;
 			key.offset = btrfs_extent_data_ref_offset(leaf, dref);
 
-			if (sc && sc->inum && key.objectid != sc->inum) {
+			if (sc && sc->inum && key.objectid != sc->inum
+#ifdef MY_ABC_HERE
+			    && sc->mode == SC_FIND_SHARED
+#endif /* MY_ABC_HERE */
+			    ) {
 				ret = BACKREF_FOUND_SHARED;
 				break;
 			}
 
 			root = btrfs_extent_data_ref_root(leaf, dref);
+
+#ifdef MY_ABC_HERE
+			if (sc && sc->mode == SC_FIND_SHARED_ROOT) {
+				if (!ulist_search(sc->shared_roots, root)) {
+					ret = BACKREF_FOUND_SHARED_ROOT;
+					break;
+				}
+				share_check_update_indirect_if_need(sc, root,
+								    &key);
+			}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+			if (qc) {
+				WARN_ON(!qc->ino || !qc->root_objectid);
+				if (key.objectid != qc->ino)
+					break;
+				if (key.offset < LLONG_MAX && key.offset >= qc->offset)
+					break;
+				/*
+				 * Only when we check if an inode has reference to extent_item,
+				 * could we break now. Otherwise, we need to run into the
+				 * leaf block.
+				 */
+				if (qc->offset == (u64)-1 && root == qc->root_objectid) {
+					ret = BACKREF_FOUND_ROOT_INO;
+					break;
+				}
+			}
+#endif /* MY_ABC_HERE */
+
 			ret = add_indirect_ref(fs_info, preftrees, root,
 					       &key, 0, bytenr, count,
 					       sc, GFP_NOFS);
@@ -1167,7 +1526,11 @@ static int find_parent_nodes(struct btrfs_trans_handle *trans,
 			     struct btrfs_fs_info *fs_info, u64 bytenr,
 			     u64 time_seq, struct ulist *refs,
 			     struct ulist *roots, const u64 *extent_item_pos,
-			     struct share_check *sc, bool ignore_offset)
+			     struct share_check *sc, bool ignore_offset
+#ifdef MY_ABC_HERE
+			     , struct quota_check *qc
+#endif /* MY_ABC_HERE */
+			    )
 {
 	struct btrfs_key key;
 	struct btrfs_path *path;
@@ -1183,6 +1546,9 @@ static int find_parent_nodes(struct btrfs_trans_handle *trans,
 		.indirect = PREFTREE_INIT,
 		.indirect_missing_keys = PREFTREE_INIT
 	};
+#ifdef MY_ABC_HERE
+	bool in_run_delayed = (qc)? qc->in_run_delayed : false;
+#endif /* MY_ABC_HERE */
 
 	key.objectid = bytenr;
 	key.offset = (u64)-1;
@@ -1229,7 +1595,11 @@ again:
 		spin_lock(&delayed_refs->lock);
 		head = btrfs_find_delayed_ref_head(delayed_refs, bytenr);
 		if (head) {
+#ifdef MY_ABC_HERE
+			if (!in_run_delayed && !mutex_trylock(&head->mutex)) {
+#else
 			if (!mutex_trylock(&head->mutex)) {
+#endif /* MY_ABC_HERE */
 				refcount_inc(&head->refs);
 				spin_unlock(&delayed_refs->lock);
 
@@ -1246,8 +1616,15 @@ again:
 			}
 			spin_unlock(&delayed_refs->lock);
 			ret = add_delayed_refs(fs_info, head, time_seq,
-					       &preftrees, sc);
-			mutex_unlock(&head->mutex);
+					       &preftrees, sc
+#ifdef MY_ABC_HERE
+					      , qc
+#endif /* MY_ABC_HERE */
+					      );
+#ifdef MY_ABC_HERE
+			if (!in_run_delayed)
+#endif /* MY_ABC_HERE */
+				mutex_unlock(&head->mutex);
 			if (ret)
 				goto out;
 		} else {
@@ -1267,11 +1644,19 @@ again:
 		    (key.type == BTRFS_EXTENT_ITEM_KEY ||
 		     key.type == BTRFS_METADATA_ITEM_KEY)) {
 			ret = add_inline_refs(fs_info, path, bytenr,
-					      &info_level, &preftrees, sc);
+					      &info_level, &preftrees, sc
+#ifdef MY_ABC_HERE
+					      , qc
+#endif /* MY_ABC_HERE */
+					     );
 			if (ret)
 				goto out;
 			ret = add_keyed_refs(fs_info, path, bytenr, info_level,
-					     &preftrees, sc);
+					     &preftrees, sc
+#ifdef MY_ABC_HERE
+					     , qc
+#endif /* MY_ABC_HERE */
+					    );
 			if (ret)
 				goto out;
 		}
@@ -1286,7 +1671,11 @@ again:
 	WARN_ON(!RB_EMPTY_ROOT(&preftrees.indirect_missing_keys.root.rb_root));
 
 	ret = resolve_indirect_refs(fs_info, path, time_seq, &preftrees,
-				    extent_item_pos, sc, ignore_offset);
+				    extent_item_pos, sc, ignore_offset
+#ifdef MY_ABC_HERE
+				    , qc
+#endif /* MY_ABC_HERE */
+				   );
 	if (ret)
 		goto out;
 
@@ -1314,7 +1703,21 @@ again:
 		 * and would retain their original ref->count < 0.
 		 */
 		if (roots && ref->count && ref->root_id && ref->parent == 0) {
+#ifdef MY_ABC_HERE
+			if (qc) {
+				WARN_ON(!qc->root_objectid);
+				if (ref->root_id == qc->root_objectid) {
+					ret = BACKREF_FOUND_ROOT_INO;
+					goto out;
+				}
+				goto shortcut;
+			}
+#endif /* MY_ABC_HERE */
+
 			if (sc && sc->root_objectid &&
+#ifdef MY_ABC_HERE
+			    sc->mode == SC_FIND_SHARED &&
+#endif /* MY_ABC_HERE */
 			    ref->root_id != sc->root_objectid) {
 				ret = BACKREF_FOUND_SHARED;
 				goto out;
@@ -1325,6 +1728,10 @@ again:
 			if (ret < 0)
 				goto out;
 		}
+#ifdef MY_ABC_HERE
+shortcut:
+#endif /* MY_ABC_HERE */
+
 		if (ref->count && ref->parent) {
 			if (extent_item_pos && !ref->inode_list &&
 			    ref->level == 0) {
@@ -1354,6 +1761,33 @@ again:
 					goto out;
 				ref->inode_list = eie;
 			}
+#ifdef MY_ABC_HERE
+			if (qc && ref->level == 0 && ref->key_for_search.type == 0) {
+				struct extent_buffer *eb;
+				eb = read_tree_block(fs_info, ref->parent, 0,
+							ref->level, NULL);
+				if (IS_ERR(eb)) {
+					ret = PTR_ERR(eb);
+					goto out;
+				} else if (!extent_buffer_uptodate(eb)) {
+					free_extent_buffer(eb);
+					ret = -EIO;
+					goto out;
+				}
+
+				if (!path->skip_locking) {
+					btrfs_tree_read_lock(eb);
+					btrfs_set_lock_blocking_read(eb);
+				}
+				ret = find_ino_extent_in_eb(eb, bytenr, qc->ino, qc->offset);
+
+				if (!path->skip_locking)
+					btrfs_tree_read_unlock_blocking(eb);
+				free_extent_buffer(eb);
+				if (!ret)
+					goto next;
+			}
+#endif /* MY_ABC_HERE */
 			ret = ulist_add_merge_ptr(refs, ref->parent,
 						  ref->inode_list,
 						  (void **)&eie, GFP_NOFS);
@@ -1371,6 +1805,9 @@ again:
 			}
 			eie = NULL;
 		}
+#ifdef MY_ABC_HERE
+next:
+#endif /* MY_ABC_HERE */
 		cond_resched();
 	}
 
@@ -1385,6 +1822,255 @@ out:
 		free_inode_elem_list(eie);
 	return ret;
 }
+
+#ifdef MY_ABC_HERE
+static int check_first_ref(struct extent_buffer *eb, u64 bytenr,
+		  u64 inum, u64 file_offset)
+{
+	u64 disk_byte;
+	struct btrfs_key key;
+	struct btrfs_file_extent_item *fi;
+	int slot;
+	int nritems;
+	int extent_type;
+
+	/*
+	 * from the shared data ref, we only have the leaf but we need
+	 * the key. thus, we must look into all items and see that we
+	 * find one (some) with a reference to our extent item.
+	 */
+	nritems = btrfs_header_nritems(eb);
+	for (slot = 0; slot < nritems; ++slot) {
+		btrfs_item_key_to_cpu(eb, &key, slot);
+		if (key.type != BTRFS_EXTENT_DATA_KEY)
+			continue;
+		fi = btrfs_item_ptr(eb, slot, struct btrfs_file_extent_item);
+		extent_type = btrfs_file_extent_type(eb, fi);
+		if (extent_type == BTRFS_FILE_EXTENT_INLINE)
+			continue;
+		/* don't skip BTRFS_FILE_EXTENT_PREALLOC, we can handle that */
+		disk_byte = btrfs_file_extent_disk_bytenr(eb, fi);
+		if (disk_byte != bytenr)
+			continue;
+
+		if (key.objectid < inum ||
+		    (key.objectid == inum && key.offset < file_offset))
+			return 0;
+	}
+
+	return 1;
+}
+
+/*
+ * Copy from find_parent_nodes
+ */
+static int find_parent_nodes_shared_root(struct btrfs_fs_info *fs_info,
+					 u64 root_objectid, u64 inum,
+					 u64 offset, u64 datao, u64 bytenr,
+					 struct ulist *roots,
+					 u64 parent_bytenr, u64 *counted_root,
+					 struct ulist *refs)
+{
+	struct btrfs_key key;
+	struct btrfs_path *path;
+	int info_level = 0;
+	int ret;
+	struct prelim_ref *ref;
+	struct rb_node *node;
+	struct preftrees preftrees = {
+		.direct = PREFTREE_INIT,
+		.indirect = PREFTREE_INIT,
+		.indirect_missing_keys = PREFTREE_INIT
+	};
+	/*
+	 * We record the following record:
+	 * 1. smallest full backref bytenr (direct backref)
+	 * 2. smallest offset of smallest inode number in largest root
+	 *    (indirect backref)
+	 *
+	 * If both records are available, we use smallest full backref bytenr.
+	 * This is used to make sure we only account EXTENT once.
+	 * We only take this extent into account if this path contains the
+	 * record.
+	 *
+	 * The reason why we use largest rootid but smallest inode number
+	 * and offset is we want to use cumulative accounting. Therefore,
+	 * larget root id is needed. Using smallest offset is
+	 * to make resolve indirect reference work faster. In resolving
+	 * indirect ref, we always start from smaller offset of inode number.
+	 * If the behavior of root id changes(e.g. from largest to smallest),
+	 * make sure to change the function snap_entry_insert in ctree.c
+	 */
+	struct share_check sc = {
+		.mode = SC_FIND_SHARED_ROOT,
+		.root_objectid = root_objectid,
+		.inum = inum,
+		.shared_roots = roots,
+		.parent_bytenr = parent_bytenr,
+		.offset = offset,
+		.datao = datao,
+		.share_count = 0,
+		.found_state = 0,
+	};
+
+	key.objectid = bytenr;
+	key.offset = (u64)-1;
+	if (btrfs_fs_incompat(fs_info, SKINNY_METADATA))
+		key.type = BTRFS_METADATA_ITEM_KEY;
+	else
+		key.type = BTRFS_EXTENT_ITEM_KEY;
+
+	path = btrfs_alloc_path();
+	if (!path)
+		return -ENOMEM;
+	path->search_commit_root = 1;
+	path->skip_locking = 1;
+
+	ret = btrfs_search_slot(NULL, fs_info->extent_root, &key, path, 0, 0);
+	if (ret < 0)
+		goto out;
+	BUG_ON(ret == 0);
+
+	if (path->slots[0]) {
+		struct extent_buffer *leaf;
+		int slot;
+
+		path->slots[0]--;
+		leaf = path->nodes[0];
+		slot = path->slots[0];
+		btrfs_item_key_to_cpu(leaf, &key, slot);
+		if (key.objectid == bytenr &&
+		    (key.type == BTRFS_EXTENT_ITEM_KEY ||
+		     key.type == BTRFS_METADATA_ITEM_KEY)) {
+			ret = add_inline_refs(fs_info, path, bytenr,
+						&info_level, &preftrees, &sc
+#ifdef MY_ABC_HERE
+					      , NULL
+#endif /* MY_ABC_HERE */
+					     );
+			if (ret)
+				goto out;
+			ret = add_keyed_refs(fs_info, path, bytenr,
+						info_level, &preftrees, &sc
+#ifdef MY_ABC_HERE
+					     , NULL
+#endif /* MY_ABC_HERE */
+					    );
+			if (ret)
+				goto out;
+			if (key.type == BTRFS_EXTENT_ITEM_KEY &&
+			    sc.mode == SC_FIND_SHARED_ROOT &&
+			    backref_check_shared_not_in_sc(&sc)) {
+				ret = BACKREF_NEXT_ITEM;
+				goto out;
+			}
+		}
+	}
+	btrfs_release_path(path);
+
+	ret = add_missing_keys(fs_info, &preftrees, path->skip_locking == 0);
+	if (ret)
+		goto out;
+	WARN_ON(!RB_EMPTY_ROOT(&preftrees.indirect_missing_keys.root.rb_root));
+
+	ret = resolve_indirect_refs(fs_info, path, 0, &preftrees, NULL, &sc,
+				    false
+#ifdef MY_ABC_HERE
+				    , NULL
+#endif /* MY_ABC_HERE */
+				   );
+	if (ret)
+		goto out;
+	WARN_ON(!RB_EMPTY_ROOT(&preftrees.indirect.root.rb_root));
+
+	/*
+	 * This walks the tree of merged and resolved refs. Tree blocks are
+	 * read in as needed. Unique entries are added to the ulist, and
+	 * the list of found roots is updated.
+	 *
+	 * We release the entire tree in one go before returning.
+	 */
+	node = rb_first_cached(&preftrees.direct.root);
+	while (node) {
+		ref = rb_entry(node, struct prelim_ref, rbnode);
+		node = rb_next(&ref->rbnode);
+
+		if (roots && ref->count && ref->root_id && ref->parent == 0) {
+			if (!ulist_search(roots, ref->root_id)) {
+				ret = BACKREF_FOUND_SHARED_ROOT;
+				goto out;
+			}
+			if (counted_root && ref->root_id > *counted_root)
+				*counted_root = ref->root_id;
+		}
+		if (ref->count && ref->parent) {
+			if (ref->level == 0 &&
+			    ref->key_for_search.type == 0 &&
+			    ref->parent == parent_bytenr) {
+				/*
+				 * The reason to add parent_bytenr ==
+				 * ref->parent condition here:
+				 * If the parent bytenr is the smallest bytenr
+				 * among all the full backrefs, and this leaf
+				 * contains four EXTENT_DATA pointing to this
+				 * EXTENT_ITEM. We will go into this check
+				 * shared four times, so only check this
+				 * EXTENT_ITEM for the first time pointing to
+				 * the EXTENT_ITEM in this leaf. Otherwise
+				 * we'll account four times here.
+				 */
+				struct extent_buffer *eb;
+
+				eb = read_tree_block(fs_info, ref->parent, 0,
+						     ref->level, NULL);
+				if (IS_ERR(eb)) {
+					ret = PTR_ERR(eb);
+					goto out;
+				} else if (!extent_buffer_uptodate(eb)) {
+					free_extent_buffer(eb);
+					ret = -EIO;
+					goto out;
+				}
+				btrfs_tree_read_lock(eb);
+				btrfs_set_lock_blocking_read(eb);
+				ret = check_first_ref(eb, bytenr, inum,
+						      offset);
+				btrfs_tree_read_unlock_blocking(eb);
+				free_extent_buffer(eb);
+				if (!ret) {
+					ret = BACKREF_NEXT_ITEM;
+					goto out;
+				}
+			}
+			/*
+			 * When dealing with an EXTENT_ITEM, we only account
+			 * data that is referenced from the lowest block
+			 * bytenr(or smallest offset of smallest inode in the
+			 * largest root id if there's no full backref) to
+			 * avoid counting one extent more than once.
+			 * Therefore, we need to go through check_first_ref
+			 * for every EXTENT_DATA. After passing that, we can
+			 * safely check parent bytenr to skip checking backref
+			 * on parent, which we know is not shared.
+			 */
+			if (!parent_bytenr || ref->parent != parent_bytenr) {
+				ret = ulist_add(refs, ref->parent, 0,
+						GFP_NOFS);
+				if (ret < 0)
+					goto out;
+			}
+		}
+		cond_resched();
+	}
+
+out:
+	btrfs_free_path(path);
+	prelim_release(&preftrees.direct);
+	prelim_release(&preftrees.indirect);
+	prelim_release(&preftrees.indirect_missing_keys);
+	return ret;
+}
+#endif /* MY_ABC_HERE */
 
 static void free_leaf_list(struct ulist *blocks)
 {
@@ -1424,7 +2110,11 @@ int btrfs_find_all_leafs(struct btrfs_trans_handle *trans,
 		return -ENOMEM;
 
 	ret = find_parent_nodes(trans, fs_info, bytenr, time_seq,
-				*leafs, NULL, extent_item_pos, NULL, ignore_offset);
+				*leafs, NULL, extent_item_pos, NULL, ignore_offset
+#ifdef MY_ABC_HERE
+			       , NULL
+#endif /* MY_ABC_HERE */
+			       );
 	if (ret < 0 && ret != -ENOENT) {
 		free_leaf_list(*leafs);
 		return ret;
@@ -1449,7 +2139,11 @@ int btrfs_find_all_leafs(struct btrfs_trans_handle *trans,
 static int btrfs_find_all_roots_safe(struct btrfs_trans_handle *trans,
 				     struct btrfs_fs_info *fs_info, u64 bytenr,
 				     u64 time_seq, struct ulist **roots,
-				     bool ignore_offset)
+				     bool ignore_offset
+#ifdef MY_ABC_HERE
+				     , struct quota_check *qc
+#endif /* MY_ABC_HERE */
+				    )
 {
 	struct ulist *tmp;
 	struct ulist_node *node = NULL;
@@ -1468,7 +2162,20 @@ static int btrfs_find_all_roots_safe(struct btrfs_trans_handle *trans,
 	ULIST_ITER_INIT(&uiter);
 	while (1) {
 		ret = find_parent_nodes(trans, fs_info, bytenr, time_seq,
-					tmp, *roots, NULL, NULL, ignore_offset);
+					tmp, *roots, NULL, NULL, ignore_offset
+#ifdef MY_ABC_HERE
+				       , qc
+#endif /* MY_ABC_HERE */
+				       );
+#ifdef MY_ABC_HERE
+		if (qc && ret == BACKREF_FOUND_ROOT_INO) {
+			ulist_free(tmp);
+			ulist_free(*roots);
+			*roots = NULL;
+			return ret;
+		}
+#endif /* MY_ABC_HERE */
+
 		if (ret < 0 && ret != -ENOENT) {
 			ulist_free(tmp);
 			ulist_free(*roots);
@@ -1496,11 +2203,77 @@ int btrfs_find_all_roots(struct btrfs_trans_handle *trans,
 	if (!trans)
 		down_read(&fs_info->commit_root_sem);
 	ret = btrfs_find_all_roots_safe(trans, fs_info, bytenr,
-					time_seq, roots, ignore_offset);
+					time_seq, roots, ignore_offset
+#ifdef MY_ABC_HERE
+					, NULL
+#endif /* MY_ABC_HERE */
+				       );
 	if (!trans)
 		up_read(&fs_info->commit_root_sem);
 	return ret;
 }
+
+#ifdef MY_ABC_HERE
+static int btrfs_find_root_inode(struct btrfs_trans_handle *trans,
+			u64 time_seq, struct quota_check *qc)
+{
+	struct btrfs_fs_info *fs_info = trans->fs_info;
+	struct ulist *leafs = NULL;
+	struct ulist *roots = NULL;
+	struct ulist_node *ref_node = NULL;
+	struct ulist_iterator ref_uiter;
+	int ret;
+
+	leafs = ulist_alloc(GFP_NOFS);
+	if (!leafs)
+		return -ENOMEM;
+
+	ret = find_parent_nodes(trans, fs_info, qc->bytenr, time_seq,
+				leafs, NULL, NULL,
+				NULL, true, qc);
+	if (ret)
+		goto out;
+
+	ULIST_ITER_INIT(&ref_uiter);
+	while (!ret && (ref_node = ulist_next(leafs, &ref_uiter))) {
+		ret = btrfs_find_all_roots_safe(trans, fs_info, ref_node->val,
+					     time_seq, &roots, true, qc);
+		if (ret >= 0) {
+			ulist_free(roots);
+			roots = NULL;
+		}
+	}
+out:
+	if (ret > 0 && ret != BACKREF_FOUND_ROOT_INO) {
+		/*
+		 * find_parent_nodes might set ret to 1, it's not what
+		 * we want.
+		 */
+		WARN_ON(ret == BACKREF_FOUND_SHARED);
+		ret = 0;
+	}
+	ulist_free(leafs);
+	return ret;
+}
+
+int check_root_inode_ref(struct btrfs_trans_handle *trans,
+			struct quota_check *qc)
+{
+	struct btrfs_fs_info *fs_info = trans->fs_info;
+	struct seq_list tree_mod_seq_elem = SEQ_LIST_INIT(tree_mod_seq_elem);
+	int ret;
+
+	btrfs_get_tree_mod_seq(fs_info, &tree_mod_seq_elem);
+	ret = btrfs_find_root_inode(trans, tree_mod_seq_elem.seq, qc);
+	btrfs_put_tree_mod_seq(fs_info, &tree_mod_seq_elem);
+
+	if (ret > 0) {
+		ret = 1;
+	}
+
+	return ret;
+}
+#endif /* MY_ABC_HERE */
 
 /**
  * btrfs_check_shared - tell us whether an extent is shared
@@ -1526,6 +2299,9 @@ int btrfs_check_shared(struct btrfs_root *root, u64 inum, u64 bytenr,
 	struct seq_list elem = SEQ_LIST_INIT(elem);
 	int ret = 0;
 	struct share_check shared = {
+#ifdef MY_ABC_HERE
+		.mode = SC_FIND_SHARED,
+#endif /* MY_ABC_HERE */
 		.root_objectid = root->root_key.objectid,
 		.inum = inum,
 		.share_count = 0,
@@ -1549,7 +2325,11 @@ int btrfs_check_shared(struct btrfs_root *root, u64 inum, u64 bytenr,
 	ULIST_ITER_INIT(&uiter);
 	while (1) {
 		ret = find_parent_nodes(trans, fs_info, bytenr, elem.seq, tmp,
-					roots, NULL, &shared, false);
+					roots, NULL, &shared, false
+#ifdef MY_ABC_HERE
+				       , NULL
+#endif /* MY_ABC_HERE */
+				       );
 		if (ret == BACKREF_FOUND_SHARED) {
 			/* this is the only condition under which we return 1 */
 			ret = 1;
@@ -1577,6 +2357,72 @@ out:
 	ulist_release(tmp);
 	return ret;
 }
+
+#ifdef MY_ABC_HERE
+static int __btrfs_check_shared_inlist(struct btrfs_fs_info *fs_info,
+				       u64 root_objectid, u64 inum,
+				       u64 file_offset, u64 datao, u64 bytenr,
+				       struct ulist *shared_roots,
+				       u64 parent_bytenr, u64 *owner_id)
+{
+	struct ulist *tmp;
+	struct ulist_node *node = NULL;
+	struct ulist_iterator uiter;
+	int ret = 0;
+
+	tmp = ulist_alloc(GFP_NOFS);
+	if (!tmp)
+		return -ENOMEM;
+
+	ULIST_ITER_INIT(&uiter);
+	while (1) {
+		ret = find_parent_nodes_shared_root(fs_info, root_objectid,
+						    inum, file_offset, datao,
+						    bytenr, shared_roots,
+						    parent_bytenr, owner_id,
+						    tmp);
+		if (ret == BACKREF_NEXT_ITEM ||
+		    ret == BACKREF_FOUND_SHARED_ROOT) {
+			ulist_free(tmp);
+			return ret;
+		}
+		if (ret < 0 && ret != -ENOENT) {
+			ulist_free(tmp);
+			return ret;
+		}
+
+		node = ulist_next(tmp, &uiter);
+		if (!node)
+			break;
+		bytenr = node->val;
+		cond_resched();
+	}
+
+	ulist_free(tmp);
+	return 0;
+}
+
+int btrfs_check_shared_inlist(struct btrfs_fs_info *fs_info,
+			      u64 root_objectid, u64 inum, u64 file_offset,
+			      u64 datao, u64 bytenr,
+			      struct ulist *shared_roots, u64 parent_bytenr,
+			      u64 *owner_id)
+{
+	int ret;
+
+	down_read(&fs_info->commit_root_sem);
+	ret = __btrfs_check_shared_inlist(fs_info, root_objectid, inum,
+					  file_offset, datao, bytenr,
+					  shared_roots, parent_bytenr,
+					  owner_id);
+	up_read(&fs_info->commit_root_sem);
+
+	WARN_ON(ret > 0 && ret != BACKREF_NEXT_ITEM &&
+		ret != BACKREF_FOUND_SHARED_ROOT);
+
+	return ret;
+}
+#endif /* MY_ABC_HERE */
 
 int btrfs_find_one_extref(struct btrfs_root *root, u64 inode_objectid,
 			  u64 start_off, struct btrfs_path *path,
@@ -1925,7 +2771,11 @@ static int iterate_leaf_refs(struct btrfs_fs_info *fs_info,
 			    "ref for %llu resolved, key (%llu EXTEND_DATA %llu), root %llu",
 			    extent_item_objectid, eie->inum,
 			    eie->offset, root);
-		ret = iterate(eie->inum, eie->offset, root, ctx);
+		ret = iterate(eie->inum, eie->offset, root, ctx
+#ifdef MY_ABC_HERE
+			      , eie->extent_type
+#endif /* MY_ABC_HERE */
+			      );
 		if (ret) {
 			btrfs_debug(fs_info,
 				    "stopping iteration for %llu due to ret=%d",
@@ -1986,7 +2836,11 @@ int iterate_extent_inodes(struct btrfs_fs_info *fs_info,
 	while (!ret && (ref_node = ulist_next(refs, &ref_uiter))) {
 		ret = btrfs_find_all_roots_safe(trans, fs_info, ref_node->val,
 						tree_mod_seq_elem.seq, &roots,
-						ignore_offset);
+						ignore_offset
+#ifdef MY_ABC_HERE
+						, NULL
+#endif /* MY_ABC_HERE */
+					       );
 		if (ret)
 			break;
 		ULIST_ITER_INIT(&root_uiter);

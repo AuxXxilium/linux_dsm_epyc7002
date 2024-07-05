@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* Generate assembler source containing symbol information
  *
  * Copyright 2002       by Kai Germaschewski
@@ -265,6 +268,35 @@ static int symbol_in_range(const struct sym_entry *s,
 static int symbol_valid(const struct sym_entry *s)
 {
 	const char *name = sym_name(s);
+
+#if defined(MY_ABC_HERE) || defined(CONFIG_SYNO_RAMDISK_INTEGRITY_CHECK)
+	int i = 0;
+	static const char* const hidden_prefixes[] = {
+		/* libhydrogen */
+		"hydro_",
+		"randombytes_",
+		/* Synology Kexec test
+		 *
+		 * Except syno_kexec_test_init, other symbols will not be exported
+		 * by compiler; but, we add them here to avoid any accident.
+		 */
+		"syno_kexec_test_init",
+		"test_boot_protocol_version",
+		"test_decompression",
+		"test_bootloader",
+		"test_e820_table",
+		"test_setup_data",
+		"remove_decompression_setup_data",
+		NULL
+	};
+
+	for (i = 0; hidden_prefixes[i]; ++i) {
+		if (0 == strncmp(hidden_prefixes[i], name,
+				 strlen(hidden_prefixes[i]))) {
+			return 0;
+		}
+	}
+#endif /* MY_ABC_HERE || CONFIG_SYNO_RAMDISK_INTEGRITY_CHECK */
 
 	/* if --all-symbols is not specified, then symbols outside the text
 	 * and inittext sections are discarded */

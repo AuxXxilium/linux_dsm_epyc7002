@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_TTY_H
 #define _LINUX_TTY_H
@@ -406,6 +409,12 @@ static inline bool tty_throttled(struct tty_struct *tty)
 }
 
 #ifdef CONFIG_TTY
+
+#ifdef MY_ABC_HERE
+extern int syno_ttys_write(const int index, const char* szBuf);
+extern void syno_uart_write(struct tty_port *port, char *buf, int size);
+#endif /* MY_ABC_HERE */
+
 extern void tty_kref_put(struct tty_struct *tty);
 extern struct pid *tty_get_pgrp(struct tty_struct *tty);
 extern void tty_vhangup_self(void);

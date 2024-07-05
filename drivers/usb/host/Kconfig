@@ -160,6 +160,18 @@ config USB_EHCI_ROOT_HUB_TT
 	  This supports the EHCI implementation that's originally
 	  from ARC, and has since changed hands a few times.
 
+if SYNO_LSP_RTD1619B
+config USB_EHCI_RTK
+	tristate "Support for RTK on-chip EHCI USB controller"
+	depends on USB_EHCI_HCD
+	select RTK_USB_RLE0599_PHY
+	help
+	  The Realtek chips are dual-role host/peripheral USB controllers.
+
+	  Enable this option to support this chip in host controller mode.
+	  If unsure, say N.
+
+endif # SYNO_LSP_RTD1619B
 config USB_EHCI_TT_NEWSCHED
 	bool "Improved Transaction Translator scheduling"
 	depends on USB_EHCI_HCD
@@ -429,6 +441,18 @@ config USB_OHCI_HCD
 
 if USB_OHCI_HCD
 
+if SYNO_LSP_RTD1619B
+config USB_OHCI_RTK
+	bool "Support for RTK on-chip OHCI USB controller"
+	depends on USB_OHCI_HCD
+	select RTK_USB_RLE0599_PHY
+	help
+	  The Realtek chips are dual-role host/peripheral USB controllers.
+
+	  Enable this option to support this chip in host controller mode.
+	  If unsure, say N.
+
+endif # SYNO_LSP_RTD1619B
 config USB_OHCI_HCD_OMAP1
 	tristate "OHCI support for OMAP1/2 chips"
 	depends on ARCH_OMAP1

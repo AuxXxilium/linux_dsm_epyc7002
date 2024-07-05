@@ -493,6 +493,15 @@ config HW_RANDOM_OPTEE
 
 	  If unsure, say Y.
 
+if SYNO_LSP_RTD1619B
+config HW_RANDOM_REALTEK_RTD1319
+	tristate "Realtek RTD1319 Random Number Generator support"
+	depends on ARCH_REALTEK
+	default y
+	help
+	  Say Y, if you want to enable random number generator on Realtek platform.
+ 
+endif # SYNO_LSP_RTD1619B
 config HW_RANDOM_NPCM
 	tristate "NPCM Random Number Generator support"
 	depends on ARCH_NPCM || COMPILE_TEST

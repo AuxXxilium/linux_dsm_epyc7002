@@ -271,6 +271,17 @@ config AHCI_QORIQ
 
 	  If unsure, say N.
 
+if SYNO_LSP_RTD1619B
+config AHCI_RTK
+	tristate "Realtek AHCI SATA support"
+	select PHY_RTK_SATA
+	help
+	  This option enables support for Realtek AHCI Serial ATA
+	  controllers.
+
+	  If unsure, say N.
+ 
+endif # SYNO_LSP_RTD1619B
 config SATA_FSL
 	tristate "Freescale 3.0Gbps SATA support"
 	depends on FSL_SOC

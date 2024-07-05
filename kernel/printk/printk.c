@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/kernel/printk.c
@@ -2675,6 +2678,29 @@ static int __init keep_bootcon_setup(char *str)
 
 early_param("keep_bootcon", keep_bootcon_setup);
 
+#ifdef MY_ABC_HERE
+static int syno_setup_console(struct console *newcon)
+{
+	int ret = -1;
+	short console_index = 0;
+	struct console *bcon = NULL;
+
+	if (0 == strcmp(newcon->name, "ttyS") && console_index == newcon->index) {
+		console_lock();
+		for_each_console(bcon) {
+			if ((bcon->flags & CON_BOOT) && bcon->deinit)
+				bcon->deinit();
+		}
+		ret = newcon->setup(newcon, NULL);
+		console_unlock();
+	} else {
+		ret = newcon->setup(newcon, NULL);
+	}
+
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
 /*
  * This is called by register_console() to try to match
  * the newly registered console with any of the ones selected
@@ -2792,7 +2818,11 @@ void register_console(struct console *newcon)
 		if (newcon->index < 0)
 			newcon->index = 0;
 		if (newcon->setup == NULL ||
+#ifdef MY_ABC_HERE
+		    syno_setup_console(newcon) == 0) {
+#else /* MY_ABC_HERE */
 		    newcon->setup(newcon, NULL) == 0) {
+#endif /* MY_ABC_HERE */
 			newcon->flags |= CON_ENABLED;
 			if (newcon->device) {
 				newcon->flags |= CON_CONSDEV;
@@ -2887,6 +2917,17 @@ void register_console(struct console *newcon)
 }
 EXPORT_SYMBOL(register_console);
 
+#ifdef MY_ABC_HERE
+static void __ref pci_console_unmap_memory(void __iomem *addr, u32 size)
+{
+	if (!addr || !size)
+		return;
+
+	else
+		early_iounmap(addr, size);
+}
+#endif /* MY_ABC_HERE */
+
 int unregister_console(struct console *console)
 {
 	struct console *con;
@@ -2933,6 +2974,11 @@ int unregister_console(struct console *console)
 	console->flags &= ~CON_ENABLED;
 	console_unlock();
 	console_sysfs_notify();
+#ifdef MY_ABC_HERE
+	if (console->pcimapaddress) {
+		pci_console_unmap_memory(console->pcimapaddress, console->pcimapsize);
+	}
+#endif /* MY_ABC_HERE */
 
 	if (console->exit)
 		res = console->exit(console);

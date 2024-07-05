@@ -408,6 +408,15 @@ config PWM_ROCKCHIP
 	  Generic PWM framework driver for the PWM controller found on
 	  Rockchip SoCs.
 
+if SYNO_LSP_RTD1619B
+config PWM_RTK
+	tristate "Realtek PWM support"
+	depends on ARCH_REALTEK
+	default n
+	help
+	  Say Y, if you want to enable PWM feature on Realtek platform.
+ 
+endif # SYNO_LSP_RTD1619B
 config PWM_SAMSUNG
 	tristate "Samsung PWM support"
 	depends on PLAT_SAMSUNG || ARCH_S5PV210 || ARCH_EXYNOS || COMPILE_TEST

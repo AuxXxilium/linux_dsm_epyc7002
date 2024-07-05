@@ -1,0 +1,163 @@
+menu "MISC Features"
+
+config SYNO_APPARMOR_PATCH
+	bool "Apply Synology patch for AppArmor"
+	default y
+	depends on SECURITY_APPARMOR
+
+config SYNO_OOM_DEBUG
+	bool "Dump modules and occupied memory sizes while OOM"
+	default y
+
+config SYNO_ELEVATE_LOG_LEVEL
+	bool "Elevate log level of kernel log"
+	default y
+
+config SYNO_FORCE_CF9_REBOOT
+	bool "Support CF9 Force reboot"
+	default n
+	depends on (X86_64 && !KGDB_KDB)
+
+config SYNO_OOM_NOTIFICATION
+	bool "Support oom notification"
+	default y
+
+config SYNO_KERNEL_MODULE_REMOVAL_LOGGING
+	bool "add logging about kernel module removal"
+	default y
+
+config SYNO_POWEROFF_INFO_PRINT
+	bool "Show pma1 and pma2 in poweroff procedure"
+	default n
+
+config SYNO_PSTORE
+	bool "Synology enhancement of Pstore mechanism"
+	default n
+	depends on PSTORE
+
+config SYNO_SPECULATION_DEFAULT_OFF
+	bool "Set speculation mitigation to default off"
+	default n
+	depends on PAGE_TABLE_ISOLATION
+
+config SYNO_FIX_RTC_WAKE_AFTER_POWER_FAILURE
+	bool "fix rtc wake after power failure"
+	default y
+	depends on SYNO_X64
+
+config SYNO_PLUGIN_INTERFACE
+        bool "Synology plugin interface for kernel modules"
+        default y
+
+config SYNO_UART_TO_SPI_CONSOLE_LOG
+	tristate "sysfs for trigger uart to spi log out gpio"
+	default n
+	depends on SYNO_LIBS && SYNO_OF
+
+config SYNO_SYSTEM_SHUTDOWN_HOOK
+	bool "customized functions exectuted before system shutdown/reboot"
+	default y
+
+config SYNO_SYNOBIOS_EVENT
+	bool "send event to user space through synobios"
+	default y
+
+config SYNO_KVM_IGNORE_MSRS
+	bool "skip logging of ignored MSRS"
+	default y
+	depends on KVM
+
+config SYNO_DISABLE_AUDITSYSCALL
+	bool "disable kernel always do syscall auditing"
+	default y
+	depends on AUDIT
+
+config SYNO_DEV_ALLOC_PAGES
+	bool "Enable synology dev alloc pages"
+	default y
+
+config SYNO_OUT_OF_RESOURCE_LOG
+	bool "log for out of resource event occurrence"
+	default y
+
+config SYNO_RND_ENTROPY_GEN
+	bool "generate random entropy"
+	default y
+
+config SYNO_ACPI_APEI_AER_DBGMSG
+	bool "Print AER register in APCI APEI log"
+	default y
+	depends on ACPI_APEI_PCIEAER
+
+endmenu #MISC Features
+
+menu "Cgroup"
+
+endmenu #Cgroup
+
+menu "Encryption"
+config SYNO_CRYPTO_REMOVE_X509_DATE_VALIDATION_CONSTRAIN
+	bool "Remove x509 date validation constrain"
+	depends on KEYS
+
+endmenu #Encryption
+
+menu "Udev"
+
+config SYNO_DEPRECATED_UEVENT_ENV
+	bool "Export deprecate uevent environment to userspace"
+	default y
+
+endmenu #Udev
+
+menu "Bios Log"
+
+config SYNO_BIOS_MEMORY_TRAINING_FAILED_LOG
+	bool "Print the MRC postcode if memory training fail happened at last boot up"
+	depends on X86
+	default y
+
+config SYNO_BIOS_MRC_POSTCODE_CMOS_ADDR
+	hex "The address of cmos storing failed MRC postcode"
+	depends on SYNO_BIOS_MEMORY_TRAINING_FAILED_LOG
+	default 0x48
+
+config SYNO_BIOS_ACPI_FPDT
+	bool "ACPI Firmware Performance Data Table(FPDT)"
+	depends on X86_64 && ACPI
+	default y
+
+endmenu #BIOS LOG
+
+menu "ceph"
+
+config SYNO_CEPH_CUSTOMIZED_CRUSH
+	bool "customized crush rule for synology hyper converged platform"
+	depends on CEPH_LIB
+	default y
+
+config SYNO_CEPH_SKIP_CRC
+	bool "skip crc32 calculation"
+	depends on CEPH_LIB
+	default y
+
+config SYNO_CEPH_IDENTIFY_POOL_XATTR_IS_ID
+	bool "identify whether the pool xattr is pool id"
+	depends on CEPH_LIB
+	default y
+
+endmenu #ceph
+
+menu "Synology Protection"
+
+config SYNO_RAMDISK_INTEGRITY_CHECK
+	bool "Confirm the integrity of ramdisk (rd.gz) is correct and prevent to suffer tampering"
+	default y
+	depends on X86_64
+
+config SYNO_KEXEC_TEST
+	bool "Test whether the kernel is booted with Kexec"
+	default y
+	depends on X86_64
+
+endmenu # Synology Protection

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  linux/drivers/mmc/host/sdhci.c - Secure Digital Host Controller Interface driver
@@ -4145,7 +4148,11 @@ int sdhci_setup_host(struct sdhci_host *host)
 
 	override_timeout_clk = host->timeout_clk;
 
+#if defined(MY_DEF_HERE)
+	if (host->version > SDHCI_SPEC_300) {
+#else /* MY_DEF_HERE */
 	if (host->version > SDHCI_SPEC_420) {
+#endif /* MY_DEF_HERE */
 		pr_err("%s: Unknown controller version (%d). You may experience problems.\n",
 		       mmc_hostname(mmc), host->version);
 	}

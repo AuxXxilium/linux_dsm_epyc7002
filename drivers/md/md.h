@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
    md.h : kernel internal structure of the Linux MD driver
@@ -19,6 +22,15 @@
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 #include "md-cluster.h"
+#ifdef MY_ABC_HERE
+#include "syno-md-fast-wakeup.h"
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#include "syno-md-hint.h"
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#include <linux/raid/libmd-report.h>
+#endif /* MY_ABC_HERE */
 
 #define MaxSector (~(sector_t)0)
 
@@ -33,6 +45,51 @@
  */
 #define	MD_FAILFAST	(REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT)
 
+#ifdef MY_ABC_HERE
+/*
+ * We now use crc32 to calculate data hash, it needs u32 buffer size.
+ * The data type of buffer is u8, so here we set size = 4.
+ */
+#define SYNO_MD_HEAL_HASH_SIZE              4
+#define SYNO_MD_HEAL_RECORD_DEFAULT_CNT_MAX 512
+
+enum syno_md_data_correction_log_flags {
+	SYNO_MD_DATA_CORRECTION_LOG_OFF      = 0,
+	SYNO_MD_DATA_CORRECTION_LOG_ALL      = 1,
+	SYNO_MD_DATA_CORRECTION_LOG_ONLY_ERR = 2,
+	SYNO_MD_DATA_CORRECTION_LOG_IN_INFO  = 3,
+};
+
+#ifdef MY_ABC_HERE
+enum syno_md_resync_mode {
+	SYNO_RESYNC_MODE_NORMAL		= 0,
+	SYNO_RESYNC_MODE_REPAIR		= 1,
+	SYNO_RESYNC_MODE_REPLACE	= 2,
+};
+#endif /* MY_ABC_HERE */
+
+#define syno_md_data_correction_print(flag, level, fmt, args...) \
+do { \
+	switch (flag) { \
+	case SYNO_MD_DATA_CORRECTION_LOG_ALL: \
+		printk(level fmt, ##args); \
+		break; \
+	case SYNO_MD_DATA_CORRECTION_LOG_ONLY_ERR: \
+		if (strcmp(level, KERN_ERR) != 0) \
+			break; \
+		printk(level fmt, ##args); \
+		break; \
+	case SYNO_MD_DATA_CORRECTION_LOG_IN_INFO: \
+		pr_info(fmt, ##args); \
+		break; \
+	case SYNO_MD_DATA_CORRECTION_LOG_OFF: \
+		break; \
+	} \
+} while (0)
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#define SYNO_RAID_LEVEL_F1 45
+#endif /* MY_ABC_HERE */
 /*
  * The struct embedded in rdev is used to serialize IO.
  */
@@ -139,6 +196,7 @@ struct md_rdev {
 		sector_t sector;	/* First sector of the PPL space */
 	} ppl;
 };
+
 enum flag_bits {
 	Faulty,			/* device is known to have a fault */
 	In_sync,		/* device is in_sync with rest of array */
@@ -213,6 +271,14 @@ enum flag_bits {
 				 * check if there is collision between raid1
 				 * serial bios.
 				 */
+#ifdef MY_ABC_HERE
+	SynoNonFullInsync,	/* This device is rebuilding in fast rebuilding
+				 * mode, so it's not fully in sync.
+				 */
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	SynoDiskError,		/* device is know to have a fault in degraded state */
+#endif /* MY_ABC_HERE */
 };
 
 static inline int is_badblock(struct md_rdev *rdev, sector_t s, int sectors,
@@ -505,10 +571,87 @@ struct mddev {
 	struct md_cluster_info		*cluster_info;
 	unsigned int			good_device_nr;	/* good device num within cluster raid */
 	unsigned int			noio_flag; /* for memalloc scope API */
+#ifdef MY_ABC_HERE
+	struct page *syno_fast_wakeup_page;
+	struct syno_md_fast_wakeup_info syno_fast_wakeup_info;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#define MD_NOT_CRASHED 0
+#define MD_CRASHED 1
+#define MD_CRASHED_ASSEMBLE 2
+	unsigned char	syno_nodev_and_crashed;     // 1 ==> nodev && crashed. deny make_request
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#define SYNO_MD_AUTO_REMAP_MODE_FORCE_OFF 0
+#define SYNO_MD_AUTO_REMAP_MODE_FORCE_ON 1
+#define SYNO_MD_AUTO_REMAP_MODE_ISMAXDEGRADE 2
+	unsigned char	syno_auto_remap;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	unsigned char syno_sync_debug;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	unsigned char syno_resync_mode;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	int	syno_flush_plug_threshold;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	int	syno_md_thread_fixed_node;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	int	syno_sb_not_clean;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	/**
+	 * syno_rh_tree is used to record rebuild hints,
+	 * hints in syno_rh_tree recorded the virtual address
+	 * of array which could be skipped during rebuilding.
+	 */
+	struct syno_hint_tree syno_rh_tree;
+	/**
+	 * syno_rh_mutex protects:
+	 *  syno_rh_tree,
+	 *  syno_allow_fast_rebuild - Avoid any hint being added
+	 *                            after set it to false.
+	 */
+	struct mutex syno_rh_mutex;
+	sector_t syno_rh_skipped_sectors;
+#ifdef MY_ABC_HERE
+	/**
+	 * syno_sh_tree is used to record scrubbing hints,
+	 * hints in syno_sh_tree record the dev sectors already
+	 * rebuiled.
+	 *
+	 * syno_sh_tree is only used in sync_thread and md_stop,
+	 * so we don't need any lock to protect it.
+	 */
+	struct syno_hint_tree syno_sh_tree;
+	sector_t syno_last_rebuild_start;
+#endif /* MY_ABC_HERE */
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	int               syno_md_data_correction_log_flag;
+	atomic_t          syno_md_heal_record_cnt;
+	int               syno_md_heal_record_cnt_max;
+	char              syno_md_heal_record_cache_name[32];
+	struct kmem_cache *syno_md_heal_record_cache;
+	struct list_head  syno_md_heal_record_list;
+	rwlock_t          record_list_lock;
+#endif /* MY_ABC_HERE */
 
 	bool	has_superblocks:1;
 	bool	fail_last_dev:1;
 	bool	serialize_policy:1;
+#ifdef MY_ABC_HERE
+	bool	syno_has_r0layout_feature:1;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	bool syno_allow_fast_rebuild:1;
+#ifdef MY_ABC_HERE
+	bool syno_enable_requested_resync_hints:1;
+#endif /* MY_ABC_HERE */
+#endif /* MY_ABC_HERE */
 };
 
 enum recovery_flags {
@@ -528,6 +671,9 @@ enum recovery_flags {
 	MD_RECOVERY_ERROR,	/* sync-action interrupted because io-error */
 	MD_RECOVERY_WAIT,	/* waiting for pers->start() to finish */
 	MD_RESYNCING_REMOTE,	/* remote node is running resync thread */
+#ifdef MY_ABC_HERE
+	MD_SYNO_RESHAPE_START,
+#endif /* MY_ABC_HERE */
 };
 
 static inline int __must_check mddev_lock(struct mddev *mddev)
@@ -575,6 +721,14 @@ struct md_personality
 	int (*start)(struct mddev *mddev);
 	void (*free)(struct mddev *mddev, void *priv);
 	void (*status)(struct seq_file *seq, struct mddev *mddev);
+#ifdef MY_ABC_HERE
+	/**
+	 *  for our special purpose, like raid1, there is not exist a
+	 *  easy way for distinguish between hotplug or read/write error
+	 *  on last one disk which is in sync
+	 */
+	void (*syno_error_handler)(struct mddev *mddev, struct md_rdev *rdev);
+#endif /* MY_ABC_HERE */
 	/* error_handler must set ->faulty and clear ->in_sync
 	 * if appropriate, and should abort recovery if needed
 	 */
@@ -606,6 +760,36 @@ struct md_personality
 	void *(*takeover) (struct mddev *mddev);
 	/* Changes the consistency policy of an active array. */
 	int (*change_consistency_policy)(struct mddev *mddev, const char *buf);
+#ifdef MY_ABC_HERE
+	void (*adjust_md_threads_node) (struct mddev *mddev);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	/* align_chunk_addr_virt_to_dev is used to transfer a range of
+	 * virtual addresses of array to the range of addresses of devices.
+	 * The addresses of devices need to be including in specified virtual
+	 * addresses range, so we need to align the chunk sectors.
+	 *
+	 * e.g. 3drive raid5:
+	 *
+	 *  dev_addr +---+---+---+
+	 *     0     | 0 | 1 | P |   a. [0 ,4) in array -> [0, 2) in devices
+	 *           +---+---+---+   b. [1, 5) in array -> [1, 2) in devices
+	 *     1     | 3 | P | 2 |   c. [2, 3) in array -> [1, 1) in devices
+	 *           +---+---+---+      note that [1,1) is illegal interval.
+	 *     2     | P | 4 | 5 |
+	 *           +---+---+---+
+	 *     each chunk represent the range of [X, X+1)
+	 */
+	void (*align_chunk_addr_virt_to_dev)(struct mddev *mddev,
+					     sector_t virt_start,
+					     sector_t virt_end,
+					     sector_t *dev_start,
+					     sector_t *dev_end);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	bool (*syno_is_md_max_degrade)(struct mddev *mddev);
+	void (*syno_set_rdev_auto_remap)(struct mddev *mddev);
+#endif /* MY_ABC_HERE */
 };
 
 struct md_sysfs_entry {
@@ -691,6 +875,9 @@ static inline void safe_put_page(struct page *p)
 	if (p) put_page(p);
 }
 
+#ifdef MY_ABC_HERE
+extern bool syno_is_device_disappear(struct block_device *bdev);
+#endif /* MY_ABC_HERE */
 extern int register_md_personality(struct md_personality *p);
 extern int unregister_md_personality(struct md_personality *p);
 extern int register_md_cluster_operations(struct md_cluster_operations *ops,
@@ -814,5 +1001,63 @@ int md_add_new_disk(struct mddev *mddev, struct mdu_disk_info_s *info);
 int do_md_run(struct mddev *mddev);
 
 extern const struct block_device_operations md_fops;
+#ifdef MY_ABC_HERE
+struct syno_update_sb_work {
+	struct work_struct work;
+	struct mddev *mddev;
+};
 
+extern void syno_raid_rdev_unplug(struct mddev *mddev, dev_t dev);
+extern void syno_update_sb_task(struct work_struct *work);
+#ifdef CONFIG_SCSI
+extern int (*syno_raid_scsi_unplug)(char *szDiskName);
+#endif /* CONFIG_SCSI */
+#ifdef CONFIG_BLK_DEV_NVME
+extern int (*syno_raid_nvme_unplug)(char *szDiskName);
+#endif /* CONFIG_BLK_DEV_NVME */
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+sector_t syno_md_speedup_rebuild(struct mddev *mddev, sector_t sector_nr);
+#ifdef MY_ABC_HERE
+sector_t syno_md_speedup_requested_resync(struct mddev *mddev, sector_t sector_nr);
+#endif /* MY_ABC_HERE */
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+struct syno_md_heal_record {
+	struct list_head record_list;
+	struct bio       *bio;
+	struct mddev     *mddev;
+	u8               u8_last_hash_arr[SYNO_MD_HEAL_HASH_SIZE];
+	int              retry_cnt;
+	int              max_retry_cnt;
+	int              request_cnt; // the number of retry requests at this bio->bi_sector
+	bool             is_hashed; // in case that hash value is equal to initial u8_last_hash_arr
+	sector_t         sector_start;
+	spinlock_t       record_lock;
+};
+
+int syno_md_heal_is_valid_md_stat(struct mddev *mddev);
+int syno_md_heal_record_hash_value(struct syno_md_heal_record *heal_record, struct bio *bio);
+void syno_md_heal_find_and_del_record(struct mddev *mddev, struct bio *bio);
+void syno_md_heal_put_record(struct mddev *mddev, struct syno_md_heal_record *heal_record);
+struct syno_md_heal_record *syno_md_heal_get_record(
+	struct mddev *mddev, struct bio *bio, int max_retry_cnt);
+struct syno_md_heal_record *syno_md_heal_find_record(struct mddev *mddev, struct bio *bio);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+extern int (*funcSYNOSendRaidSyncEvent)(const char *sync_type, int is_sync_finish,
+	    int is_sync_interrupt, int md_minor);
+void syno_report_sync_status(const char *sync_type, int is_sync_finish,
+			     int is_sync_interrupt, int md_minor);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+bool syno_is_disk_error_set(struct mddev *mddev);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+void syno_bdev_remap_mode_set(struct block_device *, unsigned char);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+void syno_auto_remap_report(struct mddev *mddev, sector_t sector, struct block_device *bdev);
+#endif /* MY_ABC_HERE */
 #endif /* _MD_MD_H */

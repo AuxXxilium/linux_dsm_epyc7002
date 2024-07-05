@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2003-2006, Cluster File Systems, Inc, info@clusterfs.com
@@ -4924,6 +4927,47 @@ int ext4_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 
 	return iomap_fiemap(inode, fieinfo, start, len, &ext4_iomap_report_ops);
 }
+
+#ifdef MY_ABC_HERE
+int ext4_rbd_meta_file_mapping(struct inode *inode,
+			struct syno_rbd_meta_ioctl_args *args)
+{
+	int ret;
+	const unsigned char blksize_bits = inode->i_sb->s_blocksize_bits;
+	u64 isize;
+	u64 len;
+
+	if (ext4_has_inline_data(inode)) {
+		printk(KERN_WARNING "rbd meta file must not inline\n");
+		return -EINVAL;
+	}
+	if (!(ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS))) {
+		printk(KERN_WARNING "only support extent inode on rbd meta file\n");
+		return -EOPNOTSUPP;
+	}
+
+	isize = ALIGN_DOWN(inode->i_size, (1ULL << blksize_bits));
+	if (!isize)
+		return -EINVAL;
+	if (args->start >= isize) {
+		args->cnt = 0;
+		args->start = (u64) -1;
+		return 0;
+	}
+	len = isize - args->start;
+	ret = ext4_fiemap_check_ranges(inode, args->start, &len);
+	if (ret)
+		return ret;
+
+	args->cnt = 0;
+	ret = iomap_rbd_meta_map(inode, args, args->start,
+				 len, &ext4_iomap_report_ops);
+
+	if (!ret && args->start != (u64) -1 && args->start >= isize)
+		args->start = (u64) -1;
+	return ret;
+}
+#endif /* MY_ABC_HERE */
 
 int ext4_get_es_cache(struct inode *inode, struct fiemap_extent_info *fieinfo,
 		      __u64 start, __u64 len)

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #include <asm/bitsperlong.h>
 
@@ -862,6 +865,94 @@ __SYSCALL(__NR_process_madvise, sys_process_madvise)
 
 #undef __NR_syscalls
 #define __NR_syscalls 441
+
+/*
+ * start - MY_ABC_HERE
+ * Synology defined system calls are listed here.
+ */
+#define __NR_syno_utime 802
+#define syno_utime(arg1, arg2)                          syscall(__NR_syno_utime, arg1, arg2)
+__SYSCALL(__NR_syno_utime, sys_syno_utime)
+
+#define __NR_syno_archive_bit 803
+#define syno_archive_bit(arg1, arg2)                    syscall(__NR_syno_archive_bit, arg1, arg2)
+__SYSCALL(__NR_syno_archive_bit, sys_syno_archive_bit)
+
+#define __NR_syno_recv_file 804
+#define syno_recv_file(arg1, arg2, arg3, arg4, arg5)    syscall(__NR_syno_recv_file, arg1, arg2, arg3, arg4, arg5)
+__SYSCALL(__NR_syno_recv_file, sys_syno_recv_file)
+
+#ifdef MY_DEF_HERE
+#define __NR_syno_mtd_alloc 805
+#define syno_mtd_alloc(arg1)                            syscall(__NR_syno_mtd_alloc, arg1)
+__SYSCALL(__NR_syno_mtd_alloc, sys_syno_mtd_alloc)
+#endif /* MY_DEF_HERE */
+
+#define __NR_syno_caseless_stat 806
+#define syno_caseless_stat(arg1, arg2)                  syscall(__NR_syno_caseless_stat, arg1, arg2)
+__SYSCALL(__NR_syno_caseless_stat, sys_syno_caseless_stat)
+
+#define __NR_syno_caseless_lstat 807
+#define syno_caseless_lstat(arg1, arg2)                 syscall(__NR_syno_caseless_lstat, arg1, arg2)
+__SYSCALL(__NR_syno_caseless_lstat, sys_syno_caseless_lstat)
+
+#define __NR_syno_ecrypt_name 810
+#define syno_ecrypt_name(arg1, arg2)                    syscall(__NR_syno_ecrypt_name, arg1, arg2)
+__SYSCALL(__NR_syno_ecrypt_name, sys_syno_ecrypt_name)
+
+#define __NR_syno_decrypt_name 811
+#define syno_decrypt_name(arg1, arg2, arg3)             syscall(__NR_syno_decrypt_name, arg1, arg2, arg3)
+__SYSCALL(__NR_syno_decrypt_name, sys_syno_decrypt_name)
+
+#define __NR_syno_acl_check_perm 812
+#define syno_acl_check_perm(arg1, arg2)                 syscall(__NR_syno_acl_check_perm, arg1, arg2)
+__SYSCALL(__NR_syno_acl_check_perm, sys_syno_acl_check_perm)
+
+#define __NR_syno_acl_is_support 813
+#define syno_acl_is_support(arg1, arg2, arg3)           syscall(__NR_syno_acl_is_support, arg1, arg2, arg3)
+__SYSCALL(__NR_syno_acl_is_support, sys_syno_acl_is_support)
+
+#define __NR_syno_acl_get_perm 814
+#define syno_acl_get_perm(arg1, arg2)                   syscall(__NR_syno_acl_get_perm, arg1, arg2)
+__SYSCALL(__NR_syno_acl_get_perm, sys_syno_acl_get_perm)
+
+#define __NR_syno_flush_aggregate 815
+#define syno_flush_aggregate(arg1)                      syscall(__NR_syno_flush_aggregate, arg1)
+__SYSCALL(__NR_syno_flush_aggregate, sys_syno_flush_aggregate)
+
+#define __NR_syno_stat 819
+#define syno_stat(arg1, arg2, arg3)                     syscall(__NR_syno_stat, arg1, arg2, arg3)
+__SYSCALL(__NR_syno_stat, sys_syno_stat)
+
+#define __NR_syno_fstat 820
+#define syno_fstat(arg1, arg2, arg3)                    syscall(__NR_syno_fstat, arg1, arg2, arg3)
+__SYSCALL(__NR_syno_fstat, sys_syno_fstat)
+
+#define __NR_syno_lstat 821
+#define syno_lstat(arg1, arg2, arg3)                    syscall(__NR_syno_lstat, arg1, arg2, arg3)
+__SYSCALL(__NR_syno_lstat, sys_syno_lstat)
+
+#define __NR_syno_notify_init 822
+#define syno_notify_init(arg1)                          syscall(__NR_syno_notify_init, arg1)
+__SYSCALL(__NR_syno_notify_init, sys_syno_notify_init)
+
+#define __NR_syno_notify_add_watch 823
+#define syno_notify_add_watch(arg1, arg2, arg3)         syscall(__NR_syno_notify_add_watch, arg1, arg2, arg3)
+__SYSCALL(__NR_syno_notify_add_watch, sys_syno_notify_add_watch)
+
+#define __NR_syno_notify_remove_watch 824
+#define syno_notify_remove_watch(arg1, arg2, arg3)      syscall(__NR_syno_notify_remove_watch, arg1, arg2, arg3)
+__SYSCALL(__NR_syno_notify_remove_watch, sys_syno_notify_remove_watch)
+
+#define __NR_syno_archive_overwrite 827
+#define syno_archive_overwrite(arg1, arg2)              syscall(__NR_syno_archive_overwrite, arg1, arg2)
+__SYSCALL(__NR_syno_archive_overwrite, sys_syno_archive_overwrite)
+
+#undef __NR_syscalls
+#define __NR_syscalls 828
+/*
+ * end - MY_ABC_HERE
+ */
 
 /*
  * 32 bit systems traditionally used different

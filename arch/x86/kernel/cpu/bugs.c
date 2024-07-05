@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  *  Copyright (C) 1994  Linus Torvalds
@@ -78,6 +81,16 @@ EXPORT_SYMBOL_GPL(mds_idle_clear);
 
 void __init check_bugs(void)
 {
+#ifdef MY_ABC_HERE
+	if (cmdline_find_option_bool(boot_command_line, "SpectreAll_on") ||
+		cmdline_find_option_bool(boot_command_line, "SpectreV2_on") ||
+		cmdline_find_option_bool(boot_command_line, "SSBD_on") ||
+		cmdline_find_option_bool(boot_command_line, "MDS_on") ||
+		cmdline_find_option_bool(boot_command_line, "KPTI_on")) {
+		cpu_mitigations_auto_set();
+	}
+#endif /* MY_ABC_HERE */
+
 	identify_boot_cpu();
 
 	/*
@@ -244,6 +257,14 @@ static void __init mds_select_mitigation(void)
 		mds_mitigation = MDS_MITIGATION_OFF;
 		return;
 	}
+#ifdef MY_ABC_HERE
+	if(cmdline_find_option_bool(boot_command_line, "SpectreAll_on") ||
+			cmdline_find_option_bool(boot_command_line, "MDS_on")) {
+		mds_mitigation = MDS_MITIGATION_FULL;
+	} else {
+		mds_mitigation = MDS_MITIGATION_OFF;
+	}
+#endif /* MY_ABC_HERE */
 
 	if (mds_mitigation == MDS_MITIGATION_FULL) {
 		if (!boot_cpu_has(X86_FEATURE_MD_CLEAR))
@@ -822,8 +843,19 @@ static enum spectre_v2_mitigation_cmd __init spectre_v2_parse_cmdline(void)
 		return SPECTRE_V2_CMD_NONE;
 
 	ret = cmdline_find_option(boot_command_line, "spectre_v2", arg, sizeof(arg));
+#ifdef MY_ABC_HERE
+	if (ret < 0) {
+		if (cmdline_find_option_bool(boot_command_line, "SpectreAll_on") ||
+			cmdline_find_option_bool(boot_command_line, "SpectreV2_on")) {
+			return SPECTRE_V2_CMD_AUTO;
+		} else {
+			return SPECTRE_V2_CMD_NONE;
+		}
+	}
+#else /* MY_ABC_HERE */
 	if (ret < 0)
 		return SPECTRE_V2_CMD_AUTO;
+#endif /* MY_ABC_HERE */
 
 	for (i = 0; i < ARRAY_SIZE(mitigation_options); i++) {
 		if (!match_option(arg, ret, mitigation_options[i].option))
@@ -922,6 +954,13 @@ retpoline_auto:
 specv2_set_mode:
 	spectre_v2_enabled = mode;
 	pr_info("%s\n", spectre_v2_strings[mode]);
+
+#ifdef MY_ABC_HERE
+	if (0 == cmdline_find_option_bool(boot_command_line, "SpectreAll_on") &&
+		0 == cmdline_find_option_bool(boot_command_line, "SpectreV2_on")) {
+		return;
+	}
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * If spectre v2 protection has been enabled, unconditionally fill

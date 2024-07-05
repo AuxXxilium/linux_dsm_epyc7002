@@ -23,3 +23,5 @@ cifs-$(CONFIG_CIFS_FSCACHE) += fscache.o cache.o
 cifs-$(CONFIG_CIFS_SMB_DIRECT) += smbdirect.o
 
 cifs-$(CONFIG_CIFS_ROOT) += cifsroot.o
+
+cifs-$(CONFIG_SYNO_CIFS_SMB_OPS) += synoops.o

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * Originally from efivars.c,
@@ -666,5 +669,9 @@ static int efivars_sysfs_init(void)
 	return 0;
 }
 
+#ifdef MY_ABC_HERE
+subsys_initcall(efivars_sysfs_init);
+#else /* MY_ABC_HERE */
 module_init(efivars_sysfs_init);
+#endif /* MY_ABC_HERE */
 module_exit(efivars_sysfs_exit);

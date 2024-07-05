@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Linux I2C core
@@ -40,6 +43,9 @@
 #include <linux/property.h>
 #include <linux/rwsem.h>
 #include <linux/slab.h>
+#ifdef MY_ABC_HERE
+#include <linux/syno_fdt.h>
+#endif /* MY_ABC_HERE */
 
 #include "i2c-core.h"
 
@@ -105,6 +111,12 @@ static int i2c_device_match(struct device *dev, struct device_driver *drv)
 	/* Then ACPI style match */
 	if (acpi_driver_match_device(dev, drv))
 		return 1;
+
+#ifdef MY_ABC_HERE
+	if (of_root && syno_of_i2c_driver_match_device(dev, drv)) {
+		return 1;
+	}
+#endif /* MY_ABC_HERE */
 
 	driver = to_i2c_driver(drv);
 
@@ -1468,6 +1480,9 @@ static int i2c_register_adapter(struct i2c_adapter *adap)
 
 	/* create pre-declared device nodes */
 	of_i2c_register_devices(adap);
+#ifdef MY_ABC_HERE
+	syno_of_i2c_register_devices(adap);
+#endif /* MY_ABC_HERE */
 	i2c_acpi_install_space_handler(adap);
 	i2c_acpi_register_devices(adap);
 
@@ -1531,6 +1546,11 @@ int i2c_add_adapter(struct i2c_adapter *adapter)
 	struct device *dev = &adapter->dev;
 	int id;
 
+#ifdef MY_ABC_HERE
+	struct device_node *pI2CNode = NULL;
+	int index = 0;
+#endif /* MY_ABC_HERE */
+
 	if (dev->of_node) {
 		id = of_alias_get_id(dev->of_node, "i2c");
 		if (id >= 0) {
@@ -1538,6 +1558,16 @@ int i2c_add_adapter(struct i2c_adapter *adapter)
 			return __i2c_add_numbered_adapter(adapter);
 		}
 	}
+
+#ifdef MY_ABC_HERE
+	if (adapter->nr == -1) {
+		/* -1 means dynamically assign bus id */
+		if (NULL != (pI2CNode = syno_of_i2c_bus_match(dev, &index))) {
+			adapter->nr = index;
+			return __i2c_add_numbered_adapter(adapter);
+		}
+	}
+#endif /* MY_ABC_HERE */
 
 	mutex_lock(&core_lock);
 	id = idr_alloc(&i2c_adapter_idr, adapter,

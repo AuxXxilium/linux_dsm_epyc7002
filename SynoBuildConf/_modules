@@ -1,0 +1,770 @@
+#!/usr/bin/env bash
+# Copyright (c) 2000-2020 Synology Inc. All rights reserved.
+
+# shellcheck disable=SC2034
+
+[ -z "$__INCLUDE_MODULE__" ] || return
+readonly __INCLUDE_MODULE__=defined
+
+mod_crypto="
+    crypto/ansi_cprng.ko
+    crypto/cbc.ko
+    crypto/des_generic.ko
+    crypto/ecb.ko
+    crypto/cmac.ko
+    crypto/hmac.ko
+    crypto/md4.ko
+    crypto/md5.ko
+    crypto/sha256_generic.ko
+    crypto/cts.ko
+    crypto/seqiv.ko
+    crypto/gcm.ko
+    crypto/ccm.ko
+    crypto/ghash-generic.ko
+    crypto/ctr.ko
+    crypto/cryptd.ko
+    crypto/gf128mul.ko
+    crypto/lrw.ko
+    crypto/echainiv.ko
+    crypto/xxhash_generic.ko
+    lib/crypto/libdes.ko
+    lib/crypto/libsha256.ko
+    lib/crypto/libarc4.ko
+    crypto/zstd.ko
+    crypto/lzo-rle.ko
+    crypto/lzo.ko
+"
+
+mod_fs_misc="
+    fs/fat/fat.ko
+    fs/fat/vfat.ko
+    fs/hfsplus/hfsplus.ko
+    drivers/md/dm-flakey.ko
+"
+
+mod_fs_enc="
+    fs/ecryptfs/ecryptfs.ko
+"
+
+mod_fs_fuse="
+    fs/fuse/fuse.ko
+"
+
+mod_fs_iso="
+    drivers/block/loop.ko
+    fs/isofs/isofs.ko
+    fs/udf/udf.ko
+    lib/crc-itu-t.ko
+"
+
+mod_net_bonding="
+    drivers/net/bonding/bonding.ko
+"
+
+mod_appletalk="
+    net/802/psnap.ko
+    net/802/p8022.ko
+    net/appletalk/appletalk.ko
+    net/llc/llc.ko
+"
+
+mod_net_firewall="
+    net/ipv4/netfilter/ip_tables.ko
+    net/netfilter/xt_REDIRECT.ko
+    net/ipv4/netfilter/iptable_filter.ko
+    net/ipv4/netfilter/iptable_nat.ko
+    net/ipv4/netfilter/nf_defrag_ipv4.ko
+    net/netfilter/nf_nat.ko
+    net/netfilter/nf_conntrack.ko
+    net/netfilter/x_tables.ko
+    net/netfilter/xt_multiport.ko
+    net/netfilter/xt_state.ko
+    net/netfilter/xt_tcpudp.ko
+    net/netfilter/xt_LOG.ko
+    net/netfilter/xt_limit.ko
+    net/netfilter/xt_iprange.ko
+    net/netfilter/xt_recent.ko
+    net/netfilter/nfnetlink.ko
+    net/netfilter/nfnetlink_queue.ko
+    net/netfilter/ipset/ip_set.ko
+    net/netfilter/ipset/ip_set_hash_ip.ko
+    net/netfilter/xt_set.ko
+    net/netfilter/xt_nat.ko
+    net/netfilter/xt_TCPMSS.ko
+    net/netfilter/xt_MASQUERADE.ko
+    net/netfilter/xt_mac.ko
+    net/netfilter/xt_policy.ko
+"
+
+mod_ipv6_firewall="
+    net/ipv6/netfilter/ip6_tables.ko
+    net/ipv6/netfilter/ip6table_filter.ko
+    net/ipv6/netfilter/nf_defrag_ipv6.ko
+    net/netfilter/xt_LOG.ko
+"
+
+mod_ipv6="
+    net/ipv6/ipv6.ko
+"
+
+mod_net_ppp="
+    drivers/net/ppp/ppp_async.ko
+    drivers/net/ppp/ppp_generic.ko
+    drivers/net/ppp/ppp_synctty.ko
+    drivers/net/ppp/pppox.ko
+    drivers/net/ppp/pppoe.ko
+    drivers/net/ppp/bsd_comp.ko
+    drivers/net/ppp/ppp_deflate.ko
+    drivers/net/ppp/ppp_mppe.ko
+    drivers/net/ppp/pptp.ko
+    net/l2tp/l2tp_core.ko
+    net/l2tp/l2tp_ppp.ko
+    net/ipv4/gre.ko
+    drivers/net/slip/slhc.ko
+    drivers/tty/n_hdlc.ko
+    lib/crc-ccitt.ko
+"
+
+mod_net_tunnel="
+    drivers/net/tun.ko
+"
+
+mod_iscsi="
+    drivers/scsi/libiscsi.ko
+    drivers/scsi/libiscsi_tcp.ko
+    drivers/scsi/iscsi_tcp.ko
+"
+
+mod_fs_nfsd="
+    fs/nfsd/nfsd.ko
+    fs/nfs_common/grace.ko
+    fs/lockd/lockd.ko
+    net/sunrpc/sunrpc.ko
+    net/sunrpc/auth_gss/auth_rpcgss.ko
+    net/sunrpc/auth_gss/rpcsec_gss_krb5.ko
+"
+
+mod_fs_nfs="
+    fs/nfs/nfs.ko
+    fs/nfs/nfsv2.ko
+    fs/nfs/nfsv3.ko
+    fs/nfs/nfsv4.ko
+    fs/nfs_common/nfs_ssc.ko
+"
+
+mod_fs_cifs="
+    fs/cifs/cifs.ko
+"
+
+mod_scsi="
+    drivers/scsi/sg.ko
+"
+
+mod_dm_snapshot="
+    drivers/md/dm-bufio.ko
+    drivers/md/dm-snapshot.ko
+"
+
+mod_sound="
+    sound/soundcore.ko
+"
+
+mod_usb_printer="
+    drivers/usb/class/usblp.ko
+"
+
+mod_usb="
+    drivers/hid/hid.ko
+    drivers/hid/hid-generic.ko
+    drivers/hid/usbhid/usbhid.ko
+    drivers/usb/host/uhci-hcd.ko
+    drivers/usb/host/xhci-hcd.ko
+    drivers/usb/host/xhci-pci.ko
+    drivers/usb/common/usb-common.ko
+    drivers/usb/core/usbcore.ko
+    drivers/usb/storage/usb-storage.ko
+    drivers/usb/storage/uas.ko
+    drivers/usb/class/cdc-acm.ko
+"
+
+mod_usb_ehci="
+    drivers/usb/host/ehci-hcd.ko
+    drivers/usb/host/ehci-pci.ko
+"
+
+mod_usb_ip="
+    drivers/usb/usbip/usbip-host.ko
+    drivers/usb/usbip/usbip-core.ko
+"
+
+mod_usb_wimax="
+    drivers/net/usb/usbnet.ko
+    drivers/net/usb/cdc_ether.ko
+"
+
+mod_usb_alsa="
+    sound/usb/snd-usbmidi-lib.ko
+    sound/usb/snd-usb-audio.ko
+    sound/core/snd-hwdep.ko
+    sound/core/snd-rawmidi.ko
+    sound/usb/hiface/snd-usb-hiface.ko
+"
+
+mod_usb_rtk="
+    drivers/usb/phy/phy-rtk-usb3.ko
+    drivers/usb/phy/phy-rtk-usb2.ko
+    drivers/usb/dwc3/dwc3_rtk.ko
+    drivers/usb/dwc3/dwc3.ko
+    drivers/usb/host/xhci-plat-hcd.ko
+    drivers/soc/realtek/common/rtk-usb-manager.ko
+"
+
+mod_sound_alsa="
+    sound/core/snd-pcm.ko
+    sound/core/snd-seq-device.ko
+    sound/core/snd.ko
+    sound/core/oss/snd-pcm-oss.ko
+    sound/core/oss/snd-mixer-oss.ko
+    sound/core/snd-timer.ko
+"
+
+mod_docker="
+    drivers/net/macvlan.ko
+    drivers/net/veth.ko
+    drivers/net/vxlan.ko
+    net/bridge/br_netfilter.ko
+    net/ipv4/udp_tunnel.ko
+    net/ipv6/ip6_udp_tunnel.ko
+    net/netfilter/xt_addrtype.ko
+    net/netfilter/xt_conntrack.ko
+    fs/aufs/aufs.ko
+    fs/overlayfs/overlay.ko
+"
+
+mod_raid="
+    drivers/md/dm-mod.ko
+    drivers/md/dm-raid.ko
+    drivers/md/linear.ko
+    drivers/md/raid0.ko
+    drivers/md/raid10.ko
+    drivers/md/raid456.ko
+    lib/raid6/raid6_pq.ko
+    crypto/async_tx/async_tx.ko
+    crypto/async_tx/async_memcpy.ko
+    crypto/async_tx/async_xor.ko
+    crypto/async_tx/async_pq.ko
+    crypto/async_tx/async_raid6_recov.ko
+    crypto/xor.ko
+"
+
+mod_ipv6_tunnel="
+    net/ipv4/ip_tunnel.ko
+    net/ipv4/tunnel4.ko
+    net/ipv6/sit.ko
+"
+
+mod_net_filter="
+    net/netfilter/nfnetlink.ko
+    net/netfilter/nfnetlink_queue.ko
+    net/netfilter/xt_NFQUEUE.ko
+"
+
+mod_cpufreq="
+    drivers/cpufreq/acpi-cpufreq.ko
+    drivers/cpufreq/cpufreq_performance.ko
+    drivers/cpufreq/cpufreq_powersave.ko
+"
+
+mod_net_bridge="
+    net/bridge/bridge.ko
+    net/802/stp.ko
+"
+
+mod_net_tc="
+    net/sched/sch_htb.ko
+    net/sched/sch_sfq.ko
+    net/sched/cls_fw.ko
+    net/sched/sch_netem.ko
+    net/netfilter/xt_mark.ko
+    net/ipv4/netfilter/iptable_mangle.ko
+    net/ipv6/netfilter/ip6table_mangle.ko
+    net/sched/cls_u32.ko
+"
+
+mod_net_fw_security="
+    net/netfilter/nf_conntrack_pptp.ko
+    net/ipv4/netfilter/nf_nat_pptp.ko
+"
+
+mod_net_vlan="
+    net/8021q/8021q.ko
+"
+
+mod_net_ipsec="
+    crypto/authenc.ko
+    crypto/authencesn.ko
+    net/ipv4/ah4.ko
+    net/ipv4/esp4.ko
+    net/ipv4/ipcomp.ko
+    net/ipv4/xfrm4_tunnel.ko
+    net/ipv4/tunnel4.ko
+    net/ipv4/udp_tunnel.ko
+    net/ipv4/xfrm4_tunnel.ko
+    net/xfrm/xfrm_algo.ko
+    net/xfrm/xfrm_user.ko
+    net/xfrm/xfrm_ipcomp.ko
+    net/ipv6/ah6.ko
+    net/ipv6/esp6.ko
+    net/ipv6/ipcomp6.ko
+    net/ipv6/xfrm6_tunnel.ko
+    net/ipv6/tunnel6.ko
+    net/ipv6/ip6_udp_tunnel.ko
+    net/ipv6/xfrm6_tunnel.ko
+    net/key/af_key.ko
+"
+
+mod_zram="
+    drivers/block/zram/zram.ko
+"
+mod_vaapi="
+    drivers/gpu/drm/drm.ko
+    arch/x86/video/fbdev.ko
+    drivers/video/fbdev/core/fb.ko
+    drivers/video/fbdev/core/fb_sys_fops.ko
+    drivers/video/fbdev/core/sysimgblt.ko
+    drivers/video/fbdev/core/sysfillrect.ko
+    drivers/video/fbdev/core/syscopyarea.ko
+    drivers/gpu/drm/drm_kms_helper.ko
+    drivers/video/fbdev/core/cfbcopyarea.ko
+    drivers/video/fbdev/core/cfbimgblt.ko
+    drivers/video/fbdev/core/cfbfillrect.ko
+    drivers/acpi/button.ko
+    drivers/video/backlight/backlight.ko
+    drivers/acpi/video.ko
+    drivers/gpu/drm/i915/i915.ko
+    arch/x86/platform/intel/iosf_mbi.ko
+    drivers/gpu/drm/drm_panel_orientation_quirks.ko
+"
+
+mod_kvm="
+    virt/lib/irqbypass.ko
+    arch/x86/kvm/kvm.ko
+    arch/x86/kvm/kvm-intel.ko
+    drivers/pci/pci-stub.ko
+"
+
+mod_vfio="
+    drivers/vfio/vfio.ko
+    drivers/vfio/vfio_iommu_type1.ko
+    drivers/vfio/pci/vfio-pci.ko
+    drivers/vfio/vfio_virqfd.ko
+"
+
+mod_net_openvswitch="
+    net/openvswitch/openvswitch.ko
+    net/mpls/mpls_gso.ko
+    net/nsh/nsh.ko
+"
+
+mod_usb_serial="
+    drivers/usb/serial/usbserial.ko
+    drivers/usb/serial/ftdi_sio.ko
+"
+
+mod_led_lp3943="
+    drivers/leds/leds-lp3943.ko
+"
+
+mod_led_atmega1608="
+    drivers/leds/leds-atmega1608.ko
+"
+
+mod_led_atmega1608_seg7="
+    drivers/leds/leds-atmega1608-seg7.ko
+"
+
+mod_i2c="
+    drivers/i2c/algos/i2c-algo-bit.ko
+"
+
+mod_fs_btrfs_cp="
+    fs/syno_cache_protection/syno_cache_protection.ko
+"
+
+mod_fs_btrfs="
+    fs/btrfs/btrfs.ko
+    lib/zstd/zstd_compress.ko
+"
+
+mod_crypto_intel="
+    crypto/crypto_simd.ko
+    arch/x86/crypto/glue_helper.ko
+    arch/x86/crypto/aesni-intel.ko
+"
+
+mod_hwmon_disk_pwctl="
+    drivers/hwmon/syno_hddmon.ko
+"
+
+mod_virtio="
+    drivers/block/virtio_blk.ko
+    drivers/char/virtio_console.ko
+    drivers/char/hw_random/virtio-rng.ko
+    drivers/net/virtio_net.ko
+    drivers/net/net_failover.ko
+    drivers/scsi/virtio_scsi.ko
+    drivers/virtio/virtio.ko
+    drivers/virtio/virtio_balloon.ko
+    drivers/virtio/virtio_mmio.ko
+    drivers/virtio/virtio_pci.ko
+    drivers/virtio/virtio_ring.ko
+    net/9p/9pnet_virtio.ko
+    net/core/failover.ko
+"
+
+mod_dca="
+    drivers/dca/dca.ko
+"
+
+mod_hwmon_adt="
+    drivers/hwmon/adt7475.ko
+"
+
+mod_net_console="
+    drivers/net/netconsole.ko
+"
+
+mod_ntb="
+    drivers/ntb/ntb.ko
+    drivers/ntb/hw/intel/ntb_hw_intel.ko
+    drivers/ntb/ntb_transport.ko
+    drivers/net/ntb_netdev.ko
+"
+
+mod_ntb_brd="
+    drivers/block/ntb_brd.ko
+"
+
+mod_docker_ingress="
+    net/netfilter/ipvs/ip_vs.ko
+    net/netfilter/ipvs/ip_vs_rr.ko
+    net/netfilter/xt_ipvs.ko
+"
+
+mod_scsi_fc="\
+    drivers/scsi/scsi_transport_fc.ko
+    drivers/scsi/libfc/libfc.ko
+"
+
+mod_acpi="\
+    drivers/acpi/button.ko
+"
+
+mod_dm_multipath="\
+    drivers/md/dm-multipath.ko
+    drivers/md/dm-round-robin.ko
+    drivers/md/dm-queue-length.ko
+    drivers/md/dm-service-time.ko
+"
+
+mod_fc="\
+	drivers/scsi/scsi_transport_fc.ko
+	drivers/scsi/libfc/libfc.ko
+"
+
+mod_bnx2x="\
+	drivers/net/ethernet/emulex/benet/be2net.ko
+"
+
+mod_cpufreq_rtk="
+    drivers/cpufreq/cpufreq_performance.ko
+    drivers/cpufreq/cpufreq_powersave.ko
+"
+
+mod_dm_crypt="\
+	drivers/md/dm-crypt.ko
+	crypto/essiv.ko
+"
+
+mod_ceph="\
+    drivers/block/rbd.ko \
+    net/ceph/libceph.ko \
+    fs/ceph/ceph.ko \
+"
+
+declare -A _mapping_idx=(
+    [KVMX64]=2
+    [GEMINILAKE]=3
+    [V1000]=4
+    [BROADWELL]=5
+    [BROADWELLNK]=6
+    [BROADWELLNTB]=7
+    [BROADWELLNTBAP]=8
+    [DENVERTON]=9
+    [APOLLOLAKE]=10
+    [REALTEK_RTD1296]=11
+    [PURLEY]=12
+    [MARVELL_ARMADA37XX]=13
+    [COFFEELAKE]=14
+    [NEXTKVMX64]=15
+    [REALTEK_RTD1619]=16
+    [SKYLAKED]=17
+    [KVMCLOUD]=18
+    [REALTEK_RTD1619B]=19
+    [ICELAKED]=20
+    [EPYC7002]=21
+    [EPYC7002SOFS]=22
+    [V1000SOFS]=23
+    [KVMX64SOFS]=24
+    [RYZEN5K]=25
+    [EPYC7003NTB]=26
+    [KVMX64V2]=27
+)
+
+_mapping="
+# Please add modules-platform mappings in this array map
+# Platform aliases:
+# KVM: KVMX64
+# GML: GEMINILAKE
+# V1K: V1000
+# BRW: BROADWELL
+# BRN: BROADWELLNK
+# BNT: BROADWELLNTB
+# BAP: BROADWELLNTBAP
+# DNV: DENVERTON
+# APL: APOLLOLAKE
+# R96: REALTEK_RTD1296
+# PUR: PURLEY
+# A37: MARVELL_ARMADA37XX
+# CFL: COFFEELAKE
+# NXT: NEXTKVMX64
+# R19: REALTEK_RTD1619
+# SKL: SKYLAKED
+# KCL: KVMCLOUD
+# ICXD: ICELAKED
+# EPC2: EPYC7002
+# EPSO: EPYC7002SOFS
+# VSO:  V1000SOFS
+# KVSO: KVMX64SOFS
+# R5K: RYZEN5K
+# EPC3N: EPYC7003NTB
+# KV2: KVMX64V2
+
+# Modules               KVM GML V1K BRW BRN BNT BAP DNV APL R96 PUR A37 CFL NXT R19 SKL KCL R19B ICXD EPC2 EPSO VSO KVSO R5K EPC3N KV2
+mod_crypto              o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_crypto_intel        o   o   o   o   o   o   o   o   o   x   o   x   o   o   x   o   o   x    o    o    o    o   o    o   o     o
+mod_fs_misc             o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_fs_enc              o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_fs_fuse             o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_fs_iso              o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_fs_nfsd             o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_fs_nfs              o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_fs_cifs             o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_fs_btrfs            o   o   o   o   o   o   o   o   o   o   o   x   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_fs_btrfs_cp         x   x   x   x   x   x   o   x   x   x   x   x   x   x   x   x   x   x    x    x    x    x   x    x   x     x
+mod_appletalk           o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_net_bonding         o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_net_firewall        o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_net_ppp             o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_net_tunnel          o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_net_filter          o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_net_bridge          o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_net_tc              o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_net_fw_security     o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_net_vlan            o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_net_ipsec           o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_net_openvswitch     o   o   o   o   o   o   o   o   o   x   o   o   o   o   x   o   o   x    o    o    o    o   o    o   o     o
+mod_net_console         x   o   o   o   o   x   x   o   o   x   o   o   o   x   x   o   x   x    o    o    o    o   x    o   o     x # XXX: need review ??
+mod_ipv6                o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_ipv6_firewall       o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_ipv6_tunnel         o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_iscsi               o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_scsi                o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_scsi_fc             x   x   x   o   o   o   x   x   x   x   o   x   x   x   x   x   x   x    o    o    o    x   x    o   o     x
+mod_sound               o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_sound_alsa          o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_raid                o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o
+mod_cpufreq             o   o   o   o   o   o   o   o   o   x   o   x   o   o   x   o   o   x    o    o    o    o   o    o   o     o
+mod_zram                o   o   o   o   o   o   o   o   o   o   o   o   o   o   x   o   o   x    o    o    o    o   o    o   o     o # XXX: why not installed in REALTEK_RTD1619 ??
+mod_vaapi               x   o   x   x   x   x   x   x   o   x   x   x   x   x   x   x   x   x    x    x    x    o   x    x   x     x
+mod_kvm                 x   o   x   o   o   o   o   o   o   x   o   x   o   o   x   o   x   x    x    x    x    o   x    x   x     x
+mod_virtio              o   x   x   x   x   x   x   x   x   x   x   x   x   o   x   x   o   x    x    x    x    x   o    x   x     o
+
+# Modules               KVM GML V1K BRW BRN BNT BAP DNV APL R96 PUR A37 CFL NXT R19 SKL KCL R19B ICXD EPC2 EPSO VSO KVSO R5k EPC3N KV2
+mod_usb                 o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   x   o    o    o    o    o   o    o   o     o
+mod_usb_printer         o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   x   o    o    o    o    o   o    o   o     o
+mod_usb_ehci            o   o   o   x   x   o   o   o   o   o   o   o   o   o   o   o   x   o    o    o    o    o   o    o   o     o # XXX: not consistent in broadwell/kvm series ??
+mod_usb_ip              o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   x   o    o    o    o    o   o    o   o     o
+mod_usb_wimax           o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   x   o    o    o    o    o   o    o   o     o # deprecated
+mod_usb_serial          o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   x   o    o    o    o    o   o    o   o     o
+mod_usb_alsa            o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   x   o    o    o    o    o   o    o   o     o
+mod_led_lp3943          x   o   o   o   o   o   o   o   o   x   o   x   o   x   x   x   x   x    x    x    x    o   x    x   x     x # XXX: need review ??
+mod_led_atmega1608      x   x   o   x   x   x   x   x   x   x   o   x   x   x   x   x   x   x    o    o    o    o   x    o   o     x
+mod_led_atmega1608_seg7 x   x   o   x   x   x   x   x   x   x   o   x   x   x   x   x   x   x    o    o    o    o   x    o   x     x
+mod_vfio                x   o   o   o   o   o   x   o   o   x   o   x   o   o   x   o   x   x    o    o    o    o   o    o   o     x # XXX: need review ??
+mod_i2c                 o   o   x   o   o   o   o   o   o   x   o   x   o   o   x   o   x   x    o    o    o    x   o    o   o     o
+mod_hwmon_adt           x   x   o   o   o   o   o   x   x   x   x   x   o   x   x   x   x   x    o    o    o    o   x    o   o     x
+mod_hwmon_disk_pwctl    x   o   o   o   o   o   o   o   o   o   x   o   o   x   o   x   x   o    x    x    x    o   x    x   x     x # XXX: need review ??
+mod_dca                 x   x   x   o   o   o   o   x   x   x   x   x   o   x   x   x   x   x    o    x    x    x   x    x   x     x
+mod_ntb                 x   x   x   x   x   o   o   x   x   x   x   x   x   x   x   x   x   x    x    x    x    x   x    x   x     x
+mod_ntb_brd             x   x   x   x   x   x   o   x   x   x   x   x   x   x   x   x   x   x    x    x    x    x   x    x   x     x
+mod_docker              o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o # deprecated
+mod_docker_ingress      o   o   o   o   o   o   o   o   o   x   o   x   o   o   x   o   o   o    o    o    o    o   o    o   o     o
+mod_acpi                x   x   x   x   x   x   x   x   x   x   x   x   x   x   x   x   o   x    x    x    x    x   x    x   x     x
+mod_dm_multipath        x   x   x   x   x   x   x   x   x   x   o   x   x   x   x   x   x   x    x    x    x    x   x    x   x     x
+mod_dm_snapshot         o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o   o    o    o    o    o   o    o   o     o # deprecated
+mod_fc                  x   x   x   o   o   o   o   x   x   x   o   x   x   x   x   x   x   x    o    o    o    x   x    o   o     x
+mod_usb_rtk             x   x   x   x   x   x   x   x   x   x   x   x   x   x   x   x   x   o    x    x    x    x   x    x   x     x
+mod_bnx2x               o   x   x   o   x   x   x   x   x   x   o   x   x   x   x   x   x   x    o    o    o    x   o    o   o     o
+mod_cpufreq_rtk         x   x   x   x   x   x   x   x   x   x   x   x   x   x   x   x   x   o    x    x    x    x   x    x   x     x
+mod_dm_crypt            o   o   o   o   o   o   o   o   o   x   o   x   o   o   x   o   o   x    o    o    o    o   o    o   o     o
+mod_ceph                x   x   x   x   x   x   x   x   x   x   x   x   x   x   x   x   x   x    x    x    o    o   o    x   x     x
+"
+
+modules_customized()
+{
+    local _modules
+
+    case "$BUILD_TARGET" in
+        KVMX64)
+            _modules="
+                drivers/i2c/busses/i2c-i801.ko
+                drivers/dma/ioat/ioatdma.ko
+                drivers/hwmon/adt7475.ko
+                drivers/dca/dca.ko
+                drivers/net/mdio.ko
+                lib/zlib_deflate/zlib_deflate.ko
+                drivers/net/ethernet/intel/igbvf/igbvf.ko
+            "
+            ;;
+        KVMX64SOFS)
+            _modules="
+                drivers/i2c/busses/i2c-i801.ko
+                drivers/dma/ioat/ioatdma.ko
+                drivers/hwmon/adt7475.ko
+                drivers/dca/dca.ko
+                drivers/net/mdio.ko
+                lib/zlib_deflate/zlib_deflate.ko
+                drivers/net/ethernet/intel/igbvf/igbvf.ko
+            "
+            ;;
+        KVMX64V2)
+            _modules="
+                drivers/i2c/busses/i2c-i801.ko
+                drivers/dma/ioat/ioatdma.ko
+                drivers/hwmon/adt7475.ko
+                drivers/dca/dca.ko
+                drivers/net/mdio.ko
+                lib/zlib_deflate/zlib_deflate.ko
+                drivers/net/ethernet/intel/igbvf/igbvf.ko
+            "
+            ;;
+        BROADWELL)
+            _modules="
+                drivers/net/mdio.ko
+            "
+            ;;
+        PURLEY)
+            _modules="
+                drivers/dma/ioat/ioatdma.ko
+                drivers/hwmon/adt7475.ko
+                drivers/dca/dca.ko
+                drivers/scsi/mpt3sas/mpt3sas.ko
+            "
+            ;;
+        GEMINILAKE)
+            ;;
+        V1000)
+            _modules="
+                drivers/hwmon/hwmon-vid.ko
+                virt/lib/irqbypass.ko
+                arch/x86/kvm/kvm.ko
+                arch/x86/kvm/kvm-amd.ko
+                drivers/pci/pci-stub.ko
+                drivers/hwmon/syno_smbus_hddmon.ko
+                drivers/net/phy/marvell10g.ko
+                drivers/net/ethernet/amd/xgbe/amd-xgbe.ko
+                lib/synolib/syno_uart2spi_logout.ko
+            "
+            ;;
+        V1000SOFS)
+            _modules="
+                drivers/hwmon/hwmon-vid.ko
+                virt/lib/irqbypass.ko
+                arch/x86/kvm/kvm.ko
+                arch/x86/kvm/kvm-amd.ko
+                drivers/pci/pci-stub.ko
+                drivers/hwmon/syno_smbus_hddmon.ko
+                drivers/net/phy/marvell10g.ko
+                drivers/net/ethernet/amd/xgbe/amd-xgbe.ko
+                lib/synolib/syno_uart2spi_logout.ko
+            "
+            ;;
+        REALTEK_RTD1619B)
+            _modules="
+                arch/arm64/lib/xor-neon.ko
+            "
+            ;;
+        ICELAKED)
+            ;;
+        EPYC7002)
+            _modules="
+	        drivers/hwmon/hwmon-vid.ko
+		virt/lib/irqbypass.ko
+		arch/x86/kvm/kvm.ko
+		arch/x86/kvm/kvm-amd.ko
+		drivers/pci/pci-stub.ko
+            "
+            ;;
+        EPYC7002SOFS)
+            _modules="
+	        drivers/hwmon/hwmon-vid.ko
+		virt/lib/irqbypass.ko
+		arch/x86/kvm/kvm.ko
+		arch/x86/kvm/kvm-amd.ko
+		drivers/pci/pci-stub.ko
+            "
+            ;;
+        RYZEN5K)
+            _modules="
+                drivers/hwmon/hwmon-vid.ko
+            "
+            ;;
+        EPYC7003NTB)
+	    _modules="
+		drivers/hwmon/hwmon-vid.ko
+		virt/lib/irqbypass.ko
+		arch/x86/kvm/kvm.ko
+		arch/x86/kvm/kvm-amd.ko
+		drivers/pci/pci-stub.ko
+		drivers/ntb/ntb.ko
+		drivers/ntb/hw/amd/ntb_hw_amd.ko
+		drivers/ntb/ntb_transport.ko
+		drivers/net/ntb_netdev.ko
+	    "
+	    ;;
+    esac
+
+    printf "%s" "$_modules"
+}
+
+module_list()
+{
+    local _line _modules _install _idx
+
+    while read -r _line; do
+        [[ "$_line" =~ ^[[:blank:]]*(#.*)?$ ]] && continue
+
+        _idx="${_mapping_idx[${BUILD_TARGET:?undefined}]}"
+        _modules="$(echo "$_line" | awk "{ print \$1 }")"
+        _install="$(echo "$_line" | awk "{ print \$$_idx }")"
+
+        # shellcheck disable=SC2086
+        [ "$_install" = "o" ] && printf "%s " ${!_modules}
+    done <<< "$_mapping"
+
+    while read -r _line; do
+        printf "%s " "$_line"
+    done <<< "$(modules_customized)"
+}
+

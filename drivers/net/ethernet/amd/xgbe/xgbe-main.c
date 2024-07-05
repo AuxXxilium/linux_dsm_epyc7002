@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  * AMD 10Gb Ethernet driver
  *
@@ -387,7 +390,11 @@ int xgbe_config_netdev(struct xgbe_prv_data *pdata)
 	netdev->max_mtu = XGMAC_JUMBO_PACKET_MTU;
 
 	/* Use default watchdog timeout */
+#ifdef MY_DEF_HERE
+	netdev->watchdog_timeo = 10 * HZ;
+#else /* MY_DEF_HERE */
 	netdev->watchdog_timeo = 0;
+#endif /* MY_DEF_HERE */
 
 	xgbe_init_rx_coalesce(pdata);
 	xgbe_init_tx_coalesce(pdata);

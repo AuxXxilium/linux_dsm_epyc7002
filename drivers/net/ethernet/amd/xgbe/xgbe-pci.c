@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  * AMD 10Gb Ethernet driver
  *
@@ -118,6 +121,9 @@
 #include <linux/device.h>
 #include <linux/pci.h>
 #include <linux/log2.h>
+#ifdef MY_DEF_HERE
+#include <linux/mdio.h>
+#endif /* MY_DEF_HERE */
 
 #include "xgbe.h"
 #include "xgbe-common.h"
@@ -473,6 +479,7 @@ static const struct xgbe_version_data xgbe_v2a = {
 	.tx_desc_prefetch		= 5,
 	.rx_desc_prefetch		= 5,
 	.an_cdr_workaround		= 1,
+	.an_kr_workaround		= 1,
 };
 
 static const struct xgbe_version_data xgbe_v2b = {
@@ -488,6 +495,7 @@ static const struct xgbe_version_data xgbe_v2b = {
 	.tx_desc_prefetch		= 5,
 	.rx_desc_prefetch		= 5,
 	.an_cdr_workaround		= 1,
+	.an_kr_workaround		= 1,
 };
 
 static const struct pci_device_id xgbe_pci_table[] = {
@@ -500,6 +508,24 @@ static const struct pci_device_id xgbe_pci_table[] = {
 };
 MODULE_DEVICE_TABLE(pci, xgbe_pci_table);
 
+#if defined(MY_DEF_HERE)
+static void syno_xgbe_pci_shutdown(struct pci_dev *pdev)
+{
+	struct xgbe_prv_data *pdata = pci_get_drvdata(pdev);
+	struct net_device *netdev = pdata->netdev;
+	int ret = 0;
+
+	if (pdata->wol_flag & WAKE_MAGIC) {
+		pdata->phy_if.phy_impl.wol_enable(pdata);
+	} else {
+		if (netif_running(netdev))
+			ret = xgbe_powerdown(netdev, XGMAC_DRIVER_CONTEXT);
+
+		pdata->phy_if.phy_stop(pdata);
+	}
+}
+#endif /* MY_DEF_HERE */
+
 static SIMPLE_DEV_PM_OPS(xgbe_pci_pm_ops, xgbe_pci_suspend, xgbe_pci_resume);
 
 static struct pci_driver xgbe_driver = {
@@ -507,6 +533,9 @@ static struct pci_driver xgbe_driver = {
 	.id_table = xgbe_pci_table,
 	.probe = xgbe_pci_probe,
 	.remove = xgbe_pci_remove,
+#if defined(MY_DEF_HERE)
+	.shutdown = syno_xgbe_pci_shutdown,
+#endif /* MY_DEF_HERE */
 	.driver = {
 		.pm = &xgbe_pci_pm_ops,
 	}

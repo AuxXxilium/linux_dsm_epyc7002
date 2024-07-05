@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #include <linux/mount.h>
 #include <linux/seq_file.h>
@@ -73,6 +76,10 @@ struct mount {
 	struct fsnotify_mark_connector __rcu *mnt_fsnotify_marks;
 	__u32 mnt_fsnotify_mask;
 #endif
+#ifdef MY_ABC_HERE
+	struct fsnotify_mark_connector __rcu *mnt_fsnotify_syno_marks;
+	__u32 mnt_fsnotify_syno_mask;
+#endif /* MY_ABC_HERE */
 	int mnt_id;			/* mount identifier */
 	int mnt_group_id;		/* peer group identifier */
 	int mnt_expiry_mark;		/* true if marked for expiry */

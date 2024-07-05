@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
   FUSE: Filesystem in Userspace
   Copyright (C) 2001-2008  Miklos Szeredi <miklos@szeredi.hu>
@@ -162,6 +165,9 @@ struct fuse_inode {
 	 */
 	struct fuse_inode_dax *dax;
 #endif
+#ifdef MY_ABC_HERE
+	struct timespec64 i_crtime;
+#endif /* MY_ABC_HERE */
 };
 
 /** FUSE inode state bits */
@@ -174,6 +180,18 @@ enum {
 	FUSE_I_SIZE_UNSTABLE,
 	/* Bad inode */
 	FUSE_I_BAD,
+#ifdef MY_ABC_HERE
+	/* Syno archive bit cached */
+	FUSE_I_SYNO_ARCHIVE_BIT_CACHED,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	/* Syno archive version cached */
+	FUSE_I_SYNO_ARCHIVE_VERSION_CACHED,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	/* Syno create time cached */
+	FUSE_I_SYNO_CREATE_TIME_CACHED,
+#endif /* MY_ABC_HERE */
 };
 
 struct fuse_conn;
@@ -263,6 +281,7 @@ struct fuse_args {
 	bool nocreds:1;
 	bool in_pages:1;
 	bool out_pages:1;
+	bool user_pages:1;
 	bool out_argvar:1;
 	bool page_zeroing:1;
 	bool page_replace:1;
@@ -812,9 +831,22 @@ struct fuse_mount {
 	 */
 	struct super_block *sb;
 
+#ifdef MY_ABC_HERE
+	/* In memory syno state */
+	unsigned long syno_state;
+#endif /* MY_ABC_HERE */
+
 	/* Entry on fc->mounts */
 	struct list_head fc_entry;
 };
+
+#ifdef MY_ABC_HERE
+/** syno fs state bits for fuse_mount.syno_state */
+enum {
+	/* Syno archive version cached */
+	FUSE_S_SYNO_ARCHIVE_VERSION_CACHED,
+};
+#endif /* MY_ABC_HERE */
 
 static inline struct fuse_mount *get_fuse_mount_super(struct super_block *sb)
 {

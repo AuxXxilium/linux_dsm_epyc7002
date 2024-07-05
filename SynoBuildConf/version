@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Copyright (c) 2000-2020 Synology Inc. All rights reserved.
+
+make -s kernelversion

@@ -1,0 +1,6 @@
+
+config RTK_HSE
+	bool "Realtek Highspeed Streaming Engine driver"
+	default y if ARCH_REALTEK
+	help
+	  Enable Realtek HSE driver. If unsure, say N.

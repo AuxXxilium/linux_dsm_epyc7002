@@ -202,6 +202,21 @@ config MMC_SDHCI_OF_HLWD
 
 	  If unsure, say N.
 
+if SYNO_LSP_RTD1619B
+config MMC_SDHCI_OF_RTK
+	tristate "SDHCI OF support for the Realtek SoC SDHCI controller"
+	depends on MMC_SDHCI_PLTFM
+	depends on OF
+	select MMC_SDHCI_IO_ACCESSORS
+	help
+	  This selects the Secure Digital Host Controller Interface in
+	  Realtek SoCs.
+
+	  If you have a controller with this interface, say Y or M here.
+
+	  If unsure, say N.
+
+endif # SYNO_LSP_RTD1619B
 config MMC_SDHCI_OF_DWCMSHC
 	tristate "SDHCI OF support for the Synopsys DWC MSHC"
 	depends on MMC_SDHCI_PLTFM
@@ -951,6 +966,39 @@ config MMC_WMT
 	  To compile this driver as a module, choose M here: the
 	  module will be called wmt-sdmmc.
 
+if SYNO_LSP_RTD1619B
+menuconfig MMC_RTK_EMMC
+	tristate "Realtek EMMC host controller support"
+	help
+	  Realtek EMMC host controller support.
+
+config MMC_REALTEK_RTD13XX
+	bool "RTD1319 EMMC host controller support"
+	depends on MMC_RTK_EMMC
+	default n
+	help
+	  RTD1319 SoC family EMMC host controller support.
+
+config MMC_RTK_EMMC_PON
+	bool "Realtek EMMC host driver with GPON feature"
+	depends on MMC_RTK_EMMC && MMC_REALTEK_RTD13XX
+	default n
+	help
+	  Support RealTek EMMC for RTD1319 GPON feature.
+
+config MMC_RTK_EMMC_HW_SEMAPHORE
+	bool "Enable Realtek EMMC host driver hardware semaphore."
+	depends on MMC_RTK_EMMC
+	default n
+	help
+	  Enable Realtek EMMC host driver hardware semaphore.
+
+config MMC_RTK_SDMMC
+	tristate "Realtek SD/MMC host controller support"
+	help
+	  Realtek SD/MMC host controller support.
+
+endif # SYNO_LSP_RTD1619B
 config MMC_USDHI6ROL0
 	tristate "Renesas USDHI6ROL0 SD/SDIO Host Controller support"
 	depends on HAS_DMA

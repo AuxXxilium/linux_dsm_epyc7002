@@ -280,6 +280,16 @@ config SPI_DW_BT1_DIRMAP
 	  time-critical tasks (like the SPI memory operations implemented
 	  in this driver).
 
+if SYNO_LSP_RTD1619B
+config SPI_DW_RTK
+	tristate "Realtek SPI controller based on DW SPI core"
+	depends on ARCH_REALTEK
+	default n
+	help
+	  Driver for the SPI controller core from DesignWare on
+	  Realtek RTD139x, RTD16xx, RTD13xx, or RTD16xxb platform.
+ 
+endif # SYNO_LSP_RTD1619B
 endif
 
 config SPI_DLN2

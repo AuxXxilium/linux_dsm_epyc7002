@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM mmc
@@ -187,6 +190,62 @@ TRACE_EVENT(mmc_request_done,
 		  __entry->hold_retune, __entry->retune_period)
 );
 
+#if defined(MY_DEF_HERE)
+/*
+ * Tracepoint for rtk emmc issue legacy command.
+ */
+TRACE_EVENT(mmc_rtkemmc_legacy_cmd,
+
+        TP_PROTO(u16 blksize, u16 blkcount, unsigned int cmd_idx, unsigned int argu),
+
+        TP_ARGS(blksize, blkcount, cmd_idx, argu),
+
+        TP_STRUCT__entry(
+                __field( u16,           blksize                 )
+                __field( u16,           blkcount                )
+                __field( unsigned int,  cmd_idx                 )
+                __field( unsigned int,  argu                    )
+        ),
+
+        TP_fast_assign(
+                __entry->blksize        = blksize;
+                __entry->blkcount       = blkcount;
+                __entry->cmd_idx        = cmd_idx;
+                __entry->argu           = argu;
+        ),
+
+        TP_printk("blksize=%u blkcount=%u cmd_idx=%u argu=%x",
+                  __entry->blksize,
+                  __entry->blkcount,
+                  __entry->cmd_idx,
+                  __entry->argu)
+);
+
+/*
+ * Tracepoint for rtk emmc legacy interrupt complete.
+ */
+TRACE_EVENT(mmc_rtkemmc_legacy_irq_complete,
+
+        TP_PROTO(u16 normal_interrupt, u16 error_interrupt),
+
+        TP_ARGS(normal_interrupt, error_interrupt),
+
+        TP_STRUCT__entry(
+                __field( u16,   normal_interrupt        )
+                __field( u16,   error_interrupt )
+        ),
+
+        TP_fast_assign(
+                __entry->normal_interrupt       = normal_interrupt;
+                __entry->error_interrupt        = error_interrupt;
+        ),
+
+        TP_printk("normal_interrupt=%x error_interrupt=%x",
+                  __entry->normal_interrupt,
+                  __entry->error_interrupt)
+);
+
+#endif /* MY_DEF_HERE */
 #endif /* _TRACE_MMC_H */
 
 /* This part must be outside protection */

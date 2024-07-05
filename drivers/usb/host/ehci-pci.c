@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * EHCI HCD (Host Controller Driver) PCI Bus Glue.
@@ -39,6 +42,10 @@ static const struct pci_device_id bypass_pci_id_table[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x0811), },
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x0829), },
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0xe006), },
+#ifdef MY_DEF_HERE
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x8c26), },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x8c2d), },
+#endif /* MY_DEF_HERE */
 	{}
 };
 

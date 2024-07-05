@@ -1,0 +1,7 @@
+BUG ID: <Linux Kernel Porting - linux-5.10.x> #590 - Enable CONFIG_DEBUG_INFO_BTF
+Commit Hashes:
+	8493877b58b6f35d643da307ee1ae920b3ddd1d8
+
+BUG ID: <Linux Kernel Porting - linux-5.10.x> #852 - kthread: Fix PF_KTHREAD vs to_kthread() race
+Commit Hashes:
+	709c162ddc835613112bdd2db15b7d04e10c9bbf

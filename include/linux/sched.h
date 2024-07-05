@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_SCHED_H
 #define _LINUX_SCHED_H
@@ -64,6 +67,9 @@ struct signal_struct;
 struct task_delay_info;
 struct task_group;
 struct io_uring_task;
+#ifdef MY_ABC_HERE
+struct work_acct;
+#endif
 
 /*
  * Task state bitmask. NOTE! These bits are also
@@ -1073,6 +1079,11 @@ struct task_struct {
 	kernel_siginfo_t		*last_siginfo;
 
 	struct task_io_accounting	ioac;
+
+#ifdef MY_ABC_HERE
+	struct work_acct                 *workacct;
+#endif
+
 #ifdef CONFIG_PSI
 	/* Pressure stall state */
 	unsigned int			psi_flags;

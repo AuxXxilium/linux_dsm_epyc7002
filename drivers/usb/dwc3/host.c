@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * host.c - DesignWare USB3 DRD Controller Host Glue
@@ -130,4 +133,12 @@ err:
 void dwc3_host_exit(struct dwc3 *dwc)
 {
 	platform_device_unregister(dwc->xhci);
+#if defined(MY_DEF_HERE)
+
+#if 1 // USB_PATCH_BY_RTK
+	dwc->xhci = NULL;
+#endif
+
+
+#endif /* MY_DEF_HERE */
 }

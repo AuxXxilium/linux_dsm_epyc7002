@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/hfsplus/unicode.c
@@ -118,10 +121,15 @@ static u16 *hfsplus_compose_lookup(u16 *p, u16 cc)
 	} while (s <= e);
 	return NULL;
 }
-
+#ifdef MY_ABC_HERE
+static int _hfsplus_uni2asc(struct super_block *sb,
+			    const struct hfsplus_unistr *ustr,
+			    char *astr, int *len_p, bool convert)
+#else /* MY_ABC_HERE */
 int hfsplus_uni2asc(struct super_block *sb,
 		const struct hfsplus_unistr *ustr,
 		char *astr, int *len_p)
+#endif /* MY_ABC_HERE */
 {
 	const hfsplus_unichr *ip;
 	struct nls_table *nls = HFSPLUS_SB(sb)->nls;
@@ -187,6 +195,9 @@ int hfsplus_uni2asc(struct super_block *sb,
 				c0 = 0x2400;
 				break;
 			case '/':
+#ifdef MY_ABC_HERE
+				if (convert)
+#endif /* MY_ABC_HERE */
 				c0 = ':';
 				break;
 			}
@@ -227,6 +238,9 @@ same:
 			cc = 0x2400;
 			break;
 		case '/':
+#ifdef MY_ABC_HERE
+			if (convert)
+#endif /* MY_ABC_HERE */
 			cc = ':';
 			break;
 		default:
@@ -248,13 +262,32 @@ out:
 	*len_p = (char *)op - astr;
 	return res;
 }
+#ifdef MY_ABC_HERE
+int hfsplus_uni2asc(struct super_block *sb,
+		    const struct hfsplus_unistr *ustr,
+		    char *astr, int *len_p)
+{
+	return _hfsplus_uni2asc(sb, ustr, astr, len_p, true);
+}
+int hfsplus_attr_uni2asc(struct super_block *sb,
+			 const struct hfsplus_unistr *ustr, char *astr,
+			 int *len_p)
+{
+	return _hfsplus_uni2asc(sb, ustr, astr, len_p, false);
+}
+#endif /* MY_ABC_HERE */
 
 /*
  * Convert one or more ASCII characters into a single unicode character.
  * Returns the number of ASCII characters corresponding to the unicode char.
  */
+#ifdef MY_ABC_HERE
+static inline int _asc2unichar(struct super_block *sb, const char *astr,
+			       int len, wchar_t *uc, bool convert)
+#else /* MY_ABC_HERE */
 static inline int asc2unichar(struct super_block *sb, const char *astr, int len,
 			      wchar_t *uc)
+#endif /* MY_ABC_HERE */
 {
 	int size = HFSPLUS_SB(sb)->nls->char2uni(astr, len, uc);
 	if (size <= 0) {
@@ -266,11 +299,21 @@ static inline int asc2unichar(struct super_block *sb, const char *astr, int len,
 		*uc = 0;
 		break;
 	case ':':
+#ifdef MY_ABC_HERE
+		if (convert)
+#endif /* MY_ABC_HERE */
 		*uc = '/';
 		break;
 	}
 	return size;
 }
+#ifdef MY_ABC_HERE
+static inline int asc2unichar(struct super_block *sb, const char *astr,
+			      int len, wchar_t *uc)
+{
+	return _asc2unichar(sb, astr, len, uc, true);
+}
+#endif /* MY_ABC_HERE */
 
 /* Decomposes a non-Hangul unicode character. */
 static u16 *hfsplus_decompose_nonhangul(wchar_t uc, int *size)
@@ -343,7 +386,14 @@ static u16 *decompose_unichar(wchar_t uc, int *size, u16 *hangul_buffer)
 
 int hfsplus_asc2uni(struct super_block *sb,
 		    struct hfsplus_unistr *ustr, int max_unistr_len,
-		    const char *astr, int len)
+		    const char *astr, int len
+#ifdef MY_ABC_HERE
+		    , bool convert
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+		    , bool nfc
+#endif /* MY_ABC_HERE */
+		    )
 {
 	int size, dsize, decompose;
 	u16 *dstr, outlen = 0;
@@ -352,9 +402,17 @@ int hfsplus_asc2uni(struct super_block *sb,
 
 	decompose = !test_bit(HFSPLUS_SB_NODECOMPOSE, &HFSPLUS_SB(sb)->flags);
 	while (outlen < max_unistr_len && len > 0) {
+#ifdef MY_ABC_HERE
+		size = _asc2unichar(sb, astr, len, &c, convert);
+#else /* MY_ABC_HERE */
 		size = asc2unichar(sb, astr, len, &c);
+#endif /* MY_ABC_HERE */
 
+#ifdef MY_ABC_HERE
+		if (decompose && !nfc)
+#else
 		if (decompose)
+#endif /* MY_ABC_HERE */
 			dstr = decompose_unichar(c, &dsize, dhangul);
 		else
 			dstr = NULL;
@@ -375,6 +433,30 @@ int hfsplus_asc2uni(struct super_block *sb,
 		return -ENAMETOOLONG;
 	return 0;
 }
+
+#ifdef MY_ABC_HERE
+int hfsplus_attr_asc2uni(struct super_block *sb, struct hfsplus_unistr *ustr,
+			 int max_unistr_len, const char *astr, int len)
+{
+	return hfsplus_asc2uni(sb, ustr, max_unistr_len, astr, len, false
+#ifdef MY_ABC_HERE
+			       , false
+#endif /* MY_ABC_HERE */
+			       );
+}
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+int hfsplus_nfc_asc2uni(struct super_block *sb, struct hfsplus_unistr *ustr,
+			int max_unistr_len, const char *astr, int len,
+			bool nfc)
+{
+	return hfsplus_asc2uni(sb, ustr, max_unistr_len, astr, len
+#ifdef MY_ABC_HERE
+			       , true
+#endif /* MY_ABC_HERE */
+			       , nfc);
+}
+#endif /* MY_ABC_HERE */
 
 /*
  * Hash a string to an integer as appropriate for the HFS+ filesystem.

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * (C) 1997 Linus Torvalds
@@ -23,6 +26,11 @@
 #include <linux/iversion.h>
 #include <trace/events/writeback.h>
 #include "internal.h"
+
+#ifdef MY_ABC_HERE
+#include <linux/syno_acl.h>
+#endif /* MY_ABC_HERE */
+
 
 /*
  * Inode locking rules:
@@ -176,6 +184,18 @@ int inode_init_always(struct super_block *sb, struct inode *inode)
 	init_rwsem(&inode->i_rwsem);
 	lockdep_set_class(&inode->i_rwsem, &sb->s_type->i_mutex_key);
 
+#ifdef MY_ABC_HERE
+	inode->i_archive_bit = 0; /* set archive bit on creation */
+	mutex_init(&inode->i_archive_bit_mutex);
+	lockdep_set_class(&inode->i_archive_bit_mutex, &sb->s_type->i_archive_bit_mutex_key);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	inode->i_archive_version = 0;
+	mutex_init(&inode->i_archive_version_mutex);
+	lockdep_set_class(&inode->i_archive_version_mutex, &sb->s_type->i_archive_version_mutex_key);
+#endif /* MY_ABC_HERE */
+
 	atomic_set(&inode->i_dio_count, 0);
 
 	mapping->a_ops = &empty_aops;
@@ -194,6 +214,9 @@ int inode_init_always(struct super_block *sb, struct inode *inode)
 	inode->i_private = NULL;
 	inode->i_mapping = mapping;
 	INIT_HLIST_HEAD(&inode->i_dentry);	/* buggered by rcu freeing */
+#ifdef MY_ABC_HERE
+	inode->i_syno_acl = ACL_NOT_CACHED;
+#endif /* MY_ABC_HERE */
 #ifdef CONFIG_FS_POSIX_ACL
 	inode->i_acl = inode->i_default_acl = ACL_NOT_CACHED;
 #endif
@@ -264,6 +287,10 @@ void __destroy_inode(struct inode *inode)
 		atomic_long_dec(&inode->i_sb->s_remove_count);
 	}
 
+#ifdef MY_ABC_HERE
+	if (inode->i_syno_acl && !is_uncached_syno_acl(inode->i_syno_acl))
+		syno_acl_release(inode->i_syno_acl);
+#endif /* MY_ABC_HERE */
 #ifdef CONFIG_FS_POSIX_ACL
 	if (inode->i_acl && !is_uncached_acl(inode->i_acl))
 		posix_acl_release(inode->i_acl);
@@ -415,6 +442,9 @@ void __iget(struct inode *inode)
 {
 	atomic_inc(&inode->i_count);
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL(__iget);
+#endif /* MY_ABC_HERE */
 
 /*
  * get additional reference to inode; caller must already hold one.
@@ -1718,6 +1748,9 @@ EXPORT_SYMBOL(bmap);
 static int relatime_need_update(struct vfsmount *mnt, struct inode *inode,
 			     struct timespec64 now)
 {
+#ifdef MY_ABC_HERE
+	long relatime_period = 1;
+#endif /* MY_ABC_HERE */
 
 	if (!(mnt->mnt_flags & MNT_RELATIME))
 		return 1;
@@ -1736,8 +1769,16 @@ static int relatime_need_update(struct vfsmount *mnt, struct inode *inode,
 	 * Is the previous atime value older than a day? If yes,
 	 * update atime:
 	 */
+#ifdef MY_ABC_HERE
+	if (inode->i_sb->relatime_period > 0)
+		relatime_period = inode->i_sb->relatime_period;
+
+	if ((long)(now.tv_sec - inode->i_atime.tv_sec) >= relatime_period*24*60*60)
+		return 1;
+#else /* MY_ABC_HERE */
 	if ((long)(now.tv_sec - inode->i_atime.tv_sec) >= 24*60*60)
 		return 1;
+#endif /* MY_ABC_HERE */
 	/*
 	 * Good, we can skip the atime update:
 	 */
@@ -1772,12 +1813,19 @@ EXPORT_SYMBOL(generic_update_time);
  * This does the actual work of updating an inodes time or version.  Must have
  * had called mnt_want_write() before calling this.
  */
+#ifdef MY_ABC_HERE
+int update_time(struct inode *inode, struct timespec64 *time, int flags)
+#else
 static int update_time(struct inode *inode, struct timespec64 *time, int flags)
+#endif /* MY_ABC_HERE */
 {
 	if (inode->i_op->update_time)
 		return inode->i_op->update_time(inode, time, flags);
 	return generic_update_time(inode, time, flags);
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL_GPL(update_time);
+#endif /* MY_ABC_HERE */
 
 /**
  *	touch_atime	-	update the access time

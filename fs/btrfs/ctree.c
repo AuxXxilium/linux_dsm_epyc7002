@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2007,2008 Oracle.  All rights reserved.
@@ -984,6 +987,12 @@ static struct extent_buffer *alloc_tree_block_no_bg_flush(
 	 * new root node for one of those trees.
 	 */
 	if (root == fs_info->extent_root ||
+#ifdef MY_ABC_HERE
+	    root == fs_info->block_group_hint_root ||
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	    root == fs_info->block_group_cache_root ||
+#endif /* MY_ABC_HERE */
 	    root == fs_info->chunk_root ||
 	    root == fs_info->dev_root ||
 	    root == fs_info->free_space_root)
@@ -1370,6 +1379,7 @@ get_old_root(struct btrfs_root *root, u64 time_seq)
 			struct tree_mod_elem *tm2;
 
 			btrfs_tree_read_lock(old);
+			btrfs_set_lock_blocking_read(old);
 			eb = btrfs_clone_extent_buffer(old);
 			/*
 			 * After the lookup for the most recent tree mod operation
@@ -1382,7 +1392,7 @@ get_old_root(struct btrfs_root *root, u64 time_seq)
 			 * buffer.
 			 */
 			tm2 = tree_mod_log_search(fs_info, logical, time_seq);
-			btrfs_tree_read_unlock(old);
+			btrfs_tree_read_unlock_blocking(old);
 			free_extent_buffer(old);
 			ASSERT(tm2);
 			ASSERT(tm2 == tm || tm2->seq > tm->seq);
@@ -2224,18 +2234,33 @@ static void reada_for_search(struct btrfs_fs_info *fs_info,
 	u64 search;
 	u64 target;
 	u64 nread = 0;
+	u64 nread_max;
 	struct extent_buffer *eb;
 	u32 nr;
 	u32 blocksize;
 	u32 nscan = 0;
 
-	if (level != 1)
+	if (level != 1 && path->reada != READA_FORWARD_ALWAYS)
 		return;
 
 	if (!path->nodes[level])
 		return;
 
 	node = path->nodes[level];
+
+	/*
+	 * Since the time between visiting leaves is much shorter than the time
+	 * between visiting nodes, limit read ahead of nodes to 1, to avoid too
+	 * much IO at once (possibly random).
+	 */
+	if (path->reada == READA_FORWARD_ALWAYS) {
+		if (level > 1)
+			nread_max = node->fs_info->nodesize;
+		else
+			nread_max = SZ_128K;
+	} else {
+		nread_max = SZ_64K;
+	}
 
 	search = btrfs_node_blockptr(node, slot);
 	blocksize = fs_info->nodesize;
@@ -2255,7 +2280,8 @@ static void reada_for_search(struct btrfs_fs_info *fs_info,
 			if (nr == 0)
 				break;
 			nr--;
-		} else if (path->reada == READA_FORWARD) {
+		} else if (path->reada == READA_FORWARD ||
+			   path->reada == READA_FORWARD_ALWAYS) {
 			nr++;
 			if (nr >= nritems)
 				break;
@@ -2266,13 +2292,14 @@ static void reada_for_search(struct btrfs_fs_info *fs_info,
 				break;
 		}
 		search = btrfs_node_blockptr(node, nr);
-		if ((search <= target && target - search <= 65536) ||
+		if (path->reada == READA_FORWARD_ALWAYS ||
+		    (search <= target && target - search <= 65536) ||
 		    (search > target && search - target <= 65536)) {
 			readahead_tree_block(fs_info, search);
 			nread += blocksize;
 		}
 		nscan++;
-		if ((nread > 65536 || nscan > 32))
+		if (nread > nread_max || nscan > 32)
 			break;
 	}
 }
@@ -2408,6 +2435,9 @@ read_block_for_search(struct btrfs_root *root, struct btrfs_path *p,
 
 	tmp = find_extent_buffer(fs_info, blocknr);
 	if (tmp) {
+		if (p->reada == READA_FORWARD_ALWAYS)
+			reada_for_search(fs_info, p, level, slot, key->objectid);
+
 		/* first we do an atomic uptodate check */
 		if (btrfs_buffer_uptodate(tmp, gen, 1) > 0) {
 			/*
@@ -2676,8 +2706,14 @@ out:
  * @p:		Holds all btree nodes along the search path
  * @root:	The root node of the tree
  * @key:	The key we are looking for
- * @ins_len:	Indicates purpose of search, for inserts it is 1, for
- *		deletions it's -1. 0 for plain searches
+ * @ins_len:	Indicates purpose of search:
+ *              >0  for inserts it's size of item inserted (*)
+ *              <0  for deletions
+ *               0  for plain searches, not modifying the tree
+ *
+ *              (*) If size of item inserted doesn't include
+ *              sizeof(struct btrfs_item), then p->search_for_extension must
+ *              be set.
  * @cow:	boolean should CoW operations be performed. Must always be 1
  *		when modifying the tree.
  *
@@ -2839,6 +2875,20 @@ cow_done:
 
 		if (level == 0) {
 			p->slots[level] = slot;
+			/*
+			 * Item key already exists. In this case, if we are
+			 * allowed to insert the item (for example, in dir_item
+			 * case, item key collision is allowed), it will be
+			 * merged with the original item. Only the item size
+			 * grows, no new btrfs item will be added. If
+			 * search_for_extension is not set, ins_len already
+			 * accounts the size btrfs_item, deduct it here so leaf
+			 * space check will be correct.
+			 */
+			if (ret == 0 && ins_len > 0 && !p->search_for_extension) {
+				ASSERT(ins_len >= sizeof(struct btrfs_item));
+				ins_len -= sizeof(struct btrfs_item);
+			}
 			if (ins_len > 0 &&
 			    btrfs_leaf_free_space(b) < ins_len) {
 				if (write_lock_level < 1) {
@@ -2935,6 +2985,10 @@ done:
 		btrfs_set_path_blocking(p);
 	if (ret < 0 && !p->skip_release_on_error)
 		btrfs_release_path(p);
+#ifdef MY_ABC_HERE
+	atomic64_inc(&root->fs_info->syno_meta_statistics.search_key);
+	trace_btrfs_syno_meta_statistics_search_key(root->fs_info, root, key);
+#endif /* MY_ABC_HERE */
 	return ret;
 }
 
@@ -3042,6 +3096,10 @@ done:
 		btrfs_set_path_blocking(p);
 	if (ret < 0)
 		btrfs_release_path(p);
+#ifdef MY_ABC_HERE
+	atomic64_inc(&root->fs_info->syno_meta_statistics.search_key);
+	trace_btrfs_syno_meta_statistics_search_key(root->fs_info, root, key);
+#endif /* MY_ABC_HERE */
 
 	return ret;
 }
@@ -5213,6 +5271,10 @@ int btrfs_search_forward(struct btrfs_root *root, struct btrfs_key *min_key,
 {
 	struct extent_buffer *cur;
 	struct btrfs_key found_key;
+#ifdef MY_ABC_HERE
+	int i, reada_end;
+	struct extent_buffer *eb;
+#endif /* MY_ABC_HERE */
 	int slot;
 	int sret;
 	u32 nritems;
@@ -5291,6 +5353,25 @@ find_next_key:
 			goto out;
 		}
 		btrfs_set_path_blocking(path);
+#ifdef MY_ABC_HERE
+#define MAX_READA_EXTENT_BUFFER 32
+		if (path->reada == READA_FORWARD_ALWAYS && level == 1) {
+			eb = find_extent_buffer(root->fs_info,
+						btrfs_node_blockptr(cur, slot));
+			if (!eb || (eb && !extent_buffer_uptodate(eb))) {
+				if (slot + MAX_READA_EXTENT_BUFFER < nritems)
+					reada_end = slot + MAX_READA_EXTENT_BUFFER;
+				else
+					reada_end = nritems;
+				for (i = slot; i < reada_end; i++) {
+					readahead_tree_block(root->fs_info,
+							     btrfs_node_blockptr(cur, i));
+				}
+			}
+			if (eb)
+				free_extent_buffer(eb);
+		}
+#endif /* MY_ABC_HERE */
 		cur = btrfs_read_node_slot(cur, slot);
 		if (IS_ERR(cur)) {
 			ret = PTR_ERR(cur);
@@ -5310,6 +5391,10 @@ out:
 		btrfs_set_path_blocking(path);
 		memcpy(min_key, &found_key, sizeof(found_key));
 	}
+#ifdef MY_ABC_HERE
+	atomic64_inc(&root->fs_info->syno_meta_statistics.search_forward);
+	trace_btrfs_syno_meta_statistics_search_forward(root->fs_info, root, min_key);
+#endif /* MY_ABC_HERE */
 	return ret;
 }
 
@@ -5467,6 +5552,10 @@ again:
 		goto done;
 	}
 
+#ifdef MY_ABC_HERE
+	atomic64_inc(&root->fs_info->syno_meta_statistics.next_leaf);
+	trace_btrfs_syno_meta_statistics_next_leaf(root->fs_info, root, &key);
+#endif /* MY_ABC_HERE */
 	while (level < BTRFS_MAX_LEVEL) {
 		if (!path->nodes[level]) {
 			ret = 1;

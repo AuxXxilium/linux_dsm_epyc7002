@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/fs/msdos/namei.c
@@ -639,6 +642,11 @@ static const struct inode_operations msdos_dir_inode_operations = {
 	.setattr	= fat_setattr,
 	.getattr	= fat_getattr,
 	.update_time	= fat_update_time,
+#ifdef MY_ABC_HERE
+	.syno_getattr	= fat_syno_getattr,
+	.syno_get_crtime= fat_syno_get_crtime,
+	.syno_set_crtime= fat_syno_set_crtime,
+#endif /* MY_ABC_HERE */
 };
 
 static void setup(struct super_block *sb)

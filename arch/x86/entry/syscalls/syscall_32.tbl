@@ -445,3 +445,37 @@
 438	i386	pidfd_getfd		sys_pidfd_getfd
 439	i386	faccessat2		sys_faccessat2
 440	i386	process_madvise		sys_process_madvise
+
+#
+# start - CONFIG_SYNO_SYSTEM_CALL
+# Synology defined system calls are listed here.
+#
+802	i386	syno_utime			sys_syno_utime32
+803	i386	syno_archive_bit		sys_syno_archive_bit
+804	i386	syno_recv_file			sys_syno_recv_file
+#805		not used
+#806		syno_caseless_stat:  removed from linux-5.10.x
+#807		syno_caseless_lstat: removed from linux-5.10.x
+#808		not used
+#809		not used
+810	i386	syno_ecrypt_name		sys_syno_ecrypt_name
+811	i386	syno_decrypt_name		sys_syno_decrypt_name
+812	i386	syno_acl_check_perm		sys_syno_acl_check_perm
+813	i386	syno_acl_is_support		sys_syno_acl_is_support
+814	i386	syno_acl_get_perm		sys_syno_acl_get_perm
+815	i386	syno_flush_aggregate		sys_syno_flush_aggregate
+#816		not used
+#817		not used
+#818		not used
+#819		syno_stat:  removed from linux-5.10.x
+#820		syno_fstat: removed from linux-5.10.x
+#821		syno_lstat: removed from linux-5.10.x
+822	i386	syno_notify_init		sys_syno_notify_init
+823	i386	syno_notify_add_watch		sys_syno_notify_add_watch
+#825		not used
+#826		not used
+824	i386	syno_notify_remove_watch	sys_syno_notify_remove_watch
+827	i386	syno_archive_overwrite		sys_syno_archive_overwrite
+#
+# end - CONFIG_SYNO_SYSTEM_CALL
+#

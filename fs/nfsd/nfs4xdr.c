@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  *  Server-side XDR for NFSv4
  *
@@ -1801,6 +1804,13 @@ nfsd4_decode_copy(struct nfsd4_compoundargs *argp, struct nfsd4_copy *copy)
 	struct nl4_server *ns_dummy;
 	int i, count;
 
+#ifdef MY_ABC_HERE
+	copy->cp_src = (struct nl4_server *) svcxdr_tmpalloc(argp, sizeof(struct nl4_server));
+	if (!copy->cp_src)
+		return nfserr_jukebox;
+	memset(copy->cp_src, 0, sizeof(struct nl4_server));
+#endif /* MY_ABC_HERE */
+
 	status = nfsd4_decode_stateid(argp, &copy->cp_src_stateid);
 	if (status)
 		return status;
@@ -1824,7 +1834,11 @@ nfsd4_decode_copy(struct nfsd4_compoundargs *argp, struct nfsd4_copy *copy)
 	}
 
 	/* decode all the supplied server addresses but use first */
+#ifdef MY_ABC_HERE
+	status = nfsd4_decode_nl4_server(argp, copy->cp_src);
+#else /* MY_ABC_HERE */
 	status = nfsd4_decode_nl4_server(argp, &copy->cp_src);
+#endif /* MY_ABC_HERE */
 	if (status)
 		return status;
 
@@ -1857,10 +1871,26 @@ nfsd4_decode_copy_notify(struct nfsd4_compoundargs *argp,
 {
 	__be32 status;
 
+#ifdef MY_ABC_HERE
+	cn->cpn_src = (struct nl4_server *) svcxdr_tmpalloc(argp, sizeof(struct nl4_server));
+	if (!cn->cpn_src)
+		return nfserr_jukebox;
+	memset(cn->cpn_src, 0, sizeof(struct nl4_server));
+	cn->cpn_dst = (struct nl4_server *) svcxdr_tmpalloc(argp, sizeof(struct nl4_server));
+	if (!cn->cpn_dst)
+		return nfserr_jukebox;
+	memset(cn->cpn_dst, 0, sizeof(struct nl4_server));
+#endif /* MY_ABC_HERE */
+
 	status = nfsd4_decode_stateid(argp, &cn->cpn_src_stateid);
 	if (status)
 		return status;
+
+#ifdef MY_ABC_HERE
+	return nfsd4_decode_nl4_server(argp, cn->cpn_dst);
+#else /* MY_ABC_HERE */
 	return nfsd4_decode_nl4_server(argp, &cn->cpn_dst);
+#endif /* MY_ABC_HERE */
 }
 
 static __be32
@@ -2653,6 +2683,10 @@ static int get_parent_attributes(struct svc_export *exp, struct kstat *stat)
 			break;
 	}
 	err = vfs_getattr(&path, stat, STATX_BASIC_STATS, AT_STATX_SYNC_AS_STAT);
+#ifdef MY_ABC_HERE
+	if (!err)
+		nfsd_update_root_attr(path.dentry, stat);
+#endif /* MY_ABC_HERE */
 	path_put(&path);
 	return err;
 }
@@ -2741,6 +2775,11 @@ nfsd4_encode_fattr(struct xdr_stream *xdr, struct svc_fh *fhp,
 	err = vfs_getattr(&path, &stat, STATX_BASIC_STATS, AT_STATX_SYNC_AS_STAT);
 	if (err)
 		goto out_nfserr;
+
+#ifdef MY_ABC_HERE
+	nfsd_update_root_attr(dentry, &stat);
+#endif /* MY_ABC_HERE */
+
 	if ((bmval0 & (FATTR4_WORD0_FILES_AVAIL | FATTR4_WORD0_FILES_FREE |
 			FATTR4_WORD0_FILES_TOTAL | FATTR4_WORD0_MAXNAME)) ||
 	    (bmval1 & (FATTR4_WORD1_SPACE_AVAIL | FATTR4_WORD1_SPACE_FREE |
@@ -4781,7 +4820,11 @@ nfsd4_encode_copy_notify(struct nfsd4_compoundres *resp, __be32 nfserr,
 
 	*p++ = cpu_to_be32(1);
 
+#ifdef MY_ABC_HERE
+	return nfsd42_encode_nl4_server(resp, cn->cpn_src);
+#else /* MY_ABC_HERE */
 	return nfsd42_encode_nl4_server(resp, &cn->cpn_src);
+#endif /* MY_ABC_HERE */
 }
 
 static __be32

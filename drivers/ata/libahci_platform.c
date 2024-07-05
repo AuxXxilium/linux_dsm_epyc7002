@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * AHCI SATA platform library
@@ -556,6 +559,41 @@ err_out:
 }
 EXPORT_SYMBOL_GPL(ahci_platform_get_resources);
 
+#ifdef MY_ABC_HERE
+
+extern int lookup_internal_slot(const struct ata_port *ap);
+extern int syno_compare_dts_ata_port(const struct ata_port *pAtaPort, const struct device_node *pDeviceNode);
+/**
+ * syno_ahci_compare_ata_devicetree_info - check the ata_port matches the device_node
+ * @ap [IN]:   query ata_port
+ * @node [IN]: comparing device_node
+ *
+ * return true: success
+          false: fail
+ */
+bool syno_ahci_rtk_compare_ata_devicetree_info(const struct ata_port *ap, const struct device_node *pNode)
+{
+	int ret = false;
+	struct device_node *pAhciNode = NULL;
+	if (NULL == ap || NULL == pNode) {
+		goto END;
+	}
+
+	pAhciNode = of_get_child_by_name(pNode, DT_RTK_AHCI);
+	if (0 != syno_compare_dts_ata_port(ap, pAhciNode)) {
+		goto END;
+	}
+
+	ret = true;
+END:
+	if (pAhciNode) {
+		of_node_put(pAhciNode);
+	}
+
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
 /**
  * ahci_platform_init_host - Bring up an ahci-platform host
  * @pdev: platform device pointer for the host
@@ -640,6 +678,12 @@ int ahci_platform_init_host(struct platform_device *pdev,
 		/* disabled/not-implemented port */
 		if (!(hpriv->port_map & (1 << i)))
 			ap->ops = &ata_dummy_port_ops;
+#ifdef MY_ABC_HERE
+		/* FIXME: add check if using ahci_rtk before assigning syno_ahci_rtk_compare_ata_devicetree_info */
+		ap->ops->syno_compare_node_info = syno_ahci_rtk_compare_ata_devicetree_info;
+		/* Fill internal slot index. 0 base, < 0 means error or not internal slot */
+		ap->syno_internal_slot_index = lookup_internal_slot(ap) - 1;
+#endif /* MY_ABC_HERE */
 	}
 
 	if (hpriv->cap & HOST_CAP_64) {

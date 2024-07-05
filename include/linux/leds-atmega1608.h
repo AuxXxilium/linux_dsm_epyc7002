@@ -1,0 +1,62 @@
+/*
+ * Copyright 2000-2021 Synology Inc.
+ */
+
+#ifndef __LEDS_ATMEGA1608_H__
+#define __LEDS_ATMEGA1608_H__
+enum atmega1608_led_mask {
+	ATMEGA1608_LED_UNMASK,
+	ATMEGA1608_LED_MASKED,
+};
+
+enum atmega1608_led_mode {
+	ATMEGA1608_LED_OFF,
+	ATMEGA1608_LED_ON,
+	ATMEGA1608_LED_DIM0,
+	ATMEGA1608_LED_DIM1,
+};
+
+enum atmega1608_led_channel {
+	ATMEGA1608_LED0,
+	ATMEGA1608_LED1,
+	ATMEGA1608_LED2,
+	ATMEGA1608_LED3,
+	ATMEGA1608_LED4,
+	ATMEGA1608_LED5,
+	ATMEGA1608_LED6,
+	ATMEGA1608_LED7,
+	ATMEGA1608_LED8,
+	ATMEGA1608_LED9,
+	ATMEGA1608_LED10,
+	ATMEGA1608_LED11,
+	ATMEGA1608_LED12,
+	ATMEGA1608_LED13,
+	ATMEGA1608_LED14,
+	ATMEGA1608_LED15,
+	ATMEGA1608_LED16,
+	ATMEGA1608_LED17,
+	ATMEGA1608_LED18,
+	ATMEGA1608_LED19,
+	ATMEGA1608_LED20,
+	ATMEGA1608_LED21,
+	ATMEGA1608_LED22,
+	ATMEGA1608_LED23,
+};
+
+struct atmega1608_led_node {
+	char *name;
+	enum atmega1608_led_mode mode;
+	u8 prescale;
+	enum atmega1608_led_channel channel;
+	int num_channels;
+	char *default_trigger;
+};
+
+struct atmega1608_platform_data {
+	struct atmega1608_led_node *node;
+	int num_nodes;
+};
+
+#define ATMEGA1608_MASK		0x01 
+
+#endif

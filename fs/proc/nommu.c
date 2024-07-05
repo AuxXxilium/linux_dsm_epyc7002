@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* nommu.c: mmu-less memory info files
  *
@@ -40,7 +43,14 @@ static int nommu_region_show(struct seq_file *m, struct vm_region *region)
 	file = region->vm_file;
 
 	if (file) {
+#ifdef MY_ABC_HERE
+		struct inode *inode;
+
+		file = vmr_pr_or_file(region);
+		inode = file_inode(file);
+#else
 		struct inode *inode = file_inode(region->vm_file);
+#endif /* MY_ABC_HERE */
 		dev = inode->i_sb->s_dev;
 		ino = inode->i_ino;
 	}

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * PCI detection and setup code
@@ -20,6 +23,10 @@
 #include <linux/irqdomain.h>
 #include <linux/pm_runtime.h>
 #include "pci.h"
+
+#ifdef MY_DEF_HERE
+#include <linux/synobios.h>
+#endif /* MY_DEF_HERE */
 
 #define CARDBUS_LATENCY_TIMER	176	/* secondary latency timer */
 #define CARDBUS_RESERVE_BUSNR	3
@@ -1732,6 +1739,47 @@ static void pci_msi_setup_pci_dev(struct pci_dev *dev)
 		pci_msix_clear_and_set_ctrl(dev, PCI_MSIX_FLAGS_ENABLE, 0);
 }
 
+#ifdef MY_ABC_HERE
+extern int gSynoResetFlag;
+void syno_pcie_nvme_check(struct pci_dev *dev)
+{
+	u16 slotStat = 0;
+	u16 linkStat = 0;
+	u16 linkStat2 = 0;
+
+	// For RTK 2824 switch and synology subsystem_vendor
+	if (0x1b21 == dev->vendor && 0x2824 == dev->device && 0x7053 == dev->subsystem_vendor) {
+		// For M2D20 and E10M20-T1
+		if ((0x3001 == dev->subsystem_device && (0x4 == PCI_SLOT(dev->devfn) || 0x8 == PCI_SLOT(dev->devfn))) ||
+				(0x2002 == dev->subsystem_device && (0x4 == PCI_SLOT(dev->devfn) || 0x8 == PCI_SLOT(dev->devfn)))) {
+			if (0 != pcie_capability_read_word(dev, PCI_EXP_SLTSTA, &slotStat)) {
+				goto END;
+			}
+			if (0 != pcie_capability_read_word(dev, PCI_EXP_LNKSTA, &linkStat)) {
+				goto END;
+			}
+			if (0 != pcie_capability_read_word(dev, PCI_EXP_LNKSTA2, &linkStat2)) {
+				goto END;
+			}
+			dev_printk(KERN_ERR, &dev->dev, "Present %d Active %d Sta2 reg: %x\n", !!(slotStat & PCI_EXP_SLTSTA_PDS),
+					!!(linkStat & PCI_EXP_LNKSTA_DLLLA), linkStat2);
+			/*
+			 * We check 2 situations
+			 * 1. present = 1 but active = 0
+			 * 2. present = 0 but Equalization Complete | Equalization 1 success | Equalization 2 success | Equalization 3 success
+			 * Ref: Link Status 2 Register (Offset 32h)
+			 */
+			if ((0 != (slotStat & PCI_EXP_SLTSTA_PDS) && 0 == (linkStat & PCI_EXP_LNKSTA_DLLLA)) ||
+					(0 == (slotStat & PCI_EXP_SLTSTA_PDS) && (0 != (linkStat2 & 0x1E)))) {
+				gSynoResetFlag = 1;
+			}
+		}
+	}
+END:
+	return;
+}
+#endif /* MY_ABC_HERE */
+
 /**
  * pci_intx_mask_broken - Test PCI_COMMAND_INTX_DISABLE writability
  * @dev: PCI device
@@ -1924,6 +1972,16 @@ int pci_setup_device(struct pci_dev *dev)
 			pci_read_config_word(dev, pos + PCI_SSVID_VENDOR_ID, &dev->subsystem_vendor);
 			pci_read_config_word(dev, pos + PCI_SSVID_DEVICE_ID, &dev->subsystem_device);
 		}
+
+#ifdef MY_DEF_HERE
+		if (syno_is_hw_version(HW_DS1621p) || syno_is_hw_version(HW_DS1520p)) {
+			if ( 0x1b21 == dev->vendor && 0x1806 == dev->device ) {
+				dev->subsystem_vendor = 0;
+				dev->subsystem_device = 0;
+			}
+		}
+#endif /* MY_DEF_HERE */
+
 		break;
 
 	case PCI_HEADER_TYPE_CARDBUS:		    /* CardBus bridge header */
@@ -1946,6 +2004,9 @@ int pci_setup_device(struct pci_dev *dev)
 		dev->class = PCI_CLASS_NOT_DEFINED << 8;
 	}
 
+#ifdef MY_ABC_HERE
+	syno_pcie_nvme_check(dev);
+#endif /* MY_ABC_HERE */
 	/* We found a fine healthy device, go go go... */
 	return 0;
 }

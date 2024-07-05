@@ -1,0 +1,90 @@
+menu "Platform Features"
+config SYNO_X64
+	bool
+	default y
+	depends on X86_64
+
+config SYNO_SELECT_PLATFORM
+	def_bool y
+choice
+	prompt "Synology platform"
+
+config SYNO_KVMX64
+	bool "KVM X64 Virtual machine"
+	depends on X86_64
+
+config SYNO_KVMX64SOFS
+	bool "KVM X64 Virtual machine with SOFS"
+	depends on X86_64
+
+config SYNO_KVMX64V2
+	bool "KVM X64 Virtual machine with port mapping v2"
+	depends on X86_64
+
+config SYNO_BROADWELL
+	bool "Intel-Broadwell"
+	depends on X86_64
+
+config SYNO_PURLEY
+	bool "Intel Purley"
+	depends on X86_64
+
+config SYNO_GEMINILAKE
+	bool "Intel-Geminilake"
+	depends on X86_64
+
+config SYNO_V1000
+	bool "AMD Ryzen Embedded V1000"
+	depends on X86_64
+
+config SYNO_V1000SOFS
+	bool "AMD Ryzen Embedded V1000 with SOFS"
+	depends on X86_64
+
+config SYNO_RTD1619B
+	bool "realtek rtd1619b"
+	depends on ARM64
+	select SYNO_LSP_RTD1619B
+
+config SYNO_ICELAKED
+       bool "INTEL ICELAKE-D"
+       depends on X86_64
+
+config SYNO_EPYC7002
+       bool "AMD EPYC Embedded 7002"
+       depends on X86_64
+
+config SYNO_EPYC7002SOFS
+       bool "AMD EPYC Embedded 7002 with SOFS"
+       depends on X86_64
+
+config SYNO_RYZEN5K
+       bool "AMD RYZEN Embedded 5000"
+       depends on X86_64
+
+config SYNO_EPYC7003NTB
+       bool "AMD EPYC Embedded 7003 with NTB"
+       depends on X86_64
+
+endchoice
+
+config SYNO_SAS
+	bool "Synology SAS Support"
+	default y
+	depends on SYNO_BROADWELL || SYNO_PURLEY || SYNO_RYZEN5K
+
+config SYNO_AMD_MCE_THRESHOLD_CLEAR
+	bool "Clear MCE overflow bit"
+	default y
+	depends on X86_MCE_AMD
+
+config SYNO_INTEL_PSTATE_CALC
+	bool "Compare P-state ratio only"
+	default y
+
+config SYNO_LSP_RTD1619B
+	bool "Apply Realtek rtd1619b LSP"
+	depends on ARM64
+
+endmenu #Platform Features
+

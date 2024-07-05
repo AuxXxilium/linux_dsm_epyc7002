@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Detect hard and soft lockups on a system
@@ -50,7 +53,11 @@ unsigned long *watchdog_cpumask_bits = cpumask_bits(&watchdog_cpumask);
 #ifdef CONFIG_HARDLOCKUP_DETECTOR
 
 # ifdef CONFIG_SMP
+#ifdef MY_ABC_HERE
+int __read_mostly sysctl_hardlockup_all_cpu_backtrace = 1;
+#else /* MY_ABC_HERE */
 int __read_mostly sysctl_hardlockup_all_cpu_backtrace;
+#endif /* MY_ABC_HERE */
 # endif /* CONFIG_SMP */
 
 /*
@@ -157,7 +164,11 @@ static void lockup_detector_update_enable(void)
 #define SOFTLOCKUP_RESET	ULONG_MAX
 
 #ifdef CONFIG_SMP
+#ifdef MY_ABC_HERE
+int __read_mostly sysctl_softlockup_all_cpu_backtrace = 1;
+#else /* MY_ABC_HERE */
 int __read_mostly sysctl_softlockup_all_cpu_backtrace;
+#endif /* MY_ABC_HERE */
 #endif
 
 static struct cpumask watchdog_allowed_mask __read_mostly;
@@ -174,6 +185,9 @@ static DEFINE_PER_CPU(struct hrtimer, watchdog_hrtimer);
 static DEFINE_PER_CPU(bool, softlockup_touch_sync);
 static DEFINE_PER_CPU(unsigned long, hrtimer_interrupts);
 static DEFINE_PER_CPU(unsigned long, hrtimer_interrupts_saved);
+#ifdef MY_ABC_HERE
+static DEFINE_PER_CPU(unsigned long, softlockup_counter);
+#endif /* MY_ABC_HERE */
 static unsigned long soft_lockup_nmi_warn;
 
 static int __init nowatchdog_setup(char *str)
@@ -317,6 +331,18 @@ static void watchdog_interrupt_count(void)
 	__this_cpu_inc(hrtimer_interrupts);
 }
 
+#ifdef MY_DEF_HERE
+/* update hrtimer for each watchdog enabled CPU */
+void watchdog_hrtimer_inc(void)
+{
+	int cpu;
+	for_each_cpu(cpu, &watchdog_allowed_mask) {
+		++per_cpu(hrtimer_interrupts, cpu);
+	}
+}
+EXPORT_SYMBOL(watchdog_hrtimer_inc);
+#endif /* MY_DEF_HERE */
+
 static DEFINE_PER_CPU(struct completion, softlockup_completion);
 static DEFINE_PER_CPU(struct cpu_stop_work, softlockup_stop_work);
 
@@ -401,6 +427,17 @@ static enum hrtimer_restart watchdog_timer_fn(struct hrtimer *hrtimer)
 			if (test_and_set_bit_lock(0, &soft_lockup_nmi_warn))
 				return HRTIMER_RESTART;
 		}
+
+#ifdef MY_ABC_HERE
+		if (__this_cpu_read(softlockup_counter) >= CONFIG_SYNO_SOFTLOCKUP_COUNTER_MAX) {
+			if (softlockup_all_cpu_backtrace) {
+				clear_bit_unlock(0, &soft_lockup_nmi_warn);
+			}
+			return HRTIMER_RESTART;
+		} else {
+			__this_cpu_inc(softlockup_counter);
+		}
+#endif /* MY_ABC_HERE */
 
 		/* Start period for the next softlockup warning. */
 		update_touch_ts();

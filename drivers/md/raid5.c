@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * raid5.c : Multiple Devices driver for Linux
@@ -61,11 +64,43 @@
 #define cpu_to_group(cpu) cpu_to_node(cpu)
 #define ANY_GROUP NUMA_NO_NODE
 
+#ifdef MY_ABC_HERE
+static bool devices_handle_discard_safely = true;
+#else /* MY_ABC_HERE */
 static bool devices_handle_discard_safely = false;
+#endif /* MY_ABC_HERE */
 module_param(devices_handle_discard_safely, bool, 0644);
 MODULE_PARM_DESC(devices_handle_discard_safely,
 		 "Set to Y if all devices in each array reliably return zeroes on reads from discarded regions");
 static struct workqueue_struct *raid5_wq;
+#ifdef MY_ABC_HERE
+static void syno_raid5_heal_read_request(struct mddev *mddev, struct bio *bio);
+static void syno_raid5_heal_handle_stripe(struct r5conf *conf);
+static bool syno_raid5_heal_grow_stripes(struct r5conf *conf, int num);
+static void syno_raid5_heal_shrink_stripes(struct r5conf *conf);
+static void syno_raid5_heal_shrink_buffers(struct syno_heal_stripe_head *heal_sh);
+static void syno_raid5_heal_free_stripe(
+	struct kmem_cache *sc, struct syno_heal_stripe_head *heal_sh);
+static struct syno_heal_stripe_head *syno_raid5_heal_alloc_stripe(
+	struct kmem_cache *sc, gfp_t gfp, int disks, struct r5conf *conf);
+static struct syno_heal_stripe_head	*syno_raid5_heal_get_free_stripe(
+	struct r5conf *conf);
+static void syno_raid5_heal_release_stripe(struct syno_heal_stripe_head *heal_sh);
+static bool syno_raid5_heal_grow_one_stripe(struct r5conf *conf, gfp_t gfp);
+static bool syno_raid5_heal_drop_one_stripe(struct r5conf *conf);
+
+static inline void syno_raid5_lock_device_heal_lock(struct r5conf *conf)
+{
+	spin_lock_irq(&conf->syno_heal_stripe_lock);
+	spin_lock(&conf->device_lock);
+}
+
+static inline void syno_raid5_unlock_device_heal_lock(struct r5conf *conf)
+{
+	spin_unlock(&conf->device_lock);
+	spin_unlock_irq(&conf->syno_heal_stripe_lock);
+}
+#endif /* MY_ABC_HERE */
 
 static inline struct hlist_head *stripe_hash(struct r5conf *conf, sector_t sect)
 {
@@ -96,6 +131,9 @@ static inline void lock_all_device_hash_locks_irq(struct r5conf *conf)
 	spin_lock_irq(conf->hash_locks);
 	for (i = 1; i < NR_STRIPE_HASH_LOCKS; i++)
 		spin_lock_nest_lock(conf->hash_locks + i, conf->hash_locks);
+#ifdef MY_ABC_HERE
+	spin_lock(&conf->syno_heal_stripe_lock);
+#endif /* MY_ABC_HERE */
 	spin_lock(&conf->device_lock);
 }
 
@@ -103,6 +141,9 @@ static inline void unlock_all_device_hash_locks_irq(struct r5conf *conf)
 {
 	int i;
 	spin_unlock(&conf->device_lock);
+#ifdef MY_ABC_HERE
+	spin_unlock(&conf->syno_heal_stripe_lock);
+#endif /* MY_ABC_HERE */
 	for (i = NR_STRIPE_HASH_LOCKS - 1; i; i--)
 		spin_unlock(conf->hash_locks + i);
 	spin_unlock_irq(conf->hash_locks);
@@ -171,7 +212,21 @@ static void raid5_wakeup_stripe_thread(struct stripe_head *sh)
 	int i, cpu = sh->cpu;
 
 	if (!cpu_online(cpu)) {
+#ifdef MY_ABC_HERE
+		int node = conf->mddev->syno_md_thread_fixed_node;
+		int selected_cpu = cpumask_any_and(cpumask_of_node(node),
+		                                   cpu_online_mask);
+
+		if (-1 != conf->syno_handle_stripes_cpu &&
+		    -1 != node && node_online(node) &&
+		    nr_cpu_ids > selected_cpu) {
+			cpu = selected_cpu;
+			conf->syno_handle_stripes_cpu = cpu;
+		} else
+			cpu = cpumask_any(cpu_online_mask);
+#else /* MY_ABC_HERE */
 		cpu = cpumask_any(cpu_online_mask);
+#endif /* MY_ABC_HERE */
 		sh->cpu = cpu;
 	}
 
@@ -209,6 +264,88 @@ static void raid5_wakeup_stripe_thread(struct stripe_head *sh)
 	}
 }
 
+#ifdef MY_ABC_HERE
+static void syno_stat_init(struct stripe_head *sh)
+{
+	struct r5conf *conf = sh->raid_conf;
+
+	sh->syno_stat_batched_len = 1;
+	sh->syno_stat_lat_handle_stripe = 0;
+	sh->syno_stat_lat_raid_run_ops = 0;
+	sh->syno_stat_lat_copy_data = 0;
+	sh->syno_stat_lat_enable = conf->syno_stat_lat_enable;
+	sh->syno_stat_is_rcw = true;
+	sh->syno_stat_is_full_write = false;
+}
+
+static void syno_stat_lat_record_to_conf(struct r5conf *conf,
+				     struct stripe_head *sh)
+{
+	u64 lat_xor = sh->syno_stat_lat_raid_run_ops -
+	              sh->syno_stat_lat_copy_data;
+
+	conf->syno_stat_lat_handle_stripe_max =
+		max(conf->syno_stat_lat_handle_stripe_max,
+		    sh->syno_stat_lat_handle_stripe);
+	conf->syno_stat_lat_raid_run_ops_max =
+		max(conf->syno_stat_lat_raid_run_ops_max,
+		    sh->syno_stat_lat_raid_run_ops);
+	conf->syno_stat_lat_copy_data_max =
+		max(conf->syno_stat_lat_copy_data_max,
+		    sh->syno_stat_lat_copy_data);
+	conf->syno_stat_lat_xor_max =
+		max(conf->syno_stat_lat_xor_max,
+		    lat_xor);
+
+	conf->syno_stat_lat_handle_stripe += sh->syno_stat_lat_handle_stripe;
+	conf->syno_stat_lat_raid_run_ops += sh->syno_stat_lat_raid_run_ops;
+	conf->syno_stat_lat_copy_data += sh->syno_stat_lat_copy_data;
+	conf->syno_stat_lat_recorded_cnt++;
+}
+
+static void syno_stat_wait_record_to_conf(struct r5conf *conf,
+				     struct stripe_head *sh)
+{
+	int batched_len = sh->syno_stat_batched_len;
+	u64 syno_stat_wait_sh = jiffies - sh->syno_stat_wait_sh_start;
+
+	conf->syno_stat_wait_sh_max =
+		max(conf->syno_stat_wait_sh_max,
+		    syno_stat_wait_sh);
+	conf->syno_stat_wait_delay_max =
+		max(conf->syno_stat_wait_delay_max,
+		    sh->syno_stat_wait_delay);
+	conf->syno_stat_wait_io_max =
+		max(conf->syno_stat_wait_io_max,
+		    sh->syno_stat_wait_io);
+
+	conf->syno_stat_wait_sh += syno_stat_wait_sh * batched_len;
+	conf->syno_stat_wait_delay += sh->syno_stat_wait_delay;
+	conf->syno_stat_wait_io += sh->syno_stat_wait_io * batched_len;
+}
+
+static void syno_stat_record_to_conf(struct r5conf *conf,
+				     struct stripe_head *sh)
+{
+	int batched_len = sh->syno_stat_batched_len;
+
+	if (unlikely(sh->syno_stat_lat_enable))
+		syno_stat_lat_record_to_conf(conf, sh);
+
+	if (sh->syno_stat_is_rcw)
+		conf->syno_stat_rcw += batched_len;
+	if (sh->syno_stat_is_full_write)
+		conf->syno_stat_full_write += batched_len;
+	if (batched_len)
+		conf->syno_stat_head_stripe_cnt++;
+	conf->syno_stat_total_stripe++;
+
+	syno_stat_wait_record_to_conf(conf, sh);
+
+	syno_stat_init(sh);
+}
+#endif /* MY_ABC_HERE */
+
 static void do_release_stripe(struct r5conf *conf, struct stripe_head *sh,
 			      struct list_head *temp_inactive_list)
 {
@@ -240,13 +377,39 @@ static void do_release_stripe(struct r5conf *conf, struct stripe_head *sh,
 	if (test_bit(STRIPE_HANDLE, &sh->state)) {
 		if (test_bit(STRIPE_DELAYED, &sh->state) &&
 		    !test_bit(STRIPE_PREREAD_ACTIVE, &sh->state))
+#ifdef MY_ABC_HERE
+		{
+			if (test_bit(STRIPE_SYNO_STABLE_STATE, &sh->state))
+				list_add_tail(&sh->lru, &conf->syno_stable_list);
+			else
+#ifdef MY_ABC_HERE
+			{
+				sh->syno_stat_wait_delay_start = jiffies;
+				list_add_tail(&sh->lru, &conf->delayed_list);
+			}
+#else /* MY_ABC_HERE */
+				list_add_tail(&sh->lru, &conf->delayed_list);
+#endif /* MY_ABC_HERE */
+		}
+#else /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+		{
+			sh->syno_stat_wait_delay_start = jiffies;
 			list_add_tail(&sh->lru, &conf->delayed_list);
+		}
+#else /* MY_ABC_HERE */
+			list_add_tail(&sh->lru, &conf->delayed_list);
+#endif /* MY_ABC_HERE */
+#endif /* MY_ABC_HERE */
 		else if (test_bit(STRIPE_BIT_DELAY, &sh->state) &&
 			   sh->bm_seq - conf->seq_write > 0)
 			list_add_tail(&sh->lru, &conf->bitmap_list);
 		else {
 			clear_bit(STRIPE_DELAYED, &sh->state);
 			clear_bit(STRIPE_BIT_DELAY, &sh->state);
+#ifdef MY_ABC_HERE
+			clear_bit(STRIPE_SYNO_STABLE_STATE, &sh->state);
+#endif /* MY_ABC_HERE */
 			if (conf->worker_cnt_per_group == 0) {
 				if (stripe_is_lowprio(sh))
 					list_add_tail(&sh->lru,
@@ -262,6 +425,9 @@ static void do_release_stripe(struct r5conf *conf, struct stripe_head *sh,
 		md_wakeup_thread(conf->mddev->thread);
 	} else {
 		BUG_ON(stripe_operations_active(sh));
+#ifdef MY_ABC_HERE
+		clear_bit(STRIPE_SYNO_STABLE_STATE, &sh->state);
+#endif /* MY_ABC_HERE */
 		if (test_and_clear_bit(STRIPE_PREREAD_ACTIVE, &sh->state))
 			if (atomic_dec_return(&conf->preread_active_stripes)
 			    < IO_THRESHOLD)
@@ -290,6 +456,9 @@ static void do_release_stripe(struct r5conf *conf, struct stripe_head *sh,
 					 */
 					list_add_tail(&sh->lru, &conf->r5c_partial_stripe_list);
 			}
+#ifdef MY_ABC_HERE
+			syno_stat_record_to_conf(conf, sh);
+#endif /* MY_ABC_HERE */
 		}
 	}
 }
@@ -581,6 +750,12 @@ retry:
 	sh->sector = sector;
 	stripe_set_idx(sector, conf, previous, sh);
 	sh->state = 0;
+#ifdef MY_ABC_HERE
+	syno_stat_init(sh);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	sh->syno_full_stripe_merge_state = 0;
+#endif /* MY_ABC_HERE */
 
 	for (i = sh->disks; i--; ) {
 		struct r5dev *dev = &sh->dev[i];
@@ -601,6 +776,10 @@ retry:
 	sh->overwrite_disks = 0;
 	insert_hash(conf, sh);
 	sh->cpu = smp_processor_id();
+#ifdef MY_ABC_HERE
+	if (-1 != conf->syno_handle_stripes_cpu)
+		sh->cpu = conf->syno_handle_stripes_cpu;
+#endif /* MY_ABC_HERE */
 	set_bit(STRIPE_BATCH_READY, &sh->state);
 }
 
@@ -706,6 +885,14 @@ raid5_get_active_stripe(struct r5conf *conf, sector_t sector,
 	struct stripe_head *sh;
 	int hash = stripe_hash_locks_hash(conf, sector);
 	int inc_empty_inactive_list_flag;
+#ifdef MY_ABC_HERE
+	sector_t tmp_sector = sector;
+	int sectors_per_chunk =
+		previous ? conf->prev_chunk_sectors : conf->chunk_sectors;
+	int chunk_offset = sector_div(tmp_sector, sectors_per_chunk);
+	int reserved_stripe_cnt =
+		(sectors_per_chunk - chunk_offset) >> RAID5_STRIPE_SHIFT(conf);
+#endif /* MY_ABC_HERE */
 
 	pr_debug("get_stripe, sector %llu\n", (unsigned long long)sector);
 
@@ -718,7 +905,17 @@ raid5_get_active_stripe(struct r5conf *conf, sector_t sector,
 		sh = __find_stripe(conf, sector, conf->generation - previous);
 		if (!sh) {
 			if (!test_bit(R5_INACTIVE_BLOCKED, &conf->cache_state)) {
+#ifdef MY_ABC_HERE
+				if ((conf->max_nr_stripes < 64) ||
+				    (conf->max_nr_stripes - atomic_read(&conf->active_stripes))
+				     >= reserved_stripe_cnt)
+					sh = get_free_stripe(conf, hash);
+#else /* MY_ABC_HERE */
 				sh = get_free_stripe(conf, hash);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+				if (unlikely(conf->syno_enable_stripe_grow))
+#endif /* MY_ABC_HERE */
 				if (!sh && !test_bit(R5_DID_ALLOC,
 						     &conf->cache_state))
 					set_bit(R5_ALLOC_MORE,
@@ -729,6 +926,11 @@ raid5_get_active_stripe(struct r5conf *conf, sector_t sector,
 
 			r5c_check_stripe_cache_usage(conf);
 			if (!sh) {
+#ifdef MY_ABC_HERE
+				blk_add_trace_msg(conf->mddev->queue,
+						  "syno raid5: start wait stripe: %llu",
+						  (unsigned long long)sector);
+#endif /* MY_ABC_HERE */
 				set_bit(R5_INACTIVE_BLOCKED,
 					&conf->cache_state);
 				r5l_wake_reclaim(conf->log, 0);
@@ -737,14 +939,27 @@ raid5_get_active_stripe(struct r5conf *conf, sector_t sector,
 					!list_empty(conf->inactive_list + hash) &&
 					(atomic_read(&conf->active_stripes)
 					 < (conf->max_nr_stripes * 3 / 4)
+#ifdef MY_ABC_HERE
+					 || atomic_read(&conf->active_stripes)
+					 < (conf->max_nr_stripes -
+					    conf->syno_active_stripe_threshold)
+#endif /* MY_ABC_HERE */
 					 || !test_bit(R5_INACTIVE_BLOCKED,
 						      &conf->cache_state)),
 					*(conf->hash_locks + hash));
 				clear_bit(R5_INACTIVE_BLOCKED,
 					  &conf->cache_state);
+#ifdef MY_ABC_HERE
+				blk_add_trace_msg(conf->mddev->queue,
+						  "syno raid5: finish wait stripe: %llu",
+						  (unsigned long long)sector);
+#endif /* MY_ABC_HERE */
 			} else {
 				init_stripe(sh, sector, previous);
 				atomic_inc(&sh->count);
+#ifdef MY_ABC_HERE
+				sh->syno_stat_wait_sh_start = jiffies;
+#endif /* MY_ABC_HERE */
 			}
 		} else if (!atomic_inc_not_zero(&sh->count)) {
 			spin_lock(&conf->device_lock);
@@ -763,6 +978,10 @@ raid5_get_active_stripe(struct r5conf *conf, sector_t sector,
 					sh->group->stripes_cnt--;
 					sh->group = NULL;
 				}
+#ifdef MY_ABC_HERE
+				if (!test_bit(STRIPE_HANDLE, &sh->state))
+					sh->syno_stat_wait_sh_start = jiffies;
+#endif /* MY_ABC_HERE */
 			}
 			atomic_inc(&sh->count);
 			spin_unlock(&conf->device_lock);
@@ -807,6 +1026,10 @@ static bool stripe_can_batch(struct stripe_head *sh)
 
 	if (raid5_has_log(conf) || raid5_has_ppl(conf))
 		return false;
+#ifdef MY_ABC_HERE
+	if (test_bit(SYNO_FULL_STRIPE_MERGE, &sh->syno_full_stripe_merge_state))
+		return false;
+#endif /* MY_ABC_HERE */
 	return test_bit(STRIPE_BATCH_READY, &sh->state) &&
 		!test_bit(STRIPE_BITMAP_PENDING, &sh->state) &&
 		is_full_stripe_write(sh);
@@ -894,12 +1117,20 @@ static void stripe_add_to_batch_list(struct r5conf *conf, struct stripe_head *sh
 		 * can still add the stripe to batch list
 		 */
 		list_add(&sh->batch_list, &head->batch_list);
+#ifdef MY_ABC_HERE
+		sh->batch_head->syno_stat_batched_len++;
+		sh->syno_stat_batched_len = 0;
+#endif /* MY_ABC_HERE */
 		spin_unlock(&head->batch_head->batch_lock);
 	} else {
 		head->batch_head = head;
 		sh->batch_head = head->batch_head;
 		spin_lock(&head->batch_lock);
 		list_add_tail(&sh->batch_list, &head->batch_list);
+#ifdef MY_ABC_HERE
+		sh->batch_head->syno_stat_batched_len++;
+		sh->syno_stat_batched_len = 0;
+#endif /* MY_ABC_HERE */
 		spin_unlock(&head->batch_lock);
 	}
 
@@ -1048,6 +1279,205 @@ static void defer_issue_bios(struct r5conf *conf, sector_t sector,
 	dispatch_bio_list(&tmp);
 }
 
+#ifdef MY_ABC_HERE
+static void syno_sort_deferred_bios(struct syno_r5defer *group,
+				    struct bio_list *pending_bios)
+{
+	int ent_cnt = 0;
+	struct bio *bio;
+	struct r5pending_data *ent = NULL;
+
+	while ((bio = bio_list_pop(pending_bios))) {
+		/**
+		 * Same location or adjacent bio could add into one ent.
+		 */
+		if (!ent || (ent->sector != bio->bi_iter.bi_sector &&
+		             ent->sector != bio->bi_iter.bi_sector
+					    - (bio->bi_iter.bi_size >> 9))) {
+			if (ent_cnt == SYNO_MAX_SORT_ENT_CNT) {
+				bio_list_add_head(pending_bios, bio);
+				break;
+			}
+			ent_cnt++;
+
+			ent = list_first_entry(&group->free_list,
+					struct r5pending_data, sibling);
+			list_move_tail(&ent->sibling, &group->pending_list);
+			ent->sector = bio->bi_iter.bi_sector;
+			bio_list_init(&ent->bios);
+			ent->count = 0;
+		}
+		bio_list_add(&ent->bios, bio);
+		ent->count++;
+	}
+
+	list_sort(NULL, &group->pending_list, cmp_stripe);
+}
+
+static int syno_merge_sorted_deferred_bios(struct syno_r5defer *group,
+					   struct bio_list *sorted_bios,
+					   struct bio_list *pending_bios,
+					   int target_cnt)
+{
+	int sorted_cnt = 0;
+	struct r5pending_data *ent = NULL;
+
+	while (!list_empty(&group->pending_list)) {
+		ent = list_first_entry(&group->pending_list,
+				struct r5pending_data, sibling);
+		if (sorted_cnt < target_cnt) {
+			bio_list_merge(sorted_bios, &ent->bios);
+			sorted_cnt += ent->count;
+		} else {
+			bio_list_merge_head(pending_bios, &ent->bios);
+		}
+		list_move_tail(&ent->sibling, &group->free_list);
+	}
+
+	return sorted_cnt;
+}
+
+static int syno_group_sort_flush_deferred_bios(struct syno_r5defer *group,
+					       struct bio_list *pending_bios,
+					       int target_cnt)
+{
+	int flushed_cnt = 0;
+	struct bio_list sorted_bios;
+
+	bio_list_init(&sorted_bios);
+	while (!bio_list_empty(pending_bios) && flushed_cnt < target_cnt) {
+		syno_sort_deferred_bios(group, pending_bios);
+		flushed_cnt += syno_merge_sorted_deferred_bios(group,
+							       &sorted_bios,
+							       pending_bios,
+							       target_cnt
+							       - flushed_cnt);
+	}
+
+	dispatch_bio_list(&sorted_bios);
+
+	return flushed_cnt;
+}
+
+static int syno_group_handle_deferred_bios(struct syno_r5defer *group,
+					   struct r5conf *conf)
+{
+	struct bio_list tmp;
+	int pending_cnt;
+	int flushed_cnt = 0;
+	int target_cnt = 0;
+	bool flush_all = false;
+
+	bio_list_init(&tmp);
+	spin_lock(&group->pending_bios_lock);
+	flush_all = test_and_clear_bit(SYNO_DEFER_FLUSH_ALL, &group->state);
+	if (!flush_all &&
+	    group->pending_data_cnt < conf->syno_defer_flush_threshold) {
+		pending_cnt = group->pending_data_cnt;
+		spin_unlock(&group->pending_bios_lock);
+		goto out;
+	}
+
+	target_cnt = flush_all ?
+		     group->pending_data_cnt :
+		     conf->syno_defer_flush_batch_size;
+	bio_list_merge(&tmp, &group->pending_bios);
+	bio_list_init(&group->pending_bios);
+	pending_cnt = group->pending_data_cnt;
+	group->pending_data_cnt = 0;
+	spin_unlock(&group->pending_bios_lock);
+
+	/* we should be ok with the following function without taking lock */
+	flushed_cnt = syno_group_sort_flush_deferred_bios(group, &tmp,
+							  target_cnt);
+
+	spin_lock(&group->pending_bios_lock);
+	if (!bio_list_empty(&tmp))
+		bio_list_merge_head(&group->pending_bios, &tmp);
+	group->pending_data_cnt += (pending_cnt - flushed_cnt);
+	pending_cnt = group->pending_data_cnt;
+	spin_unlock(&group->pending_bios_lock);
+ 
+out:
+	return pending_cnt;
+}
+
+//Without sorting
+static int syno_group_flush_deferred_bios(struct syno_r5defer *group)
+{
+	struct bio_list tmp;
+
+	bio_list_init(&tmp);
+	spin_lock(&group->pending_bios_lock);
+	bio_list_merge(&tmp, &group->pending_bios);
+	bio_list_init(&group->pending_bios);
+	group->pending_data_cnt = 0;
+	spin_unlock(&group->pending_bios_lock);
+
+	dispatch_bio_list(&tmp);
+
+	return group->pending_data_cnt;
+}
+
+static void syno_flush_deferred_bios(struct md_thread *thread)
+{
+	struct blk_plug plug;
+	struct mddev *mddev = thread->mddev;
+	struct r5conf *conf = mddev->private;
+	struct syno_r5defer *group = thread->private;
+	int pending_cnt;
+
+	 /* avoid timeout wakeup, or defer_thread run before setting ready */
+	if (!conf->syno_defer_mode || !group)
+		return;
+
+	blk_start_plug(&plug);
+	do {
+		if (conf->syno_defer_skip_sort)
+			pending_cnt = syno_group_flush_deferred_bios(group);
+		else
+			pending_cnt = syno_group_handle_deferred_bios(group, conf);
+		cond_resched();
+	} while (pending_cnt >= conf->syno_defer_flush_threshold);
+	blk_finish_plug(&plug);
+}
+
+static void syno_defer_group_issue_bios(struct r5conf *conf,
+		struct syno_r5defer *group, struct bio_list *bios)
+{
+	struct bio *bio = NULL;
+	int pending_cnt;
+
+	clear_bit(SYNO_DEFER_FLUSH_ALL, &group->state);
+	spin_lock(&group->pending_bios_lock);
+	while ((bio = bio_list_pop(bios)) != NULL) {
+		group->pending_data_cnt++;
+		bio_list_add(&group->pending_bios, bio);
+	}
+	pending_cnt = group->pending_data_cnt;
+	spin_unlock(&group->pending_bios_lock);
+
+	if (conf->syno_defer_mode &&
+	    (pending_cnt >= conf->syno_defer_flush_threshold))
+		md_wakeup_thread(group->defer_thread);
+}
+
+static void syno_defer_issue_bios(struct r5conf *conf,
+		struct bio_list bios[SYNO_DEFER_GROUP_CNT_MAX])
+{
+	int i;
+	int group_cnt = conf->syno_defer_group_cnt;
+	struct syno_r5defer *group;
+
+	for (i = 0; i < group_cnt; ++i) {
+		if (!bio_list_empty(&bios[i])) {
+			group = &(conf->syno_defer_groups[i]);
+			syno_defer_group_issue_bios(conf, group, &bios[i]);
+		}
+	}
+}
+#endif /* MY_ABC_HERE */
+
 static void
 raid5_end_read_request(struct bio *bi);
 static void
@@ -1060,8 +1490,17 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	struct stripe_head *head_sh = sh;
 	struct bio_list pending_bios = BIO_EMPTY_LIST;
 	bool should_defer;
+#ifdef MY_ABC_HERE
+	struct bio_list syno_pending_bios[SYNO_DEFER_GROUP_CNT_MAX]; /* TODO: fix hard code here */
+	int syno_defer_mode = conf->syno_defer_mode;
+#endif /* MY_ABC_HERE */
 
 	might_sleep();
+
+#ifdef MY_ABC_HERE
+	for (i = 0; i < SYNO_DEFER_GROUP_CNT_MAX; ++i)
+		bio_list_init(&syno_pending_bios[i]);
+#endif /* MY_ABC_HERE */
 
 	if (log_stripe(sh, s) == 0)
 		return;
@@ -1073,6 +1512,9 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 		int replace_only = 0;
 		struct bio *bi, *rbi;
 		struct md_rdev *rdev, *rrdev = NULL;
+#ifdef MY_ABC_HERE
+		int group_id = i % conf->syno_defer_group_cnt;
+#endif /* MY_ABC_HERE */
 
 		sh = head_sh;
 		if (test_and_clear_bit(R5_Wantwrite, &sh->dev[i].flags)) {
@@ -1225,7 +1667,18 @@ again:
 				trace_block_bio_remap(bi->bi_disk->queue,
 						      bi, disk_devt(conf->mddev->gendisk),
 						      sh->dev[i].sector);
+#ifdef MY_ABC_HERE
+			if (!sh->syno_stat_wait_io_start) {
+				sh->syno_stat_wait_io_start = jiffies;
+			}
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+			if (syno_defer_mode)
+				bio_list_add(&syno_pending_bios[group_id], bi);
+			else if (should_defer && op_is_write(op))
+#else /* MY_ABC_HERE */
 			if (should_defer && op_is_write(op))
+#endif /* MY_ABC_HERE */
 				bio_list_add(&pending_bios, bi);
 			else
 				submit_bio_noacct(bi);
@@ -1275,7 +1728,18 @@ again:
 				trace_block_bio_remap(rbi->bi_disk->queue,
 						      rbi, disk_devt(conf->mddev->gendisk),
 						      sh->dev[i].sector);
+#ifdef MY_ABC_HERE
+			if (!sh->syno_stat_wait_io_start) {
+				sh->syno_stat_wait_io_start = jiffies;
+			}
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+			if (syno_defer_mode)
+				bio_list_add(&syno_pending_bios[group_id], rbi);
+			else if (should_defer && op_is_write(op))
+#else /* MY_ABC_HERE */
 			if (should_defer && op_is_write(op))
+#endif /* MY_ABC_HERE */
 				bio_list_add(&pending_bios, rbi);
 			else
 				submit_bio_noacct(rbi);
@@ -1297,7 +1761,13 @@ again:
 			goto again;
 	}
 
+#ifdef MY_ABC_HERE
+	if (syno_defer_mode)
+		syno_defer_issue_bios(conf, syno_pending_bios);
+	else if (should_defer && !bio_list_empty(&pending_bios))
+#else /* MY_ABC_HERE */
 	if (should_defer && !bio_list_empty(&pending_bios))
+#endif /* MY_ABC_HERE */
 		defer_issue_bios(conf, head_sh->sector, &pending_bios);
 }
 
@@ -1313,7 +1783,14 @@ async_copy_data(int frombio, struct bio *bio, struct page **page,
 	struct async_submit_ctl submit;
 	enum async_tx_flags flags = 0;
 	struct r5conf *conf = sh->raid_conf;
+#ifdef MY_ABC_HERE
+	u64 syno_stat_start_time;
+#endif /* MY_ABC_HERE */
 
+#ifdef MY_ABC_HERE
+	if (unlikely(sh->syno_stat_lat_enable))
+		syno_stat_start_time = local_clock();
+#endif /* MY_ABC_HERE */
 	if (bio->bi_iter.bi_sector >= sector)
 		page_offset = (signed)(bio->bi_iter.bi_sector - sector) * 512;
 	else
@@ -1363,6 +1840,12 @@ async_copy_data(int frombio, struct bio *bio, struct page **page,
 		page_offset +=  len;
 	}
 
+#ifdef MY_ABC_HERE
+	if (unlikely(sh->syno_stat_lat_enable)) {
+		sh->syno_stat_lat_copy_data += local_clock() -
+			syno_stat_start_time;
+	}
+#endif /* MY_ABC_HERE */
 	return tx;
 }
 
@@ -1910,6 +2393,13 @@ again:
 			}
 
 			if (head_sh->batch_head) {
+#ifdef MY_ABC_HERE
+				/* Record all handle stripe latency in head stripe. */
+				if (sh != head_sh) {
+					head_sh->syno_stat_lat_copy_data += sh->syno_stat_lat_copy_data;
+					sh->syno_stat_lat_copy_data = 0;
+				}
+#endif /* MY_ABC_HERE */
 				sh = list_first_entry(&sh->batch_list,
 						      struct stripe_head,
 						      batch_list);
@@ -2215,8 +2705,15 @@ static void raid_run_ops(struct stripe_head *sh, unsigned long ops_request)
 	int level = conf->level;
 	struct raid5_percpu *percpu;
 	unsigned long cpu;
+#ifdef MY_ABC_HERE
+	u64 syno_stat_start_time;
+#endif /* MY_ABC_HERE */
 
 	cpu = get_cpu();
+#ifdef MY_ABC_HERE
+	if (unlikely(sh->syno_stat_lat_enable))
+		syno_stat_start_time = local_clock();
+#endif /* MY_ABC_HERE */
 	percpu = per_cpu_ptr(conf->percpu, cpu);
 	if (test_bit(STRIPE_OP_BIOFILL, &ops_request)) {
 		ops_run_biofill(sh);
@@ -2224,7 +2721,11 @@ static void raid_run_ops(struct stripe_head *sh, unsigned long ops_request)
 	}
 
 	if (test_bit(STRIPE_OP_COMPUTE_BLK, &ops_request)) {
+#ifdef MY_ABC_HERE
+		if (level != 6)
+#else /* MY_ABC_HERE */
 		if (level < 6)
+#endif /* MY_ABC_HERE */
 			tx = ops_run_compute5(sh, percpu);
 		else {
 			if (sh->ops.target2 < 0 || sh->ops.target < 0)
@@ -2238,7 +2739,11 @@ static void raid_run_ops(struct stripe_head *sh, unsigned long ops_request)
 	}
 
 	if (test_bit(STRIPE_OP_PREXOR, &ops_request)) {
+#ifdef MY_ABC_HERE
+		if (level != 6)
+#else /* MY_ABC_HERE */
 		if (level < 6)
+#endif /* MY_ABC_HERE */
 			tx = ops_run_prexor5(sh, percpu, tx);
 		else
 			tx = ops_run_prexor6(sh, percpu, tx);
@@ -2253,7 +2758,11 @@ static void raid_run_ops(struct stripe_head *sh, unsigned long ops_request)
 	}
 
 	if (test_bit(STRIPE_OP_RECONSTRUCT, &ops_request)) {
+#ifdef MY_ABC_HERE
+		if (level != 6)
+#else /* MY_ABC_HERE */
 		if (level < 6)
+#endif /* MY_ABC_HERE */
 			ops_run_reconstruct5(sh, percpu, tx);
 		else
 			ops_run_reconstruct6(sh, percpu, tx);
@@ -2276,6 +2785,11 @@ static void raid_run_ops(struct stripe_head *sh, unsigned long ops_request)
 			if (test_and_clear_bit(R5_Overlap, &dev->flags))
 				wake_up(&sh->raid_conf->wait_for_overlap);
 		}
+#ifdef MY_ABC_HERE
+	if (unlikely(sh->syno_stat_lat_enable))
+		sh->syno_stat_lat_raid_run_ops += local_clock() -
+			syno_stat_start_time;
+#endif /* MY_ABC_HERE */
 	put_cpu();
 }
 
@@ -2457,6 +2971,112 @@ static int resize_chunks(struct r5conf *conf, int new_disks, int new_sectors)
 	return err;
 }
 
+#ifdef MY_ABC_HERE
+static void syno_raid5_heal_resize_stripes(struct r5conf *conf, int newsize)
+{
+#if PAGE_SIZE != DEFAULT_STRIPE_SIZE
+	syno_md_data_correction_print(conf->mddev->syno_md_data_correction_log_flag,
+		KERN_WARNING,
+		"%s: [Self Heal] page size [%ld] does not match default stripe size [%d], data correction disabled\n",
+		mdname(conf->mddev), PAGE_SIZE, DEFAULT_STRIPE_SIZE);
+#else /* PAGE_SIZE != DEFAULT_STRIPE_SIZE */
+	int err = 0;
+	int i;
+	LIST_HEAD(newstripes);
+	struct kmem_cache *sc;
+	struct syno_heal_stripe_head *osh, *nsh;
+
+	sc = kmem_cache_create(conf->syno_heal_cache_name[1-conf->syno_heal_active_name],
+		sizeof(struct syno_heal_stripe_head)+(newsize-1)*sizeof(struct syno_heal_r5dev),
+		0, 0, NULL);
+	if (!sc) {
+		syno_md_data_correction_print(conf->mddev->syno_md_data_correction_log_flag,
+			KERN_ERR,
+			"%s: [Self Heal] failed to allocate new memory cache\n",
+			mdname(conf->mddev));
+		return;
+	}
+
+	mutex_lock(&conf->syno_heal_cache_size_mutex);
+
+	for (i = conf->syno_heal_max_nr_stripes; i; i--) {
+		nsh = syno_raid5_heal_alloc_stripe(sc, GFP_KERNEL, newsize, conf);
+		if (!nsh)
+			break;
+		list_add(&nsh->sh_list, &newstripes);
+	}
+
+	if (i) {
+		/* didn't get enough, give up */
+		while (!list_empty(&newstripes)) {
+			nsh = list_entry(newstripes.next, struct syno_heal_stripe_head, sh_list);
+			list_del(&nsh->sh_list);
+			syno_raid5_heal_free_stripe(sc, nsh);
+		}
+		kmem_cache_destroy(sc);
+		mutex_unlock(&conf->syno_heal_cache_size_mutex);
+		syno_md_data_correction_print(conf->mddev->syno_md_data_correction_log_flag,
+			KERN_ERR,
+			"%s: [Self Heal] failed to allocate new stripe\n", mdname(conf->mddev));
+		return;
+	}
+
+	list_for_each_entry(nsh, &newstripes, sh_list) {
+		int disks;
+
+		spin_lock_irq(&conf->syno_heal_stripe_lock);
+		wait_event_lock_irq(conf->syno_heal_wait_for_stripe,
+			!list_empty(&conf->syno_heal_free_list),
+			conf->syno_heal_stripe_lock);
+		osh = syno_raid5_heal_get_free_stripe(conf);
+		spin_unlock_irq(&conf->syno_heal_stripe_lock);
+
+		disks = osh->disks;
+		for (i = 0; i < disks; i++)
+			nsh->dev[i].page = osh->dev[i].page;
+		syno_raid5_heal_free_stripe(conf->syno_heal_slab_cache, osh);
+	}
+	kmem_cache_destroy(conf->syno_heal_slab_cache);
+	conf->syno_heal_slab_cache = sc;
+	conf->syno_heal_active_name = 1 - conf->syno_heal_active_name;
+
+	while (!list_empty(&newstripes)) {
+		bool success = true;
+
+		nsh = list_entry(newstripes.next, struct syno_heal_stripe_head, sh_list);
+		list_del_init(&nsh->sh_list);
+
+		for (i = conf->raid_disks; i < newsize; i++) {
+			if (nsh->dev[i].page == NULL) {
+				struct page *p = alloc_page(GFP_NOIO);
+
+				nsh->dev[i].page = p;
+				if (!p) {
+					success = false;
+					err = -ENOMEM;
+					break;
+				}
+			}
+		}
+
+		if (success) {
+			syno_raid5_heal_release_stripe(nsh);
+		} else {
+			syno_raid5_heal_shrink_buffers(nsh);
+			syno_raid5_heal_free_stripe(conf->syno_heal_slab_cache, nsh);
+			conf->syno_heal_max_nr_stripes--;
+			atomic_dec(&conf->syno_heal_active_stripes);
+		}
+	}
+	mutex_unlock(&conf->syno_heal_cache_size_mutex);
+
+	if (err)
+		syno_md_data_correction_print(conf->mddev->syno_md_data_correction_log_flag,
+			KERN_ERR,
+			"%s: [Self Heal] failed to allocate all pages\n", mdname(conf->mddev));
+#endif /* PAGE_SIZE != DEFAULT_STRIPE_SIZE */
+}
+#endif /* MY_ABC_HERE */
 static int resize_stripes(struct r5conf *conf, int newsize)
 {
 	/* Make all the stripes able to hold 'newsize' devices.
@@ -2625,7 +3245,14 @@ static int resize_stripes(struct r5conf *conf, int newsize)
 	/* critical section pass, GFP_NOIO no longer needed */
 
 	if (!err)
+#ifdef MY_ABC_HERE
+	{
 		conf->pool_size = newsize;
+		syno_raid5_heal_resize_stripes(conf, newsize);
+	}
+#else /* MY_ABC_HERE */
+		conf->pool_size = newsize;
+#endif /* MY_ABC_HERE */
 	mutex_unlock(&conf->cache_size_mutex);
 
 	return err;
@@ -2659,6 +3286,62 @@ static void shrink_stripes(struct r5conf *conf)
 	conf->slab_cache = NULL;
 }
 
+#ifdef MY_ABC_HERE
+static int syno_raid5_data_corrupt_disk_get(const struct r5conf *conf, const int pd_idx,
+					    const int qd_idx, int bad_disk, int *bad_disks,
+					    int max_bad_disk)
+{
+	int d = 0;
+	int num_repair = 0;
+	int repair_disk[2] = {-1, -1};
+	int num_bad_disk = 0;
+
+	if (pd_idx != bad_disk && qd_idx != bad_disk)
+		bad_disks[num_bad_disk++] = bad_disk;
+
+	for (d = 0; d < conf->raid_disks; d++) {
+		struct md_rdev *rdev;
+		rcu_read_lock();
+		rdev = rcu_dereference(conf->disks[d].rdev);
+		if (!(rdev && test_bit(In_sync, &rdev->flags))) {
+			if (num_repair >= conf->max_degraded) {
+				WARN_ON(1);
+				rcu_read_unlock();
+				return -1;
+			}
+			repair_disk[num_repair++] = d;
+		}
+		rcu_read_unlock();
+	}
+	WARN_ON(conf->max_degraded != num_repair);
+
+	for (d = 0; d < num_repair && num_bad_disk < max_bad_disk; d++) {
+		if (pd_idx != repair_disk[d] && qd_idx != repair_disk[d])
+			bad_disks[num_bad_disk++] = repair_disk[d];
+	}
+
+	return num_bad_disk;
+}
+
+static void syno_raid5_autoremap_report_sectors(const struct r5conf *conf, int bad_disk,
+						struct stripe_head *sh, struct md_rdev *rdev)
+{
+	sector_t raid_sector = 0;
+	int d = 0;
+	/* for now, maximum possible disk with data-corruption is max_degraded of RAID6 (2) + 1*/
+	int bad_disks[3] = {0};
+	int num_bad_disk = 0;
+
+	num_bad_disk = syno_raid5_data_corrupt_disk_get(conf, sh->pd_idx, sh->qd_idx, bad_disk,
+							bad_disks, 3);
+
+	for (d = 0; d < num_bad_disk; d++) {
+		raid_sector = raid5_compute_blocknr(sh, bad_disks[d], 0);
+		syno_auto_remap_report(conf->mddev, raid_sector, rdev->bdev);
+	}
+}
+#endif /* MY_ABC_HERE */
+
 static void raid5_end_read_request(struct bio * bi)
 {
 	struct stripe_head *sh = bi->bi_private;
@@ -2667,6 +3350,9 @@ static void raid5_end_read_request(struct bio * bi)
 	char b[BDEVNAME_SIZE];
 	struct md_rdev *rdev = NULL;
 	sector_t s;
+#ifdef MY_ABC_HERE
+	bool retry_for_remap = false;
+#endif /* MY_ABC_HERE */
 
 	for (i=0 ; i<disks; i++)
 		if (bi == &sh->dev[i].req)
@@ -2694,9 +3380,25 @@ static void raid5_end_read_request(struct bio * bi)
 		s = sh->sector + rdev->new_data_offset;
 	else
 		s = sh->sector + rdev->data_offset;
+
+#ifdef MY_ABC_HERE
+	if (bio_flagged(bi, BIO_SYNO_AUTO_REMAP)) {
+		bio_clear_flag(bi, BIO_SYNO_AUTO_REMAP);
+		pr_warn("%s:%s(%d) BIO_SYNO_AUTO_REMAP detected, sector:[%llu], sh count:[%d] disk count:[%d]\n",
+			__FILE__, __func__, __LINE__, (unsigned long long)sh->sector,
+			atomic_read(&sh->count), i);
+		syno_raid5_autoremap_report_sectors(conf, i, sh, rdev);
+	}
+#endif /* MY_ABC_HERE */
+
 	if (!bi->bi_status) {
 		set_bit(R5_UPTODATE, &sh->dev[i].flags);
 		if (test_bit(R5_ReadError, &sh->dev[i].flags)) {
+#ifdef MY_ABC_HERE
+			syno_report_correct_bad_sector(s,
+						       conf->mddev->md_minor, rdev->bdev,
+						       __func__);
+#endif /* MY_ABC_HERE */
 			/* Note that this cannot happen on a
 			 * replacement device.  We just fail those on
 			 * any error
@@ -2721,6 +3423,10 @@ static void raid5_end_read_request(struct bio * bi)
 
 		if (atomic_read(&rdev->read_errors))
 			atomic_set(&rdev->read_errors, 0);
+#ifdef MY_ABC_HERE
+		if (test_bit(R5_SynoAutoRemaped, &sh->dev[i].flags))
+			clear_bit(R5_SynoAutoRemaped, &sh->dev[i].flags);
+#endif /* MY_ABC_HERE */
 	} else {
 		const char *bdn = bdevname(rdev->bdev, b);
 		int retry = 0;
@@ -2729,7 +3435,16 @@ static void raid5_end_read_request(struct bio * bi)
 		clear_bit(R5_UPTODATE, &sh->dev[i].flags);
 		if (!(bi->bi_status == BLK_STS_PROTECTION))
 			atomic_inc(&rdev->read_errors);
+
+#ifdef MY_ABC_HERE
+		if (conf->mddev->syno_auto_remap &&
+		    !test_bit(R5_SynoAutoRemaped, &sh->dev[i].flags)) {
+			retry = 1;
+			retry_for_remap = true;
+		} else if (test_bit(R5_ReadRepl, &sh->dev[i].flags))
+#else /* MY_ABC_HERE */
 		if (test_bit(R5_ReadRepl, &sh->dev[i].flags))
+#endif /* MY_ABC_HERE */
 			pr_warn_ratelimited(
 				"md/raid:%s: read error on replacement device (sector %llu on %s).\n",
 				mdname(conf->mddev),
@@ -2737,6 +3452,9 @@ static void raid5_end_read_request(struct bio * bi)
 				bdn);
 		else if (conf->mddev->degraded >= conf->max_degraded) {
 			set_bad = 1;
+#ifdef MY_ABC_HERE
+			if (!test_bit(SynoDiskError, &rdev->flags))
+#endif /* MY_ABC_HERE */
 			pr_warn_ratelimited(
 				"md/raid:%s: read error not correctable (sector %llu on %s).\n",
 				mdname(conf->mddev),
@@ -2752,7 +3470,12 @@ static void raid5_end_read_request(struct bio * bi)
 				bdn);
 		} else if (atomic_read(&rdev->read_errors)
 			 > conf->max_nr_stripes) {
+#ifdef MY_ABC_HERE
+			if (!test_bit(Faulty, &rdev->flags) &&
+			    !test_bit(SynoDiskError, &rdev->flags)) {
+#else /* MY_ABC_HERE */
 			if (!test_bit(Faulty, &rdev->flags)) {
+#endif /* MY_ABC_HERE */
 				pr_warn("md/raid:%s: %d read_errors > %d stripes\n",
 				    mdname(conf->mddev),
 				    atomic_read(&rdev->read_errors),
@@ -2765,12 +3488,34 @@ static void raid5_end_read_request(struct bio * bi)
 		if (set_bad && test_bit(In_sync, &rdev->flags)
 		    && !test_bit(R5_ReadNoMerge, &sh->dev[i].flags))
 			retry = 1;
+
+#ifdef MY_ABC_HERE
+		if (!syno_is_device_disappear(rdev->bdev))
+			syno_report_bad_sector(s, READ, conf->mddev->md_minor,
+				rdev->bdev, __func__);
+#endif /* MY_ABC_HERE */
 		if (retry)
 			if (sh->qd_idx >= 0 && sh->pd_idx == i)
+#ifdef MY_ABC_HERE
+				if (retry_for_remap)
+					set_bit(R5_SynoAutoRemaped, &sh->dev[i].flags);
+				else
+					set_bit(R5_ReadError, &sh->dev[i].flags);
+#else /* MY_ABC_HERE */
 				set_bit(R5_ReadError, &sh->dev[i].flags);
+#endif /* MY_ABC_HERE */
 			else if (test_bit(R5_ReadNoMerge, &sh->dev[i].flags)) {
+#ifdef MY_ABC_HERE
+				if (retry_for_remap)
+					set_bit(R5_SynoAutoRemaped, &sh->dev[i].flags);
+				else {
+					set_bit(R5_ReadError, &sh->dev[i].flags);
+					clear_bit(R5_ReadNoMerge, &sh->dev[i].flags);
+				}
+#else /* MY_ABC_HERE */
 				set_bit(R5_ReadError, &sh->dev[i].flags);
 				clear_bit(R5_ReadNoMerge, &sh->dev[i].flags);
+#endif /* MY_ABC_HERE */
 			} else
 				set_bit(R5_ReadNoMerge, &sh->dev[i].flags);
 		else {
@@ -2780,7 +3525,16 @@ static void raid5_end_read_request(struct bio * bi)
 			      && test_bit(In_sync, &rdev->flags)
 			      && rdev_set_badblocks(
 				      rdev, sh->sector, RAID5_STRIPE_SECTORS(conf), 0)))
+#ifdef MY_ABC_HERE
+			{
 				md_error(conf->mddev, rdev);
+				if (!syno_is_device_disappear(rdev->bdev) &&
+				    test_bit(SynoDiskError, &rdev->flags))
+					set_bit(STRIPE_SYNO_NORETRY, &sh->state);
+			}
+#else /* MY_ABC_HERE */
+				md_error(conf->mddev, rdev);
+#endif /* MY_ABC_HERE */
 		}
 	}
 	rdev_dec_pending(rdev, conf->mddev);
@@ -2836,6 +3590,14 @@ static void raid5_end_write_request(struct bio *bi)
 			set_bit(R5_MadeGoodRepl, &sh->dev[i].flags);
 	} else {
 		if (bi->bi_status) {
+#ifdef MY_ABC_HERE
+			if (!syno_is_device_disappear(rdev->bdev))
+				syno_report_bad_sector(use_new_offset(conf, sh) ?
+					sh->sector + rdev->new_data_offset :
+					sh->sector + rdev->data_offset,
+					WRITE, conf->mddev->md_minor,
+					conf->disks[i].rdev->bdev, __func__);
+#endif /* MY_ABC_HERE */
 			set_bit(STRIPE_DEGRADED, &sh->state);
 			set_bit(WriteErrorSeen, &rdev->flags);
 			set_bit(R5_WriteError, &sh->dev[i].flags);
@@ -2863,12 +3625,162 @@ static void raid5_end_write_request(struct bio *bi)
 	if (!test_and_clear_bit(R5_DOUBLE_LOCKED, &sh->dev[i].flags))
 		clear_bit(R5_LOCKED, &sh->dev[i].flags);
 	set_bit(STRIPE_HANDLE, &sh->state);
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 	raid5_release_stripe(sh);
+#endif /* MY_ABC_HERE */
 
 	if (sh->batch_head && sh != sh->batch_head)
 		raid5_release_stripe(sh->batch_head);
+#ifdef MY_ABC_HERE
+	raid5_release_stripe(sh);
+#endif /* MY_ABC_HERE */
 }
 
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+static inline bool syno_raid5_is_max_degrade(struct mddev *mddev)
+{
+	struct r5conf *conf = (struct r5conf *) mddev->private;
+
+	return conf->max_degraded <= mddev->degraded;
+}
+#endif /* MY_ABC_HERE || MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+/**
+ * This function is copied from raid5_error.
+ * Difference is that we allow raid to fail disk even when max degraded.
+ */
+static void syno_raid5_error_common(struct mddev *mddev, struct md_rdev *rdev)
+{
+	char b[BDEVNAME_SIZE];
+	struct r5conf *conf = mddev->private;
+	unsigned long flags;
+
+	pr_debug("raid456: error called\n");
+
+	spin_lock_irqsave(&conf->device_lock, flags);
+
+	set_bit(Faulty, &rdev->flags);
+	clear_bit(In_sync, &rdev->flags);
+	mddev->degraded = raid5_calc_degraded(conf);
+#ifdef MY_ABC_HERE
+	if (mddev->degraded > conf->max_degraded &&
+		mddev->syno_nodev_and_crashed != MD_CRASHED_ASSEMBLE)
+		mddev->syno_nodev_and_crashed = MD_CRASHED;
+#endif /* MY_ABC_HERE */
+	spin_unlock_irqrestore(&conf->device_lock, flags);
+	set_bit(MD_RECOVERY_INTR, &mddev->recovery);
+
+	set_bit(Blocked, &rdev->flags);
+	set_mask_bits(&mddev->sb_flags, 0,
+		      BIT(MD_SB_CHANGE_DEVS) | BIT(MD_SB_CHANGE_PENDING));
+	pr_crit("md/raid:%s: Disk failure on %s, disabling device.\n"
+		"md/raid:%s: Operation continuing on %d devices.\n",
+		mdname(mddev),
+		bdevname(rdev->bdev, b),
+		mdname(mddev),
+		conf->raid_disks - mddev->degraded);
+	r5c_update_on_rdev_error(mddev, rdev);
+}
+
+/**
+ * copy it from original error(...), and modify
+ * the case: conf->max_degraded <= mddev->degraded
+ *
+ * In such case, we must let it can keep read from disk
+ *
+ * @param mddev  passing from md.c
+ * @param rdev   passing from md.c
+ *
+ * @see syno_error_for_hotplug
+ */
+static void syno_raid5_error_for_internal(struct mddev *mddev, struct md_rdev *rdev)
+{
+	char b1[BDEVNAME_SIZE];
+#ifdef MY_ABC_HERE
+	char b2[BDEVNAME_SIZE];
+	struct md_rdev *rdev_tmp;
+#endif /* MY_ABC_HERE */
+
+	if (test_bit(In_sync, &rdev->flags) &&
+		syno_raid5_is_max_degrade(mddev)) {
+#ifdef MY_ABC_HERE
+		if (!test_bit(Faulty, &rdev->flags) && !test_bit(SynoDiskError, &rdev->flags)) {
+			set_bit(MD_SB_CHANGE_DEVS, &mddev->flags);
+			/*
+			 * find out the disk in sync now, remove it to let it fail to building
+			 * parity.
+			 */
+			list_for_each_entry(rdev_tmp, &mddev->disks, same_set) {
+				if (!test_bit(Faulty, &rdev_tmp->flags) &&
+				    !test_bit(In_sync, &rdev_tmp->flags)) {
+					pr_warn("%s[%d]:%s: %s has read/write error, "
+						"but it gonna to crashed. "
+						"We remove %s from raid for stopping sync\n",
+						__FILE__, __LINE__, __func__,
+						bdevname(rdev->bdev, b1),
+						bdevname(rdev_tmp->bdev, b2));
+					set_bit(MD_RECOVERY_INTR, &mddev->recovery);
+					syno_raid_rdev_unplug(mddev, rdev_tmp->bdev->bd_dev);
+				}
+			}
+			set_bit(SynoDiskError, &rdev->flags);
+		}
+#endif /* MY_ABC_HERE */
+		pr_warn("%s[%d]:%s: disk error on %s\n",
+			   __FILE__, __LINE__, __func__,
+			   bdevname(rdev->bdev, b1));
+	} else {
+		syno_raid5_error_common(mddev, rdev);
+	}
+}
+
+/**
+ * This function is main for raid5
+ * when the error_handler meet hotplug event.
+ *
+ * Internal raid5 error_handler must using
+ * syno_error_for_internal.
+ *
+ * When md meet a r/w error at conf->max_degraded <=
+ * mddev->degraded, we do not set it faulty, because it
+ * would become crashed, so we just let it become read only in
+ * such situation.
+ *
+ * External raid5 error_handler must using this function.
+ * because this type of error is hotplug event, we can't just
+ * let it be read-only, instead of this, we make it faulty
+ *
+ * If there is going to be crashed in raid 4/5/6, and we want
+ * hotplug it. We need unplug all other disk which are building
+ * parity now. Otherwise the status will be error in such
+ * disks("U" instead of "_" )
+ *
+ * @param mddev passing from md.c
+ * @param rdev passing from md.c
+ */
+static void syno_raid5_error_for_hotplug(struct mddev *mddev, struct md_rdev *rdev)
+{
+	char b1[BDEVNAME_SIZE], b2[BDEVNAME_SIZE];
+	struct md_rdev *rdev_tmp;
+
+	if (test_bit(In_sync, &rdev->flags) &&
+	    syno_raid5_is_max_degrade(mddev)) {
+		list_for_each_entry(rdev_tmp, &mddev->disks, same_set) {
+			if (!test_bit(In_sync, &rdev_tmp->flags) &&
+			    !test_bit(Faulty, &rdev_tmp->flags)) {
+				pr_warn("[%s] %d: %s is being to unplug, but %s is building parity now, disable both\n",
+					__FILE__, __LINE__,
+					bdevname(rdev->bdev, b2),
+					bdevname(rdev_tmp->bdev, b1));
+				syno_raid_rdev_unplug(mddev, rdev_tmp->bdev->bd_dev);
+			}
+		}
+	}
+	syno_raid5_error_common(mddev, rdev);
+}
+#else /* MY_ABC_HERE */
 static void raid5_error(struct mddev *mddev, struct md_rdev *rdev)
 {
 	char b[BDEVNAME_SIZE];
@@ -2906,6 +3818,7 @@ static void raid5_error(struct mddev *mddev, struct md_rdev *rdev)
 		conf->raid_disks - mddev->degraded);
 	r5c_update_on_rdev_error(mddev, rdev);
 }
+#endif /* MY_ABC_HERE */
 
 /*
  * Input: a 'big' sector number,
@@ -2928,6 +3841,9 @@ sector_t raid5_compute_sector(struct r5conf *conf, sector_t r_sector,
 	int raid_disks = previous ? conf->previous_raid_disks
 				  : conf->raid_disks;
 	int data_disks = raid_disks - conf->max_degraded;
+#ifdef MY_ABC_HERE
+	int uneven_count = 0;
+#endif /* MY_ABC_HERE */
 
 	/* First compute the information on this sector */
 
@@ -2951,6 +3867,14 @@ sector_t raid5_compute_sector(struct r5conf *conf, sector_t r_sector,
 	case 4:
 		pd_idx = data_disks;
 		break;
+#ifdef MY_ABC_HERE
+	case SYNO_RAID_LEVEL_F1:
+		uneven_count = md_raid_f1_uneven_count(conf->algorithm);
+		pd_idx = data_disks - sector_div(stripe2, raid_disks + uneven_count);
+		pd_idx = ((pd_idx < 0) ? 0 : pd_idx);
+		*dd_idx = (pd_idx + 1 + *dd_idx) % raid_disks;
+		break;
+#endif /* MY_ABC_HERE */
 	case 5:
 		switch (algorithm) {
 		case ALGORITHM_LEFT_ASYMMETRIC:
@@ -3137,6 +4061,13 @@ sector_t raid5_compute_blocknr(struct stripe_head *sh, int i, int previous)
 		return 0;
 	switch(conf->level) {
 	case 4: break;
+#ifdef MY_ABC_HERE
+	case SYNO_RAID_LEVEL_F1:
+		if (i < sh->pd_idx)
+			i += raid_disks;
+		i -= (sh->pd_idx + 1);
+		break;
+#endif /* MY_ABC_HERE */
 	case 5:
 		switch (algorithm) {
 		case ALGORITHM_LEFT_ASYMMETRIC:
@@ -3336,8 +4267,16 @@ schedule_reconstruction(struct stripe_head *sh, struct stripe_head_state *s,
 		set_bit(STRIPE_OP_RECONSTRUCT, &s->ops_request);
 
 		if (s->locked + conf->max_degraded == disks)
+#ifdef MY_ABC_HERE
+			if (!test_and_set_bit(STRIPE_FULL_WRITE, &sh->state)) {
+				atomic_inc(&conf->pending_full_writes);
+				sh->syno_stat_is_full_write = true;
+			}
+		sh->syno_stat_is_rcw = true;
+#else /* MY_ABC_HERE */
 			if (!test_and_set_bit(STRIPE_FULL_WRITE, &sh->state))
 				atomic_inc(&conf->pending_full_writes);
+#endif /* MY_ABC_HERE */
 	} else {
 		BUG_ON(!(test_bit(R5_UPTODATE, &sh->dev[pd_idx].flags) ||
 			test_bit(R5_Wantcompute, &sh->dev[pd_idx].flags)));
@@ -3369,6 +4308,9 @@ schedule_reconstruction(struct stripe_head *sh, struct stripe_head_state *s,
 		set_bit(STRIPE_OP_PREXOR, &s->ops_request);
 		set_bit(STRIPE_OP_BIODRAIN, &s->ops_request);
 		set_bit(STRIPE_OP_RECONSTRUCT, &s->ops_request);
+#ifdef MY_ABC_HERE
+		sh->syno_stat_is_rcw = false;
+#endif /* MY_ABC_HERE */
 	}
 
 	/* keep the parity disk(s) locked while asynchronous operations
@@ -3708,6 +4650,34 @@ handle_failed_sync(struct r5conf *conf, struct stripe_head *sh,
 	md_done_sync(conf->mddev, RAID5_STRIPE_SECTORS(conf), !abort);
 }
 
+#ifdef MY_ABC_HERE
+static void
+syno_handle_failed_expand(struct r5conf *conf, struct stripe_head *sh,
+		   struct stripe_head_state *s)
+{
+	int disks = sh->disks;
+	int i;
+
+	BUG_ON(sh->batch_head);
+	for (i = disks; i--; ) {
+		struct r5dev *dev = &sh->dev[i];
+		/* Aborting all writes and unlocked it.
+		 */
+		if (test_and_clear_bit(R5_LOCKED, &dev->flags)) {
+			clear_bit(R5_Wantwrite, &dev->flags);
+			s->locked--;
+		}
+	}
+	clear_bit(STRIPE_EXPANDING, &sh->state);
+	clear_bit(STRIPE_EXPAND_READY, &sh->state);
+	s->expanded = 0;
+	atomic_dec(&conf->reshape_stripes);
+	conf->syno_reshape_failed = 1;
+	wake_up(&conf->wait_for_overlap);
+	md_done_sync(conf->mddev, RAID5_STRIPE_SECTORS(conf), 0);
+}
+#endif /* MY_ABC_HERE */
+
 static int want_replace(struct stripe_head *sh, int disk_idx)
 {
 	struct md_rdev *rdev;
@@ -3735,6 +4705,9 @@ static int need_this_block(struct stripe_head *sh, struct stripe_head_state *s,
 	bool force_rcw = (sh->raid_conf->rmw_level == PARITY_DISABLE_RMW);
 
 
+#ifdef MY_ABC_HERE
+	force_rcw |= s->syno_force_stripe_rcw;
+#endif /* MY_ABC_HERE */
 	if (test_bit(R5_LOCKED, &dev->flags) ||
 	    test_bit(R5_UPTODATE, &dev->flags))
 		/* No point reading this as we already have it or have
@@ -3753,6 +4726,11 @@ static int need_this_block(struct stripe_head *sh, struct stripe_head_state *s,
 		 * When replacing, we need the replaced block.
 		 */
 		return 1;
+
+#ifdef MY_ABC_HERE
+	if (s->syno_full_stripe_merging && test_bit(R5_Insync, &dev->flags))
+		return 1;
+#endif /* MY_ABC_HERE */
 
 	if ((s->failed >= 1 && fdev[0]->toread) ||
 	    (s->failed >= 2 && fdev[1]->toread))
@@ -4090,6 +5068,9 @@ static int handle_stripe_dirtying(struct r5conf *conf,
 	 * generate correct data from the parity.
 	 */
 	if (conf->rmw_level == PARITY_DISABLE_RMW ||
+#ifdef MY_ABC_HERE
+	    unlikely(s->syno_force_stripe_rcw) ||
+#endif /* MY_ABC_HERE */
 	    (recovery_cp < MaxSector && sh->sector >= recovery_cp &&
 	     s->failed == 0)) {
 		/* Calculate the real rcw later - for now make it
@@ -4300,15 +5281,33 @@ static void handle_parity_checks5(struct r5conf *conf, struct stripe_head *sh,
 			 */
 			set_bit(STRIPE_INSYNC, &sh->state);
 		else {
+#ifdef MY_ABC_HERE
+			struct mddev *mddev = conf->mddev;
+
+			if (mddev->syno_sync_debug)
+				pr_err("%s: raid5 not sync in stripe sector [%llu] size [%llu]\n",
+					mdname(mddev),
+					(unsigned long long)sh->sector,
+					(unsigned long long)RAID5_STRIPE_SECTORS(conf));
+#endif /* MY_ABC_HERE */
 			atomic64_add(RAID5_STRIPE_SECTORS(conf), &conf->mddev->resync_mismatches);
 			if (test_bit(MD_RECOVERY_CHECK, &conf->mddev->recovery)) {
 				/* don't try to repair!! */
 				set_bit(STRIPE_INSYNC, &sh->state);
+#ifdef MY_ABC_HERE
+				if (!mddev->syno_sync_debug)
+					pr_warn_ratelimited("%s: mismatch sector in range %llu-%llu\n",
+						mdname(conf->mddev),
+						(unsigned long long) sh->sector,
+						(unsigned long long) sh->sector +
+						RAID5_STRIPE_SECTORS(conf));
+#else /* MY_ABC_HERE */
 				pr_warn_ratelimited("%s: mismatch sector in range "
 						    "%llu-%llu\n", mdname(conf->mddev),
 						    (unsigned long long) sh->sector,
 						    (unsigned long long) sh->sector +
 						    RAID5_STRIPE_SECTORS(conf));
+#endif /* MY_ABC_HERE */
 			} else {
 				sh->check_state = check_state_compute_run;
 				set_bit(STRIPE_COMPUTE_RUN, &sh->state);
@@ -4465,15 +5464,33 @@ static void handle_parity_checks6(struct r5conf *conf, struct stripe_head *sh,
 				 */
 			}
 		} else {
+#ifdef MY_ABC_HERE
+			struct mddev *mddev = conf->mddev;
+
+			if (mddev->syno_sync_debug)
+				pr_err("%s: raid6 not sync in stripe sector [%llu] size [%llu]\n",
+					mdname(mddev),
+					(unsigned long long)sh->sector,
+					(unsigned long long)RAID5_STRIPE_SECTORS(conf));
+#endif /* MY_ABC_HERE */
 			atomic64_add(RAID5_STRIPE_SECTORS(conf), &conf->mddev->resync_mismatches);
 			if (test_bit(MD_RECOVERY_CHECK, &conf->mddev->recovery)) {
 				/* don't try to repair!! */
 				set_bit(STRIPE_INSYNC, &sh->state);
+#ifdef MY_ABC_HERE
+				if (!mddev->syno_sync_debug)
+					pr_warn_ratelimited("%s: mismatch sector in range %llu-%llu\n",
+						mdname(conf->mddev),
+						(unsigned long long) sh->sector,
+						(unsigned long long) sh->sector +
+						RAID5_STRIPE_SECTORS(conf));
+#else /* MY_ABC_HERE */
 				pr_warn_ratelimited("%s: mismatch sector in range "
 						    "%llu-%llu\n", mdname(conf->mddev),
 						    (unsigned long long) sh->sector,
 						    (unsigned long long) sh->sector +
 						    RAID5_STRIPE_SECTORS(conf));
+#endif /* MY_ABC_HERE */
 			} else {
 				int *target = &sh->ops.target;
 
@@ -4588,10 +5605,26 @@ static void analyse_stripe(struct stripe_head *sh, struct stripe_head_state *s)
 	int i;
 	int do_recovery = 0;
 
+#ifdef MY_ABC_HERE
+	unsigned char is_bad_sh = 0;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	int non_full_insync = 0;
+	int non_full_insync_num[2] = {-1, -1};
+#endif /* MY_ABC_HERE */
+
 	memset(s, 0, sizeof(*s));
+
+#ifdef MY_ABC_HERE
+	if (test_and_clear_bit(STRIPE_SYNO_NORETRY, &sh->state))
+		is_bad_sh = 1;
+#endif /* MY_ABC_HERE */
 
 	s->expanding = test_bit(STRIPE_EXPAND_SOURCE, &sh->state) && !sh->batch_head;
 	s->expanded = test_bit(STRIPE_EXPAND_READY, &sh->state) && !sh->batch_head;
+#ifdef MY_ABC_HERE
+	s->syno_full_stripe_merging = test_bit(SYNO_FULL_STRIPE_MERGING, &sh->syno_full_stripe_merge_state);
+#endif /* MY_ABC_HERE */
 	s->failed_num[0] = -1;
 	s->failed_num[1] = -1;
 	s->log_failed = r5l_log_disk_error(conf);
@@ -4636,6 +5669,10 @@ static void analyse_stripe(struct stripe_head *sh, struct stripe_head_state *s)
 			s->to_write++;
 			if (!test_bit(R5_OVERWRITE, &dev->flags))
 				s->non_overwrite++;
+#ifdef MY_ABC_HERE
+			if (unlikely(bio_flagged(dev->towrite, BIO_CORRECTION_ABORT)))
+				s->syno_force_stripe_rcw = true;
+#endif /* MY_ABC_HERE */
 		}
 		if (dev->written)
 			s->written++;
@@ -4685,7 +5722,16 @@ static void analyse_stripe(struct stripe_head *sh, struct stripe_head_state *s)
 				set_bit(R5_ReadError, &dev->flags);
 			}
 		} else if (test_bit(In_sync, &rdev->flags))
+#ifdef MY_ABC_HERE
+		{
+			if (!is_bad_sh &&
+			    !(test_bit(SynoDiskError, &rdev->flags) &&
+			      test_bit(STRIPE_SYNCING, &sh->state)))
+				set_bit(R5_Insync, &dev->flags);
+		}
+#else /* MY_ABC_HERE */
 			set_bit(R5_Insync, &dev->flags);
+#endif /* MY_ABC_HERE */
 		else if (sh->sector + RAID5_STRIPE_SECTORS(conf) <= rdev->recovery_offset)
 			/* in sync if before recovery_offset */
 			set_bit(R5_Insync, &dev->flags);
@@ -4755,7 +5801,36 @@ static void analyse_stripe(struct stripe_head *sh, struct stripe_head_state *s)
 			s->injournal++;
 		if (test_bit(R5_InJournal, &dev->flags) && dev->written)
 			s->just_cached++;
+#ifdef MY_ABC_HERE
+		if (rdev && test_bit(SynoNonFullInsync, &rdev->flags)) {
+			if (non_full_insync < 2)
+				non_full_insync_num[non_full_insync] = i;
+			non_full_insync++;
+		}
+#endif /* MY_ABC_HERE */
 	}
+#ifdef MY_ABC_HERE
+	/* Only do fast scrubbing when there is no failed device. Otherwise,
+	 * we might let in-flight IO on this sh return Error.
+	 */
+	if (test_bit(STRIPE_SYNCING, &sh->state) &&
+	    test_bit(MD_RECOVERY_REQUESTED, &(conf->mddev->recovery)) &&
+	    !s->failed && non_full_insync &&
+	    non_full_insync <= conf->max_degraded) {
+		for (i = 0; i < non_full_insync && i < 2; i++) {
+			int idx = non_full_insync_num[i];
+
+			if (idx == -1)
+				break;
+			clear_bit(R5_Insync, &sh->dev[idx].flags);
+			s->failed_num[s->failed] = idx;
+			s->failed++;
+			/* Since requested resync will set s->syncing = 1,
+			 * we don't need to set do_recovery here
+			 */
+		}
+	}
+#endif /* MY_ABC_HERE */
 	if (test_bit(STRIPE_SYNCING, &sh->state)) {
 		/* If there is a failed device being replaced,
 		 *     we must be recovering.
@@ -4859,6 +5934,9 @@ static void break_stripe_batch_list(struct stripe_head *head_sh,
 		if (handle_flags == 0 ||
 		    sh->state & handle_flags)
 			set_bit(STRIPE_HANDLE, &sh->state);
+#ifdef MY_ABC_HERE
+		sh->syno_stat_wait_io_start = 0;
+#endif /* MY_ABC_HERE */
 		raid5_release_stripe(sh);
 	}
 	spin_lock_irq(&head_sh->stripe_lock);
@@ -4882,6 +5960,9 @@ static void handle_stripe(struct stripe_head *sh)
 	int prexor;
 	int disks = sh->disks;
 	struct r5dev *pdev, *qdev;
+#ifdef MY_ABC_HERE
+	u64 syno_stat_start_time;
+#endif /* MY_ABC_HERE */
 
 	clear_bit(STRIPE_HANDLE, &sh->state);
 
@@ -4900,6 +5981,11 @@ static void handle_stripe(struct stripe_head *sh)
 		set_bit(STRIPE_HANDLE, &sh->state);
 		return;
 	}
+
+#ifdef MY_ABC_HERE
+	if (unlikely(sh->syno_stat_lat_enable))
+		syno_stat_start_time = local_clock();
+#endif /* MY_ABC_HERE */
 
 	if (test_and_clear_bit(STRIPE_BATCH_ERR, &sh->state))
 		break_stripe_batch_list(sh, 0);
@@ -4920,6 +6006,15 @@ static void handle_stripe(struct stripe_head *sh)
 		}
 		spin_unlock(&sh->stripe_lock);
 	}
+#ifdef MY_ABC_HERE
+	if (test_bit(MD_RECOVERY_RUNNING, &conf->mddev->recovery)) {
+		clear_bit(SYNO_FULL_STRIPE_MERGE, &sh->syno_full_stripe_merge_state);
+		clear_bit(SYNO_FULL_STRIPE_MERGING, &sh->syno_full_stripe_merge_state);
+		clear_bit(SYNO_FULL_STRIPE_MERGE_DO_WRITE, &sh->syno_full_stripe_merge_state);
+	} else if (test_bit(SYNO_FULL_STRIPE_MERGE, &sh->syno_full_stripe_merge_state)) {
+		set_bit(SYNO_FULL_STRIPE_MERGING, &sh->syno_full_stripe_merge_state);
+	}
+#endif /* MY_ABC_HERE */
 	clear_bit(STRIPE_DELAYED, &sh->state);
 
 	pr_debug("handling stripe %llu, state=%#lx cnt=%d, "
@@ -4927,6 +6022,16 @@ static void handle_stripe(struct stripe_head *sh)
 	       (unsigned long long)sh->sector, sh->state,
 	       atomic_read(&sh->count), sh->pd_idx, sh->qd_idx,
 	       sh->check_state, sh->reconstruct_state);
+#ifdef MY_ABC_HERE
+	if (sh->syno_stat_wait_delay_start) {
+		sh->syno_stat_wait_delay += jiffies - sh->syno_stat_wait_delay_start;
+		sh->syno_stat_wait_delay_start = 0;
+	}
+	if (sh->syno_stat_wait_io_start) {
+		sh->syno_stat_wait_io += jiffies - sh->syno_stat_wait_io_start;
+		sh->syno_stat_wait_io_start = 0;
+	}
+#endif /* MY_ABC_HERE */
 
 	analyse_stripe(sh, &s);
 
@@ -4968,13 +6073,27 @@ static void handle_stripe(struct stripe_head *sh)
 	 */
 	if (s.failed > conf->max_degraded ||
 	    (s.log_failed && s.injournal == 0)) {
+#ifdef MY_ABC_HERE
+		clear_bit(SYNO_FULL_STRIPE_MERGE, &sh->syno_full_stripe_merge_state);
+		clear_bit(SYNO_FULL_STRIPE_MERGING, &sh->syno_full_stripe_merge_state);
+		clear_bit(SYNO_FULL_STRIPE_MERGE_DO_WRITE, &sh->syno_full_stripe_merge_state);
+		s.syno_full_stripe_merging = 0;
+#endif /* MY_ABC_HERE */
 		sh->check_state = 0;
 		sh->reconstruct_state = 0;
 		break_stripe_batch_list(sh, 0);
 		if (s.to_read+s.to_write+s.written)
 			handle_failed_stripe(conf, sh, &s, disks);
 		if (s.syncing + s.replacing)
+#ifdef MY_ABC_HERE
 			handle_failed_sync(conf, sh, &s);
+#else /* MY_ABC_HERE */
+			handle_failed_sync(conf, sh, &s);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+		if (s.expanded)
+			syno_handle_failed_expand(conf, sh, &s);
+#endif /* MY_ABC_HERE */
 	}
 
 	/* Now we check to see if any write operations have recently
@@ -4995,6 +6114,22 @@ static void handle_stripe(struct stripe_head *sh)
 		BUG_ON(sh->qd_idx >= 0 &&
 		       !test_bit(R5_UPTODATE, &sh->dev[sh->qd_idx].flags) &&
 		       !test_bit(R5_Discard, &sh->dev[sh->qd_idx].flags));
+#ifdef MY_ABC_HERE
+		set_bit(STRIPE_SYNO_STABLE_STATE, &sh->state);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+		if (test_bit(MD_RECOVERY_RUNNING, &conf->mddev->recovery) &&
+		    test_bit(MD_RECOVERY_RECOVER, &conf->mddev->recovery))
+			for (i = 0; i < s.failed; i++) {
+				struct r5dev *dev = &sh->dev[s.failed_num[i]];
+				if (test_bit(R5_UPTODATE, &dev->flags) &&
+				    !test_bit(R5_LOCKED, &dev->flags)) {
+					set_bit(R5_LOCKED, &dev->flags);
+					s.locked++;
+					set_bit(R5_Wantwrite, &dev->flags);
+				}
+			}
+#endif /* MY_ABC_HERE */
 		for (i = disks; i--; ) {
 			struct r5dev *dev = &sh->dev[i];
 			if (test_bit(R5_LOCKED, &dev->flags) &&
@@ -5017,6 +6152,23 @@ static void handle_stripe(struct stripe_head *sh)
 			s.dec_preread_active = 1;
 	}
 
+#ifdef MY_ABC_HERE
+	if (s.syno_full_stripe_merging && test_and_clear_bit(SYNO_FULL_STRIPE_MERGE_DO_WRITE, &sh->syno_full_stripe_merge_state)) {
+		for (i = disks; i--; ) {
+			struct r5dev *dev = &sh->dev[i];
+			if (!test_bit(R5_LOCKED, &dev->flags)
+			    && test_bit(R5_UPTODATE, &dev->flags)) {
+				set_bit(R5_Wantwrite, &dev->flags);
+				set_bit(R5_LOCKED, &dev->flags);
+				s.locked++;
+			}
+		}
+		clear_bit(SYNO_FULL_STRIPE_MERGE, &sh->syno_full_stripe_merge_state);
+		clear_bit(SYNO_FULL_STRIPE_MERGING, &sh->syno_full_stripe_merge_state);
+		s.syno_full_stripe_merging = 0;
+	}
+#endif /* MY_ABC_HERE */
+
 	/*
 	 * might be able to return some write requests if the parity blocks
 	 * are safe, or on a failed drive
@@ -5027,7 +6179,11 @@ static void handle_stripe(struct stripe_head *sh)
 	qdev = &sh->dev[sh->qd_idx];
 	s.q_failed = (s.failed >= 1 && s.failed_num[0] == sh->qd_idx)
 		|| (s.failed >= 2 && s.failed_num[1] == sh->qd_idx)
+#ifdef MY_ABC_HERE
+		|| conf->level != 6;
+#else /* MY_ABC_HERE */
 		|| conf->level < 6;
+#endif /* MY_ABC_HERE */
 
 	if (s.written &&
 	    (s.p_failed || ((test_bit(R5_Insync, &pdev->flags)
@@ -5052,9 +6208,19 @@ static void handle_stripe(struct stripe_head *sh)
 	    || (s.to_write && s.failed)
 	    || (s.syncing && (s.uptodate + s.compute < disks))
 	    || s.replacing
+#ifdef MY_ABC_HERE
+	    || s.syno_full_stripe_merging
+#endif /* MY_ABC_HERE */
 	    || s.expanding)
 		handle_stripe_fill(sh, &s, disks);
 
+#ifdef MY_ABC_HERE
+	if (s.syno_full_stripe_merging && !s.locked && !sh->reconstruct_state &&
+	    !sh->check_state && s.uptodate + s.failed >= disks) {
+		set_bit(SYNO_FULL_STRIPE_MERGE_DO_WRITE, &sh->syno_full_stripe_merge_state);
+		set_bit(STRIPE_HANDLE, &sh->state);
+	}
+#endif /* MY_ABC_HERE */
 	/*
 	 * When the stripe finishes full journal write cycle (write to journal
 	 * and raid disk), this is the clean up procedure so it is ready for
@@ -5267,8 +6433,32 @@ finish:
 	}
 
 	clear_bit_unlock(STRIPE_ACTIVE, &sh->state);
+#ifdef MY_ABC_HERE
+	if (unlikely(sh->syno_stat_lat_enable)) {
+		sh->syno_stat_lat_handle_stripe += local_clock() -
+			syno_stat_start_time;
+	}
+#endif /* MY_ABC_HERE */
 }
 
+#ifdef MY_ABC_HERE
+static void syno_raid5_activate_stable_delayed(struct r5conf *conf)
+{
+	while (!list_empty(&conf->syno_stable_list)) {
+		struct list_head *l = conf->syno_stable_list.next;
+		struct stripe_head *sh;
+
+		sh = list_entry(l, struct stripe_head, lru);
+		list_del_init(l);
+		clear_bit(STRIPE_DELAYED, &sh->state);
+		clear_bit(STRIPE_SYNO_STABLE_STATE, &sh->state);
+		if (!test_and_set_bit(STRIPE_PREREAD_ACTIVE, &sh->state))
+			atomic_inc(&conf->preread_active_stripes);
+		list_add_tail(&sh->lru, &conf->hold_list);
+		raid5_wakeup_stripe_thread(sh);
+	}
+}
+#endif /* MY_ABC_HERE */
 static void raid5_activate_delayed(struct r5conf *conf)
 {
 	if (atomic_read(&conf->preread_active_stripes) < IO_THRESHOLD) {
@@ -5368,6 +6558,11 @@ static void raid5_align_endio(struct bio *bi)
 	struct r5conf *conf;
 	struct md_rdev *rdev;
 	blk_status_t error = bi->bi_status;
+#ifdef MY_ABC_HERE
+	bool auto_remap = bio_flagged(bi, BIO_SYNO_AUTO_REMAP);
+
+	bio_clear_flag(bi, BIO_SYNO_AUTO_REMAP);
+#endif /* MY_ABC_HERE */
 
 	bio_put(bi);
 
@@ -5378,17 +6573,115 @@ static void raid5_align_endio(struct bio *bi)
 
 	rdev_dec_pending(rdev, conf->mddev);
 
+#ifdef MY_ABC_HERE
+	if (auto_remap) {
+		pr_warn("%s:%s(%d) BIO_SYNO_AUTO_REMAP detected\n", __FILE__, __func__, __LINE__);
+		syno_auto_remap_report(conf->mddev, raid_bi->bi_iter.bi_sector, rdev->bdev);
+	}
+#endif /* MY_ABC_HERE */
+
 	if (!error) {
 		bio_endio(raid_bi);
 		if (atomic_dec_and_test(&conf->active_aligned_reads))
 			wake_up(&conf->wait_for_quiescent);
 		return;
 	}
+#ifdef MY_ABC_HERE
+	if (!syno_is_device_disappear(rdev->bdev)) {
+		int dd_idx;
+		sector_t report_sector = raid5_compute_sector(conf,
+			raid_bi->bi_iter.bi_sector, 0, &dd_idx, NULL)
+			+ rdev->data_offset;
+
+		syno_report_bad_sector(report_sector, READ,
+			conf->mddev->md_minor, rdev->bdev, __func__);
+	}
+#endif /* MY_ABC_HERE */
 
 	pr_debug("raid5_align_endio : io error...handing IO for a retry\n");
 
 	add_bio_to_retry(raid_bi, conf);
 }
+
+#ifdef MY_ABC_HERE
+static void syno_dummy_read_endio(struct bio *bio)
+{
+	struct md_rdev *rdev = bio->bi_private;
+
+	if (bio->bi_status)
+		pr_err("%s: dummy read sector [%llu] error %d\n",
+		       mdname(rdev->mddev), (u64)bio->bi_iter.bi_sector, bio->bi_status);
+
+	rdev_dec_pending(rdev, rdev->mddev);
+	bio_put(bio);
+}
+
+static void syno_do_dummy_read(struct r5conf *conf, sector_t read_sector, sector_t leng, int idx)
+{
+	struct mddev *mddev = conf->mddev;
+	struct bio *bio = NULL;
+	struct md_rdev *rdev = NULL;
+
+	if (idx < 0) {
+		pr_err("%s: bad idx [%d]\n", mdname(mddev), idx);
+		return;
+	}
+
+	rcu_read_lock();
+	rdev = rcu_dereference(conf->disks[idx].rdev);
+	if (!rdev) {
+		pr_err("%s: failed to get rdev of idx [%d]\n", mdname(mddev), idx);
+		goto err;
+	}
+
+	if (unlikely((read_sector + leng) > mddev->dev_sectors))
+		goto err;
+
+	bio = bio_clone_fast(conf->syno_dummy_bio, GFP_NOWAIT, &mddev->bio_set);
+	if (!bio) {
+		pr_err("%s: failed to allocate dummy read bio\n", mdname(mddev));
+		goto err;
+	}
+
+	bio->bi_end_io = syno_dummy_read_endio;
+	bio->bi_private = rdev;
+	bio_set_dev(bio, rdev->bdev);
+	bio->bi_next = NULL;
+	bio->bi_opf = REQ_OP_READ;
+	bio->bi_iter.bi_sector = read_sector + rdev->data_offset;
+	bio->bi_iter.bi_size = leng << 9;
+	atomic_inc(&rdev->nr_pending);
+	rcu_read_unlock();
+
+	submit_bio_noacct(bio);
+	return;
+
+err:
+	rcu_read_unlock();
+	if (bio)
+		bio_put(bio);
+}
+
+static void syno_dummy_read(struct r5conf *conf, sector_t raid5_logical_sector,
+			    sector_t rdev_end_sector, int dd_idx)
+{
+	int dummy_dd_idx;
+	struct stripe_head sh;
+
+	if (rdev_end_sector & (sector_t)(conf->chunk_sectors - 1))
+		return;
+
+	raid5_compute_sector(conf, raid5_logical_sector, 0, &dummy_dd_idx, &sh);
+
+	if (dd_idx != sh.pd_idx)
+		return;
+
+	if (conf->level == 5)
+		syno_do_dummy_read(conf, rdev_end_sector, conf->chunk_sectors, dd_idx);
+	else if (conf->level == 6)
+		syno_do_dummy_read(conf, rdev_end_sector, 2 * conf->chunk_sectors, dd_idx);
+}
+#endif /* MY_ABC_HERE */
 
 static int raid5_read_one_chunk(struct mddev *mddev, struct bio *raid_bio)
 {
@@ -5397,6 +6690,10 @@ static int raid5_read_one_chunk(struct mddev *mddev, struct bio *raid_bio)
 	struct bio* align_bi;
 	struct md_rdev *rdev;
 	sector_t end_sector;
+#ifdef MY_ABC_HERE
+	sector_t raid5_next_stripe_sector = raid_bio->bi_iter.bi_sector +
+		(conf->raid_disks - conf->max_degraded) * conf->chunk_sectors;
+#endif /* MY_ABC_HERE */
 
 	if (!in_chunk_boundary(mddev, raid_bio)) {
 		pr_debug("%s: non aligned\n", __func__);
@@ -5472,6 +6769,11 @@ static int raid5_read_one_chunk(struct mddev *mddev, struct bio *raid_bio)
 					      align_bi, disk_devt(mddev->gendisk),
 					      raid_bio->bi_iter.bi_sector);
 		submit_bio_noacct(align_bi);
+#ifdef MY_ABC_HERE
+		if (conf->syno_dummy_read)
+			syno_dummy_read(conf, raid5_next_stripe_sector,	end_sector,
+					dd_idx);
+#endif /* MY_ABC_HERE */
 		return 1;
 	} else {
 		rcu_read_unlock();
@@ -5491,6 +6793,9 @@ static struct bio *chunk_aligned_read(struct mddev *mddev, struct bio *raid_bio)
 		struct r5conf *conf = mddev->private;
 		split = bio_split(raid_bio, sectors, GFP_NOIO, &conf->bio_split);
 		bio_chain(split, raid_bio);
+#ifdef MY_ABC_HERE
+		bio_set_flag(raid_bio, BIO_SYNO_DELAYED);
+#endif /* MY_ABC_HERE */
 		submit_bio_noacct(raid_bio);
 		raid_bio = split;
 	}
@@ -5607,7 +6912,49 @@ struct raid5_plug_cb {
 	struct blk_plug_cb	cb;
 	struct list_head	list;
 	struct list_head	temp_inactive_list[NR_STRIPE_HASH_LOCKS];
+#ifdef MY_ABC_HERE
+	int	pending_cnt;
+#endif /* MY_ABC_HERE */
 };
+
+#ifdef MY_ABC_HERE
+static bool syno_full_stripe_merge_check(struct stripe_head *sh, struct list_head *cb_list, sector_t *checked_sector)
+{
+	struct stripe_head *tmp = NULL;
+	struct r5conf *conf = sh->raid_conf;
+	int chunk_sectors = conf->chunk_sectors;
+	int stripe_cnt = 0;
+	int data_disks = (conf->raid_disks - conf->max_degraded) * (chunk_sectors / STRIPE_SECTORS);
+	int count = 0;
+	sector_t sector = sh->sector;
+	sector_t chunk_start, chunk_end;
+
+	chunk_start = round_down(sector, chunk_sectors);
+	chunk_end = chunk_start + chunk_sectors;
+
+	count = sh->overwrite_disks;
+	stripe_cnt++;
+	list_for_each_entry(tmp, cb_list, lru) {
+		if (tmp->sector >= chunk_end)
+			break;
+		count += tmp->overwrite_disks;
+		if (test_bit(SYNO_FULL_STRIPE_MERGE, &tmp->syno_full_stripe_merge_state))
+			stripe_cnt++;
+	}
+	*checked_sector = chunk_end;
+
+	if (stripe_cnt == chunk_sectors / STRIPE_SECTORS &&
+	    count >= data_disks / SYNO_FULL_STRIPE_MERGE_DENOMINATOR)
+		return true;
+
+	list_for_each_entry(tmp, cb_list, lru) {
+		if (tmp->sector >= chunk_end)
+			break;
+		clear_bit(SYNO_FULL_STRIPE_MERGE, &tmp->syno_full_stripe_merge_state);
+	}
+	return false;
+}
+#endif /* MY_ABC_HERE */
 
 static void raid5_unplug(struct blk_plug_cb *blk_cb, bool from_schedule)
 {
@@ -5620,10 +6967,19 @@ static void raid5_unplug(struct blk_plug_cb *blk_cb, bool from_schedule)
 	int hash;
 
 	if (cb->list.next && !list_empty(&cb->list)) {
+#ifdef MY_ABC_HERE
+		sector_t checked_sector = 0;
+#endif /* MY_ABC_HERE */
 		spin_lock_irq(&conf->device_lock);
 		while (!list_empty(&cb->list)) {
 			sh = list_first_entry(&cb->list, struct stripe_head, lru);
 			list_del_init(&sh->lru);
+#ifdef MY_ABC_HERE
+			if (test_bit(SYNO_FULL_STRIPE_MERGE, &sh->syno_full_stripe_merge_state) &&
+			    sh->sector >= checked_sector &&
+			    !syno_full_stripe_merge_check(sh, &cb->list, &checked_sector))
+				clear_bit(SYNO_FULL_STRIPE_MERGE, &sh->syno_full_stripe_merge_state);
+#endif /* MY_ABC_HERE */
 			/*
 			 * avoid race release_stripe_plug() sees
 			 * STRIPE_ON_UNPLUG_LIST clear but the stripe
@@ -5655,6 +7011,20 @@ static void release_stripe_plug(struct mddev *mddev,
 		raid5_unplug, mddev,
 		sizeof(struct raid5_plug_cb));
 	struct raid5_plug_cb *cb;
+#ifdef MY_ABC_HERE
+	struct r5conf *conf = sh->raid_conf;
+	int flush_stripe_cnt = mddev->syno_flush_plug_threshold;
+	int sectors_per_chunk, stripes_per_chunk;
+	sector_t tmp_sector;
+	bool is_first_stripe;
+
+	sectors_per_chunk = (sh->generation == conf->generation - 1) ?
+		conf->prev_chunk_sectors : conf->chunk_sectors;
+	stripes_per_chunk = sectors_per_chunk >> RAID5_STRIPE_SHIFT(conf);
+	tmp_sector = sh->sector;
+	is_first_stripe = !(sector_div(tmp_sector, sectors_per_chunk));
+init:
+#endif /* MY_ABC_HERE */
 
 	if (!blk_cb) {
 		raid5_release_stripe(sh);
@@ -5670,10 +7040,30 @@ static void release_stripe_plug(struct mddev *mddev,
 			INIT_LIST_HEAD(cb->temp_inactive_list + i);
 	}
 
+#ifdef MY_ABC_HERE
+	if (!test_bit(STRIPE_ON_UNPLUG_LIST, &sh->state) &&
+	    current->plug && cb->pending_cnt >= flush_stripe_cnt) {
+		if (is_first_stripe ||
+		    cb->pending_cnt >= flush_stripe_cnt + stripes_per_chunk) {
+			blk_flush_plug_list(current->plug, false);
+			blk_cb = blk_check_plugged(raid5_unplug, mddev,
+						   sizeof(struct raid5_plug_cb));
+			goto init;
+		}
+	}
+	if (!test_and_set_bit(STRIPE_ON_UNPLUG_LIST, &sh->state)) {
+		list_add_tail(&sh->lru, &cb->list);
+		/* blk_check_plugged will init pending_cnt to zero by kzalloc */
+		++cb->pending_cnt;
+	} else {
+		raid5_release_stripe(sh);
+	}
+#else /* MY_ABC_HERE */
 	if (!test_and_set_bit(STRIPE_ON_UNPLUG_LIST, &sh->state))
 		list_add_tail(&sh->lru, &cb->list);
 	else
 		raid5_release_stripe(sh);
+#endif /* MY_ABC_HERE */
 }
 
 static void make_discard_request(struct mddev *mddev, struct bio *bi)
@@ -5763,6 +7153,35 @@ static void make_discard_request(struct mddev *mddev, struct bio *bi)
 	bio_endio(bi);
 }
 
+#ifdef MY_ABC_HERE
+static void syno_do_full_stripe_merge(struct mddev *mddev, struct stripe_head *sh)
+{
+	struct r5conf *conf = mddev->private;
+	struct stripe_head *sh1;
+	sector_t stripe_addr = sh->sector;
+	int chunk_sectors = conf->chunk_sectors;
+	int i;
+
+	if (test_bit(SYNO_FULL_STRIPE_MERGE, &sh->syno_full_stripe_merge_state))
+		return;
+	stripe_addr = round_down(stripe_addr, chunk_sectors);
+
+	for (i = 0; i < chunk_sectors; i += STRIPE_SECTORS) {
+		sh1 = raid5_get_active_stripe(conf, stripe_addr+i, 0, 1, 0);
+		if (!sh1)
+			break;
+		if (sh1->batch_head) {
+			release_stripe_plug(mddev,sh1);
+			break;
+		}
+		set_bit(SYNO_FULL_STRIPE_MERGE, &sh1->syno_full_stripe_merge_state);
+		set_bit(STRIPE_HANDLE, &sh1->state);
+		clear_bit(STRIPE_DELAYED, &sh1->state);
+		release_stripe_plug(mddev, sh1);
+	}
+}
+#endif /* MY_ABC_HERE */
+
 static bool raid5_make_request(struct mddev *mddev, struct bio * bi)
 {
 	struct r5conf *conf = mddev->private;
@@ -5792,6 +7211,30 @@ static bool raid5_make_request(struct mddev *mddev, struct bio * bi)
 		do_flush = bi->bi_opf & REQ_PREFLUSH;
 	}
 
+#ifdef MY_ABC_HERE
+	if (mddev->syno_nodev_and_crashed) {
+		bio_io_error(bi);
+		return true;
+	}
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	if (mddev->degraded > conf->max_degraded) {
+		/**
+		 * if there has more than max_degraded disks lose,
+		 * we would not permit keeping access on it
+		 */
+		bio_io_error(bi);
+		return true;
+	}
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	if (unlikely(bio_flagged(bi, BIO_CORRECTION_RETRY)) &&
+		syno_md_heal_is_valid_md_stat(mddev) &&
+		conf->syno_heal_slab_cache) {
+		syno_raid5_heal_read_request(mddev, bi);
+		return true;
+	}
+#endif /* MY_ABC_HERE */
 	if (!md_write_start(mddev, bi))
 		return false;
 	/*
@@ -5921,6 +7364,12 @@ static bool raid5_make_request(struct mddev *mddev, struct bio * bi)
 			    (bi->bi_opf & REQ_SYNC) &&
 			    !test_and_set_bit(STRIPE_PREREAD_ACTIVE, &sh->state))
 				atomic_inc(&conf->preread_active_stripes);
+#ifdef MY_ABC_HERE
+			if (conf->syno_full_stripe_merge && rw == WRITE && !previous &&
+			    !test_bit(MD_RECOVERY_RUNNING, &mddev->recovery) &&
+			    bio_flagged(bi, BIO_SYNO_FULL_STRIPE_MERGE))
+				syno_do_full_stripe_merge(mddev, sh);
+#endif /* MY_ABC_HERE */
 			release_stripe_plug(mddev, sh);
 		} else {
 			/* cannot get stripe for read-ahead, just give-up */
@@ -6072,6 +7521,10 @@ static sector_t reshape_request(struct mddev *mddev, sector_t sector_nr, int *sk
 			   || test_bit(MD_RECOVERY_INTR, &mddev->recovery));
 		if (atomic_read(&conf->reshape_stripes) != 0)
 			return 0;
+#ifdef MY_ABC_HERE
+		if (conf->syno_reshape_failed == 1)
+			return 0;
+#endif /* MY_ABC_HERE */
 		mddev->reshape_position = conf->reshape_progress;
 		mddev->curr_resync_completed = sector_nr;
 		if (!mddev->reshape_backwards)
@@ -6179,6 +7632,10 @@ finish:
 			   || test_bit(MD_RECOVERY_INTR, &mddev->recovery));
 		if (atomic_read(&conf->reshape_stripes) != 0)
 			goto ret;
+#ifdef MY_ABC_HERE
+		if (conf->syno_reshape_failed == 1)
+			goto ret;
+#endif /* MY_ABC_HERE */
 		mddev->reshape_position = conf->reshape_progress;
 		mddev->curr_resync_completed = sector_nr;
 		if (!mddev->reshape_backwards)
@@ -6216,6 +7673,13 @@ static inline sector_t raid5_sync_request(struct mddev *mddev, sector_t sector_n
 	sector_t sync_blocks;
 	int still_degraded = 0;
 	int i;
+#ifdef MY_ABC_HERE
+	sector_t skipped_sectors = 0;
+	bool do_fast_rebuild = true;
+#ifdef MY_ABC_HERE
+	struct md_rdev *rdev;
+#endif /* MY_ABC_HERE */
+#endif /* MY_ABC_HERE */
 
 	if (sector_nr >= max_sector) {
 		/* just being told to finish up .. nothing much to do */
@@ -6257,6 +7721,14 @@ static inline sector_t raid5_sync_request(struct mddev *mddev, sector_t sector_n
 		*skipped = 1;
 		return rv;
 	}
+#ifdef MY_ABC_HERE
+	if (syno_is_disk_error_set(mddev)) {
+		sector_t rv = mddev->dev_sectors - sector_nr;
+		*skipped = 1;
+		set_bit(MD_RECOVERY_INTR, &mddev->recovery);
+		return rv;
+	}
+#endif /* MY_ABC_HERE */
 	if (!test_bit(MD_RECOVERY_REQUESTED, &mddev->recovery) &&
 	    !conf->fullsync &&
 	    !md_bitmap_start_sync(mddev->bitmap, sector_nr, &sync_blocks, 1) &&
@@ -6269,6 +7741,34 @@ static inline sector_t raid5_sync_request(struct mddev *mddev, sector_t sector_n
 	}
 
 	md_bitmap_cond_end_sync(mddev->bitmap, sector_nr, false);
+#ifdef MY_ABC_HERE
+#ifdef MY_ABC_HERE
+	skipped_sectors = syno_md_speedup_requested_resync(mddev, sector_nr);
+	if (skipped_sectors) {
+		*skipped = 1;
+		return skipped_sectors;
+	}
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	if (conf->level == SYNO_RAID_LEVEL_F1) {
+		rcu_read_lock();
+		rdev_for_each_rcu(rdev, mddev) {
+			if (rdev != NULL && test_bit(Replacement, &rdev->flags)) {
+				do_fast_rebuild = 0;
+				break;
+			}
+		}
+		rcu_read_unlock();
+	}
+#endif /* MY_ABC_HERE */
+	if (do_fast_rebuild) {
+		skipped_sectors = syno_md_speedup_rebuild(mddev, sector_nr);
+		if (skipped_sectors) {
+			*skipped = 1;
+			return skipped_sectors;
+		}
+	}
+#endif /* MY_ABC_HERE */
 
 	sh = raid5_get_active_stripe(conf, sector_nr, 0, 1, 0);
 	if (sh == NULL) {
@@ -6345,7 +7845,15 @@ static int  retry_aligned_read(struct r5conf *conf, struct bio *raid_bio,
 		}
 
 		if (!add_stripe_bio(sh, raid_bio, dd_idx, 0, 0)) {
+#ifdef MY_ABC_HERE
+			int hash;
+			spin_lock_irq(&conf->device_lock);
+			hash = sh->hash_lock_index;
+			__release_stripe(conf, sh, &conf->temp_inactive_list[hash]);
+			spin_unlock_irq(&conf->device_lock);
+#else /* MY_ABC_HERE */
 			raid5_release_stripe(sh);
+#endif /* MY_ABC_HERE */
 			conf->retry_read_aligned = raid_bio;
 			conf->retry_read_offset = scnt;
 			return handled;
@@ -6415,6 +7923,21 @@ static int handle_active_stripes(struct r5conf *conf, int group,
 	return batch_size;
 }
 
+#ifdef MY_ABC_HERE
+static void syno_wakeup_defer_thread(struct r5conf *conf)
+{
+	int i;
+	int group_cnt = conf->syno_defer_group_cnt;
+	struct syno_r5defer *group;
+
+	for (i = 0; i < group_cnt; ++i) {
+		group = &(conf->syno_defer_groups[i]);
+		set_bit(SYNO_DEFER_FLUSH_ALL, &group->state);
+		md_wakeup_thread(group->defer_thread);
+	}
+}
+#endif /* MY_ABC_HERE */
+
 static void raid5_do_work(struct work_struct *work)
 {
 	struct r5worker *worker = container_of(work, struct r5worker, work);
@@ -6426,6 +7949,10 @@ static void raid5_do_work(struct work_struct *work)
 	struct blk_plug plug;
 
 	pr_debug("+++ raid5worker active\n");
+
+#ifdef MY_ABC_HERE
+	atomic_inc(&conf->syno_active_stripe_workers);
+#endif /* MY_ABC_HERE */
 
 	blk_start_plug(&plug);
 	handled = 0;
@@ -6441,11 +7968,18 @@ static void raid5_do_work(struct work_struct *work)
 		if (!batch_size && !released)
 			break;
 		handled += batch_size;
+#ifdef MY_ABC_HERE
+		if (test_bit(MD_SB_CHANGE_PENDING, &mddev->sb_flags))
+			md_wakeup_thread(mddev->thread);
+#endif /* MY_ABC_HERE */
 		wait_event_lock_irq(mddev->sb_wait,
 			!test_bit(MD_SB_CHANGE_PENDING, &mddev->sb_flags),
 			conf->device_lock);
 	}
 	pr_debug("%d stripes handled\n", handled);
+#ifdef MY_ABC_HERE
+	conf->syno_stat_r5worker_handle_cnt += handled;
+#endif /* MY_ABC_HERE */
 
 	spin_unlock_irq(&conf->device_lock);
 
@@ -6455,6 +7989,12 @@ static void raid5_do_work(struct work_struct *work)
 
 	async_tx_issue_pending_all();
 	blk_finish_plug(&plug);
+
+#ifdef MY_ABC_HERE
+	if (atomic_dec_and_test(&conf->syno_active_stripe_workers) &&
+	    conf->syno_defer_mode)
+		syno_wakeup_defer_thread(conf);
+#endif /* MY_ABC_HERE */
 
 	pr_debug("--- raid5worker inactive\n");
 }
@@ -6477,6 +8017,10 @@ static void raid5d(struct md_thread *thread)
 
 	md_check_recovery(mddev);
 
+#ifdef MY_ABC_HERE
+	atomic_inc(&conf->syno_active_stripe_workers);
+#endif /* MY_ABC_HERE */
+
 	blk_start_plug(&plug);
 	handled = 0;
 	spin_lock_irq(&conf->device_lock);
@@ -6485,6 +8029,11 @@ static void raid5d(struct md_thread *thread)
 		int batch_size, released;
 		unsigned int offset;
 
+#ifdef MY_ABC_HERE
+		spin_unlock_irq(&conf->device_lock);
+		syno_raid5_heal_handle_stripe(conf);
+		spin_lock_irq(&conf->device_lock);
+#endif /* MY_ABC_HERE*/
 		released = release_stripe_list(conf, conf->temp_inactive_list);
 		if (released)
 			clear_bit(R5_DID_ALLOC, &conf->cache_state);
@@ -6500,6 +8049,9 @@ static void raid5d(struct md_thread *thread)
 			activate_bit_delay(conf, conf->temp_inactive_list);
 		}
 		raid5_activate_delayed(conf);
+#ifdef MY_ABC_HERE
+		syno_raid5_activate_stable_delayed(conf);
+#endif /* MY_ABC_HERE */
 
 		while ((bio = remove_bio_from_retry(conf, &offset))) {
 			int ok;
@@ -6524,6 +8076,9 @@ static void raid5d(struct md_thread *thread)
 		}
 	}
 	pr_debug("%d stripes handled\n", handled);
+#ifdef MY_ABC_HERE
+	conf->syno_stat_raid5d_handle_cnt += handled;
+#endif /* MY_ABC_HERE */
 
 	spin_unlock_irq(&conf->device_lock);
 	if (test_and_clear_bit(R5_ALLOC_MORE, &conf->cache_state) &&
@@ -6542,6 +8097,12 @@ static void raid5d(struct md_thread *thread)
 
 	async_tx_issue_pending_all();
 	blk_finish_plug(&plug);
+
+#ifdef MY_ABC_HERE
+	if (atomic_dec_and_test(&conf->syno_active_stripe_workers) &&
+	    conf->syno_defer_mode)
+		syno_wakeup_defer_thread(conf);
+#endif /* MY_ABC_HERE */
 
 	pr_debug("--- raid5d inactive\n");
 }
@@ -6584,6 +8145,10 @@ raid5_set_cache_size(struct mddev *mddev, int size)
 			result = -ENOMEM;
 			break;
 		}
+#ifdef MY_ABC_HERE
+	if (!conf->syno_enable_stripe_grow)
+		conf->min_nr_stripes = conf->max_nr_stripes;
+#endif /* MY_ABC_HERE */
 	mutex_unlock(&conf->cache_size_mutex);
 
 	return result;
@@ -6644,15 +8209,49 @@ raid5_store_rmw_level(struct mddev  *mddev, const char *page, size_t len)
 	if (kstrtoul(page, 10, &new))
 		return -EINVAL;
 
+#ifdef MY_ABC_HERE
+	if (conf->level == 6 && new != PARITY_DISABLE_RMW &&
+	    !raid6_call.xor_syndrome)
+		return -EINVAL;
+#else /* MY_ABC_HERE */
 	if (new != PARITY_DISABLE_RMW && !raid6_call.xor_syndrome)
 		return -EINVAL;
+#endif /* MY_ABC_HERE */
 
 	if (new != PARITY_DISABLE_RMW &&
 	    new != PARITY_ENABLE_RMW &&
 	    new != PARITY_PREFER_RMW)
 		return -EINVAL;
 
+#ifdef MY_ABC_HERE
+	if (new == conf->rmw_level) {
+		return len;
+	} else if (new != PARITY_DISABLE_RMW) {
+		mutex_lock(&mddev->syno_rh_mutex);
+#ifdef MY_ABC_HERE
+		if (syno_hint_count(&mddev->syno_rh_tree) ||
+		    mddev->syno_enable_requested_resync_hints) {
+			mutex_unlock(&mddev->syno_rh_mutex);
+			return -EINVAL;
+		}
+#else /* MY_ABC_HERE */
+		if (syno_hint_count(&mddev->syno_rh_tree)) {
+			mutex_unlock(&mddev->syno_rh_mutex);
+			return -EINVAL;
+		}
+#endif /* MY_ABC_HERE */
+		mddev->syno_allow_fast_rebuild = false;
+		conf->rmw_level = new;
+		mutex_unlock(&mddev->syno_rh_mutex);
+	} else {
+		mutex_lock(&mddev->syno_rh_mutex);
+		conf->rmw_level = new;
+		mddev->syno_allow_fast_rebuild = true;
+		mutex_unlock(&mddev->syno_rh_mutex);
+	}
+#else /* MY_ABC_HERE */
 	conf->rmw_level = new;
+#endif /* MY_ABC_HERE */
 	return len;
 }
 
@@ -6936,6 +8535,821 @@ raid5_group_thread_cnt = __ATTR(group_thread_cnt, S_IRUGO | S_IWUSR,
 				raid5_show_group_thread_cnt,
 				raid5_store_group_thread_cnt);
 
+#ifdef MY_ABC_HERE
+static ssize_t
+raid5_show_syno_enable_stripe_grow(struct mddev *mddev, char *page)
+{
+	struct r5conf *conf;
+	int ret = 0;
+	spin_lock(&mddev->lock);
+	conf = mddev->private;
+	if (conf)
+		ret = sprintf(page, "%d\n", conf->syno_enable_stripe_grow);
+	spin_unlock(&mddev->lock);
+	return ret;
+}
+
+static ssize_t
+raid5_store_syno_enable_stripe_grow(struct mddev *mddev, const char *page, size_t len)
+{
+	struct r5conf *conf;
+	unsigned long new;
+	int err;
+
+	if (len >= PAGE_SIZE)
+		return -EINVAL;
+	if (kstrtoul(page, 10, &new))
+		return -EINVAL;
+	new = !!new;
+
+	err = mddev_lock(mddev);
+	if (err)
+		return err;
+	conf = mddev->private;
+	if (!conf)
+		err = -ENODEV;
+	else
+		conf->syno_enable_stripe_grow = new;
+	mddev_unlock(mddev);
+	return err ?: len;
+}
+
+static struct md_sysfs_entry
+raid5_syno_enable_stripe_grow = __ATTR(syno_enable_stripe_grow, S_IRUGO|S_IWUSR,
+				raid5_show_syno_enable_stripe_grow, raid5_store_syno_enable_stripe_grow);
+
+static ssize_t
+syno_stripe_cache_max_show(struct mddev *mddev, char *page)
+{
+	struct r5conf *conf;
+	int ret = 0;
+	spin_lock(&mddev->lock);
+	conf = mddev->private;
+	if (conf)
+		ret = sprintf(page, "%d\n", conf->max_nr_stripes);
+	spin_unlock(&mddev->lock);
+	return ret;
+}
+
+static struct md_sysfs_entry
+raid5_syno_stripe_cache_max = __ATTR_RO(syno_stripe_cache_max);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static ssize_t
+raid5_show_syno_defer_group_cnt(struct mddev *mddev, char *page)
+{
+	struct r5conf *conf;
+	int ret = 0;
+
+	spin_lock(&mddev->lock);
+	conf = mddev->private;
+	if (conf)
+		ret = sprintf(page, "%d\n", conf->syno_defer_group_cnt);
+	spin_unlock(&mddev->lock);
+	return ret;
+}
+
+static int alloc_syno_raid5_defer_groups(struct mddev *mddev,
+	int *group_cnt, struct syno_r5defer **syno_defer_groups);
+
+static void free_syno_raid5_defer_groups(int group_cnt,
+	struct syno_r5defer *syno_defer_groups);
+
+static ssize_t
+raid5_store_syno_defer_group_cnt(struct mddev *mddev, const char *page,
+				size_t len)
+{
+	struct r5conf *conf;
+	unsigned int new;
+	int err;
+	int old_group_cnt;
+	struct syno_r5defer *old_groups = NULL;
+	struct syno_r5defer *new_groups = NULL;
+
+	if (len >= PAGE_SIZE)
+		return -EINVAL;
+	if (kstrtouint(page, 10, &new))
+		return -EINVAL;
+
+	err = mddev_lock(mddev);
+	if (err)
+		return err;
+	conf = mddev->private;
+	if (!conf)
+		err = -ENODEV;
+	else if (new <= 0 || new > SYNO_DEFER_GROUP_CNT_MAX ||
+			new > mddev->raid_disks)
+		err = -EINVAL;
+	else if (new != conf->syno_defer_group_cnt) {
+		mddev_suspend(mddev);
+
+		old_groups = conf->syno_defer_groups;
+		old_group_cnt = conf->syno_defer_group_cnt;
+
+		err = alloc_syno_raid5_defer_groups(mddev, &new, &new_groups);
+		if (err) {
+			pr_err("md: %s: failed to change defer groups\n", mdname(mddev));
+		} else {
+			conf->syno_defer_groups = new_groups;
+			conf->syno_defer_group_cnt = new;
+			free_syno_raid5_defer_groups(old_group_cnt, old_groups);
+
+			pr_warn("md: %s: change defer groups from %d to %d\n",
+				mdname(mddev), old_group_cnt, conf->syno_defer_group_cnt);
+		}
+		mddev_resume(mddev);
+	}
+	mddev_unlock(mddev);
+
+	return err ?: len;
+}
+
+static struct md_sysfs_entry
+raid5_syno_defer_group_cnt = __ATTR(syno_defer_group_cnt, 0644,
+				raid5_show_syno_defer_group_cnt,
+				raid5_store_syno_defer_group_cnt);
+
+static ssize_t
+raid5_show_syno_defer_mode(struct mddev *mddev, char *page)
+{
+	struct r5conf *conf;
+	int ret = 0;
+
+	spin_lock(&mddev->lock);
+	conf = mddev->private;
+	if (conf)
+		ret = sprintf(page, "%d\n", conf->syno_defer_mode);
+	spin_unlock(&mddev->lock);
+	return ret;
+}
+
+static ssize_t
+raid5_store_syno_defer_mode(struct mddev *mddev, const char *page, size_t len)
+{
+	struct r5conf *conf;
+	unsigned long new;
+	int err;
+
+	if (len >= PAGE_SIZE)
+		return -EINVAL;
+	if (kstrtoul(page, 10, &new))
+		return -EINVAL;
+	new = !!new;
+
+	err = mddev_lock(mddev);
+	if (err)
+		return err;
+	conf = mddev->private;
+	if (!conf)
+		err = -ENODEV;
+	else if (!conf->syno_defer_groups) {
+		pr_err("md: %s: syno_defer_groups did not allocated, refuse to adjust syno_defer_mode\n",
+				mdname(mddev));
+		err = -ENODEV;
+	} else if (new != conf->syno_defer_mode) {
+		mddev_suspend(mddev);
+		conf->syno_defer_mode = new;
+		pr_err("md: %s: change defer mode to %d\n", mdname(mddev),
+				conf->syno_defer_mode);
+		mddev_resume(mddev);
+	}
+	mddev_unlock(mddev);
+
+	return err ?: len;
+}
+
+static struct md_sysfs_entry
+raid5_syno_defer_mode = __ATTR(syno_defer_mode, 0644,
+				raid5_show_syno_defer_mode,
+				raid5_store_syno_defer_mode);
+
+static ssize_t
+raid5_show_syno_defer_flush_threshold(struct mddev  *mddev, char *page)
+{
+	struct r5conf *conf;
+	int ret = 0;
+
+	spin_lock(&mddev->lock);
+	conf = mddev->private;
+	if (conf)
+		ret = sprintf(page, "%d\n", conf->syno_defer_flush_threshold);
+	spin_unlock(&mddev->lock);
+	return ret;
+}
+
+static ssize_t
+raid5_store_syno_defer_flush_threshold(struct mddev  *mddev, const char *page,
+				size_t len)
+{
+	struct r5conf *conf;
+	unsigned long new;
+	int err;
+
+	if (len >= PAGE_SIZE)
+		return -EINVAL;
+	if (kstrtoul(page, 10, &new))
+		return -EINVAL;
+	if (new <= 0 || new > 32768)
+		return -EINVAL;
+
+	err = mddev_lock(mddev);
+	if (err)
+		return err;
+	conf = mddev->private;
+	if (!conf)
+		err = -ENODEV;
+	else
+		conf->syno_defer_flush_threshold = new;
+
+	mddev_unlock(mddev);
+
+	return err ?: len;
+}
+
+static struct md_sysfs_entry
+raid5_syno_defer_flush_threshold = __ATTR(
+			 syno_defer_flush_threshold, 0644,
+			 raid5_show_syno_defer_flush_threshold,
+			 raid5_store_syno_defer_flush_threshold);
+
+static int adjust_syno_raid5_defer_groups(struct mddev *mddev);
+
+static ssize_t
+raid5_show_syno_defer_group_disk_cnt_max(struct mddev *mddev, char *page)
+{
+	struct r5conf *conf;
+	int ret = 0;
+
+	spin_lock(&mddev->lock);
+	conf = mddev->private;
+	if (conf)
+		ret = sprintf(page, "%d\n", conf->syno_defer_group_disk_cnt_max);
+	spin_unlock(&mddev->lock);
+	return ret;
+}
+
+static ssize_t
+raid5_store_syno_defer_group_disk_cnt_max(struct mddev *mddev,
+				const char *page, size_t len)
+{
+	struct r5conf *conf;
+	unsigned long new;
+	int err;
+	int old_disk_cnt_max;
+
+	if (len >= PAGE_SIZE)
+		return -EINVAL;
+	if (kstrtoul(page, 10, &new))
+		return -EINVAL;
+
+	if (new <= 0 || new > SYNO_DEFER_GROUP_DISK_CNT_MAX)
+		return -EINVAL;
+
+	err = mddev_lock(mddev);
+	if (err)
+		return err;
+	conf = mddev->private;
+	if (!conf)
+		err = -ENODEV;
+	else if (new != conf->syno_defer_group_disk_cnt_max) {
+		mddev_suspend(mddev);
+		old_disk_cnt_max = conf->syno_defer_group_disk_cnt_max;
+		conf->syno_defer_group_disk_cnt_max = new;
+		err = adjust_syno_raid5_defer_groups(mddev);
+		if (err) {
+			/* restore old value when failed */
+			conf->syno_defer_group_disk_cnt_max = old_disk_cnt_max;
+		} else {
+			pr_err("md: %s: change defer group disk cnt max to %d\n",
+					mdname(mddev), conf->syno_defer_group_disk_cnt_max);
+		}
+		mddev_resume(mddev);
+	}
+	mddev_unlock(mddev);
+
+	return err ?: len;
+}
+
+static struct md_sysfs_entry
+raid5_syno_defer_group_disk_cnt_max = __ATTR(
+				syno_defer_group_disk_cnt_max, 0644,
+				raid5_show_syno_defer_group_disk_cnt_max,
+				raid5_store_syno_defer_group_disk_cnt_max);
+
+static ssize_t
+raid5_show_syno_defer_flush_batch_size(struct mddev  *mddev, char *page)
+{
+	struct r5conf *conf;
+	int ret = 0;
+
+	spin_lock(&mddev->lock);
+	conf = mddev->private;
+	if (conf)
+		ret = sprintf(page, "%d\n", conf->syno_defer_flush_batch_size);
+	spin_unlock(&mddev->lock);
+	return ret;
+}
+
+static ssize_t
+raid5_store_syno_defer_flush_batch_size(struct mddev  *mddev, const char *page,
+					size_t len)
+{
+	struct r5conf *conf;
+	unsigned long new;
+	int err;
+
+	if (len >= PAGE_SIZE)
+		return -EINVAL;
+	if (kstrtoul(page, 10, &new))
+		return -EINVAL;
+	if (new <= 0 || new > 32768)
+		return -EINVAL;
+
+	err = mddev_lock(mddev);
+	if (err)
+		return err;
+	conf = mddev->private;
+	if (!conf)
+		err = -ENODEV;
+	else
+		conf->syno_defer_flush_batch_size = new;
+
+	mddev_unlock(mddev);
+
+	return err ?: len;
+}
+
+static struct md_sysfs_entry
+raid5_syno_defer_flush_batch_size = __ATTR(syno_defer_flush_batch_size, 0644,
+					   raid5_show_syno_defer_flush_batch_size,
+					   raid5_store_syno_defer_flush_batch_size);
+
+static ssize_t
+raid5_show_syno_defer_skip_sort(struct mddev *mddev, char *page)
+{
+	struct r5conf *conf;
+	int ret = 0;
+
+	spin_lock(&mddev->lock);
+	conf = mddev->private;
+	if (conf)
+		ret = sprintf(page, "%d\n", conf->syno_defer_skip_sort);
+	spin_unlock(&mddev->lock);
+	return ret;
+}
+
+static ssize_t
+raid5_store_syno_defer_skip_sort(struct mddev *mddev, const char *page, size_t len)
+{
+	struct r5conf *conf;
+	unsigned long new;
+	int err;
+
+	if (len >= PAGE_SIZE)
+		return -EINVAL;
+	if (kstrtoul(page, 10, &new))
+		return -EINVAL;
+	new = !!new;
+
+	err = mddev_lock(mddev);
+	if (err)
+		return err;
+	conf = mddev->private;
+	if (!conf)
+		err = -ENODEV;
+	else
+		conf->syno_defer_skip_sort = new;
+	mddev_unlock(mddev);
+
+	return err ?: len;
+}
+
+static struct md_sysfs_entry
+raid5_syno_defer_skip_sort = __ATTR(syno_defer_skip_sort, 0644,
+			 raid5_show_syno_defer_skip_sort,
+			 raid5_store_syno_defer_skip_sort);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static ssize_t
+raid5_show_syno_active_stripe_threshold(struct mddev  *mddev, char *page)
+{
+	struct r5conf *conf;
+	int ret = 0;
+
+	spin_lock(&mddev->lock);
+	conf = mddev->private;
+	if (conf)
+		ret = sprintf(page, "%d\n", conf->syno_active_stripe_threshold);
+	spin_unlock(&mddev->lock);
+	return ret;
+}
+
+static ssize_t
+raid5_store_syno_active_stripe_threshold(struct mddev  *mddev,
+				const char *page, size_t len)
+{
+	struct r5conf *conf;
+	unsigned long new;
+	int err;
+
+	if (len >= PAGE_SIZE)
+		return -EINVAL;
+	if (kstrtoul(page, 10, &new))
+		return -EINVAL;
+	if (new < 0 || new > 65536)
+		return -EINVAL;
+
+	err = mddev_lock(mddev);
+	if (err)
+		return err;
+	conf = mddev->private;
+	if (!conf)
+		err = -ENODEV;
+	else
+		conf->syno_active_stripe_threshold = new;
+
+	mddev_unlock(mddev);
+
+	return err ?: len;
+}
+
+static struct md_sysfs_entry
+raid5_syno_active_stripe_threshold =
+			__ATTR(syno_active_stripe_threshold, 0644,
+				raid5_show_syno_active_stripe_threshold,
+				raid5_store_syno_active_stripe_threshold);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static ssize_t
+raid5_show_syno_stat(struct mddev  *mddev, char *page)
+{
+	struct r5conf *conf;
+	int ret = 0;
+
+	spin_lock(&mddev->lock);
+	conf = mddev->private;
+	if (conf) {
+		u64 syno_stat_wait_sh = conf->syno_stat_wait_sh * 1000;
+		u64 syno_stat_wait_delay = conf->syno_stat_wait_delay * 1000;
+		u64 syno_stat_wait_io = conf->syno_stat_wait_io * 1000;
+		u64 syno_stat_wait_sh_max = conf->syno_stat_wait_sh_max * 1000;
+		u64 syno_stat_wait_delay_max = conf->syno_stat_wait_delay_max * 1000;
+		u64 syno_stat_wait_io_max = conf->syno_stat_wait_io_max * 1000;
+
+		do_div(syno_stat_wait_sh, HZ);
+		do_div(syno_stat_wait_delay, HZ);
+		do_div(syno_stat_wait_io, HZ);
+		do_div(syno_stat_wait_sh_max, HZ);
+		do_div(syno_stat_wait_delay_max, HZ);
+		do_div(syno_stat_wait_io_max, HZ);
+
+		ret = sprintf(page, "%llu %llu %llu %llu %llu\n"
+		                    "%llu %llu %llu %llu\n"
+		                    "%llu %llu %llu\n"
+		                    "%llu %llu\n"
+		                    "%llu %llu %llu\n"
+		                    "%llu %llu %llu\n"
+		                    "%llu %llu %llu\n",
+		              /* first line - sum latency of handle stripe */
+		              conf->syno_stat_lat_handle_stripe,
+		              conf->syno_stat_lat_raid_run_ops,
+		              conf->syno_stat_lat_copy_data,
+		              conf->syno_stat_lat_raid_run_ops -
+		               conf->syno_stat_lat_copy_data,
+		              conf->syno_stat_lat_recorded_cnt,
+		              /* second line - max latency of handle stripe */
+		              conf->syno_stat_lat_handle_stripe_max,
+		              conf->syno_stat_lat_raid_run_ops_max,
+		              conf->syno_stat_lat_copy_data_max,
+		              conf->syno_stat_lat_xor_max,
+		              /* third line - full write stripe */
+		              conf->syno_stat_total_stripe,
+		              conf->syno_stat_head_stripe_cnt,
+		              conf->syno_stat_full_write,
+		              /* fourth line - rmw,rcw */
+		              conf->syno_stat_total_stripe -
+		               conf->syno_stat_rcw,
+		              conf->syno_stat_rcw,
+		              /* fifth line - each threads */
+		              conf->syno_stat_raid5d_handle_cnt,
+		              0ULL, /* there is no proxy any more */
+		              conf->syno_stat_r5worker_handle_cnt,
+		              /* sixth line - sum latency of stripe waiting */
+		              syno_stat_wait_sh,
+		              syno_stat_wait_delay,
+		              syno_stat_wait_io,
+		              /* seventh line - max latency of stripe waiting */
+		              syno_stat_wait_sh_max,
+		              syno_stat_wait_delay_max,
+		              syno_stat_wait_io_max);
+	}
+	spin_unlock(&mddev->lock);
+	return ret;
+}
+
+static ssize_t
+raid5_store_syno_stat(struct mddev  *mddev,
+				const char *page, size_t len)
+{
+	struct r5conf *conf;
+	unsigned long new;
+	int err;
+
+	if (len >= PAGE_SIZE)
+		return -EINVAL;
+	if (kstrtoul(page, 10, &new))
+		return -EINVAL;
+	if (new != 0)
+		return -EINVAL;
+
+	err = mddev_lock(mddev);
+	if (err)
+		return err;
+	conf = mddev->private;
+	if (!conf)
+		err = -ENODEV;
+	else {
+		conf->syno_stat_rcw = 0;
+		conf->syno_stat_full_write = 0;
+		conf->syno_stat_total_stripe = 0;
+		conf->syno_stat_head_stripe_cnt = 0;
+		conf->syno_stat_lat_handle_stripe = 0;
+		conf->syno_stat_lat_raid_run_ops = 0;
+		conf->syno_stat_lat_copy_data = 0;
+		conf->syno_stat_lat_handle_stripe_max = 0;
+		conf->syno_stat_lat_raid_run_ops_max = 0;
+		conf->syno_stat_lat_copy_data_max = 0;
+		conf->syno_stat_lat_xor_max = 0;
+		conf->syno_stat_lat_recorded_cnt = 0;
+		conf->syno_stat_raid5d_handle_cnt = 0;
+		conf->syno_stat_r5worker_handle_cnt = 0;
+		conf->syno_stat_wait_sh = 0;
+		conf->syno_stat_wait_delay = 0;
+		conf->syno_stat_wait_io = 0;
+		conf->syno_stat_wait_sh_max = 0;
+		conf->syno_stat_wait_delay_max = 0;
+		conf->syno_stat_wait_io_max = 0;
+	}
+
+	mddev_unlock(mddev);
+
+	return err ?: len;
+}
+
+static struct md_sysfs_entry
+raid5_syno_stat = __ATTR(syno_stat, 0644,
+			 raid5_show_syno_stat,
+			 raid5_store_syno_stat);
+
+static ssize_t
+raid5_show_syno_stat_enable_record_time(struct mddev  *mddev, char *page)
+{
+	struct r5conf *conf;
+	int ret = 0;
+
+	spin_lock(&mddev->lock);
+	conf = mddev->private;
+	if (conf)
+		ret = sprintf(page, "%d\n", conf->syno_stat_lat_enable);
+	spin_unlock(&mddev->lock);
+	return ret;
+}
+
+static ssize_t
+raid5_store_syno_stat_enable_record_time(struct mddev  *mddev,
+				const char *page, size_t len)
+{
+	struct r5conf *conf;
+	unsigned long new;
+	int err;
+
+	if (len >= PAGE_SIZE)
+		return -EINVAL;
+	if (kstrtoul(page, 10, &new))
+		return -EINVAL;
+	new = !!new;
+
+	err = mddev_lock(mddev);
+	if (err)
+		return err;
+	conf = mddev->private;
+	if (!conf)
+		err = -ENODEV;
+	else if (new != conf->syno_stat_lat_enable)
+		conf->syno_stat_lat_enable = new;
+
+	mddev_unlock(mddev);
+
+	return err ?: len;
+}
+
+static struct md_sysfs_entry
+raid5_syno_stat_enable_record_time =
+	__ATTR(syno_stat_enable_record_time, 0644,
+	       raid5_show_syno_stat_enable_record_time,
+	       raid5_store_syno_stat_enable_record_time);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+static ssize_t
+raid5_show_syno_heal_stripe_cache_size(struct mddev *mddev, char *page)
+{
+	struct r5conf *conf;
+	int ret = 0;
+
+	spin_lock(&mddev->lock);
+	conf = mddev->private;
+	if (conf)
+		ret = sprintf(page, "%d\n", conf->syno_heal_max_nr_stripes);
+	spin_unlock(&mddev->lock);
+
+	return ret;
+}
+
+int
+syno_raid5_heal_set_cache_size(struct mddev *mddev, int size)
+{
+	int result = 0;
+	struct r5conf *conf = mddev->private;
+
+	if (size <= 16 || size > mddev->syno_md_heal_record_cnt_max)
+		return -EINVAL;
+
+	mutex_lock(&conf->syno_heal_cache_size_mutex);
+	while (size < conf->syno_heal_max_nr_stripes &&
+	       syno_raid5_heal_drop_one_stripe(conf))
+		;
+	mutex_unlock(&conf->syno_heal_cache_size_mutex);
+
+	mutex_lock(&conf->syno_heal_cache_size_mutex);
+	while (size > conf->syno_heal_max_nr_stripes)
+		if (!syno_raid5_heal_grow_one_stripe(conf, GFP_KERNEL)) {
+			result = -ENOMEM;
+			break;
+		}
+	mutex_unlock(&conf->syno_heal_cache_size_mutex);
+
+	return result;
+}
+
+static ssize_t
+raid5_store_syno_heal_stripe_cache_size(struct mddev *mddev, const char *page, size_t len)
+{
+	struct r5conf *conf;
+	unsigned long new;
+	int err;
+
+#if PAGE_SIZE != DEFAULT_STRIPE_SIZE
+	return -EINVAL;
+#endif /* PAGE_SIZE != DEFAULT_STRIPE_SIZE */
+	if (len >= PAGE_SIZE)
+		return -EINVAL;
+	if (kstrtoul(page, 10, &new))
+		return -EINVAL;
+
+	err = mddev_lock(mddev);
+	if (err)
+		return err;
+
+	conf = mddev->private;
+	if (!conf)
+		err = -ENODEV;
+	else
+		err = syno_raid5_heal_set_cache_size(mddev, new);
+	mddev_unlock(mddev);
+
+	return err ?: len;
+}
+
+static struct md_sysfs_entry
+raid5_syno_heal_stripe_cache_size = __ATTR(
+	syno_heal_stripe_cache_size, 0644,
+	raid5_show_syno_heal_stripe_cache_size,
+	raid5_store_syno_heal_stripe_cache_size);
+
+static ssize_t
+syno_heal_stripe_cache_active_show(struct mddev *mddev, char *page)
+{
+	struct r5conf *conf = mddev->private;
+
+	if (conf)
+		return sprintf(page, "%d\n", atomic_read(&conf->syno_heal_active_stripes));
+	else
+		return 0;
+}
+
+static struct md_sysfs_entry
+raid5_syno_heal_stripe_cache_active = __ATTR_RO(syno_heal_stripe_cache_active);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static ssize_t
+raid5_show_syno_dummy_read(struct mddev  *mddev, char *page)
+{
+	struct r5conf *conf;
+	int ret = 0;
+
+	spin_lock(&mddev->lock);
+	conf = mddev->private;
+	if (conf)
+		ret = sprintf(page, "%d\n", conf->syno_dummy_read);
+	spin_unlock(&mddev->lock);
+	return ret;
+}
+
+static ssize_t
+raid5_store_syno_dummy_read(struct mddev  *mddev, const char *page, size_t len)
+{
+	struct r5conf *conf;
+	unsigned long new;
+	int err;
+
+	if (len >= PAGE_SIZE)
+		return -EINVAL;
+	if (kstrtoul(page, 10, &new))
+		return -EINVAL;
+	new = !!new;
+
+	err = mddev_lock(mddev);
+	if (err)
+		return err;
+	conf = mddev->private;
+	if (!conf)
+		err = -ENODEV;
+	else if (new && ((!conf->syno_dummy_page) || (!conf->syno_dummy_bio)))
+		err = -ENOMEM;
+	else
+		conf->syno_dummy_read = new;
+	mddev_unlock(mddev);
+
+	return err ?: len;
+}
+
+static struct md_sysfs_entry
+raid5_syno_dummy_read = __ATTR(syno_dummy_read, 0644,
+			       raid5_show_syno_dummy_read,
+			       raid5_store_syno_dummy_read);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static ssize_t
+syno_allow_rmw_show(struct mddev *mddev, char *page)
+{
+	struct r5conf *conf = mddev->private;
+
+	if (conf) {
+		if (conf->level == 6 && !raid6_call.xor_syndrome)
+			return sprintf(page, "%d\n", 0);
+		else
+			return sprintf(page, "%d\n", 1);
+	} else
+		return 0;
+}
+
+static struct md_sysfs_entry
+raid5_syno_allow_rmw = __ATTR_RO(syno_allow_rmw);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static ssize_t
+raid5_show_syno_full_stripe_merge(struct mddev  *mddev, char *page)
+{
+	struct r5conf *conf = mddev->private;
+	if (conf)
+		return sprintf(page, "%d\n", conf->syno_full_stripe_merge);
+	else
+		return 0;
+}
+
+static ssize_t
+raid5_store_syno_full_stripe_merge(struct mddev  *mddev, const char *page, size_t len)
+{
+	struct r5conf *conf = mddev->private;
+	unsigned long new;
+
+	if (!conf)
+		return -ENODEV;
+
+	if (len >= PAGE_SIZE)
+		return -EINVAL;
+
+	if (kstrtoul(page, 10, &new))
+		return -EINVAL;
+
+	new = !!new;
+
+	conf->syno_full_stripe_merge = new;
+	return len;
+}
+
+static struct md_sysfs_entry
+raid5_syno_full_stripe_merge = __ATTR(syno_full_stripe_merge, S_IRUGO | S_IWUSR,
+					    raid5_show_syno_full_stripe_merge,
+					    raid5_store_syno_full_stripe_merge);
+#endif /* MY_ABC_HERE */
+
 static struct attribute *raid5_attrs[] =  {
 	&raid5_stripecache_size.attr,
 	&raid5_stripecache_active.attr,
@@ -6946,12 +9360,135 @@ static struct attribute *raid5_attrs[] =  {
 	&raid5_stripe_size.attr,
 	&r5c_journal_mode.attr,
 	&ppl_write_hint.attr,
+#ifdef MY_ABC_HERE
+	&raid5_syno_enable_stripe_grow.attr,
+	&raid5_syno_stripe_cache_max.attr,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	&raid5_syno_defer_group_cnt.attr,
+	&raid5_syno_defer_mode.attr,
+	&raid5_syno_defer_flush_threshold.attr,
+	&raid5_syno_defer_group_disk_cnt_max.attr,
+	&raid5_syno_defer_flush_batch_size.attr,
+	&raid5_syno_defer_skip_sort.attr,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	&raid5_syno_active_stripe_threshold.attr,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	&raid5_syno_stat.attr,
+	&raid5_syno_stat_enable_record_time.attr,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	&raid5_syno_heal_stripe_cache_size.attr,
+	&raid5_syno_heal_stripe_cache_active.attr,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	&raid5_syno_dummy_read.attr,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	&raid5_syno_allow_rmw.attr,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	&raid5_syno_full_stripe_merge.attr,
+#endif /* MY_ABC_HERE */
 	NULL,
 };
 static struct attribute_group raid5_attrs_group = {
 	.name = NULL,
 	.attrs = raid5_attrs,
 };
+
+#ifdef MY_ABC_HERE
+static void free_syno_raid5_defer_groups(int group_cnt,
+				struct syno_r5defer *syno_defer_groups)
+{
+	int i;
+	struct syno_r5defer *group;
+
+	if (!syno_defer_groups)
+		return;
+
+	for (i = 0; i < group_cnt; ++i) {
+		group = &(syno_defer_groups[i]);
+
+		WARN_ON(group->pending_data_cnt != 0);
+		WARN_ON(!bio_list_empty(&group->pending_bios));
+		WARN_ON(!list_empty(&group->pending_list));
+		md_unregister_thread(&group->defer_thread);
+		kfree(group->pending_data);
+		group->pending_data = NULL;
+	}
+
+	kfree(syno_defer_groups);
+}
+
+static int alloc_syno_raid5_defer_groups(struct mddev *mddev,
+		int *group_cnt, struct syno_r5defer **syno_defer_groups)
+{
+	int i, j;
+	int err = 0;
+	char name[TASK_COMM_LEN];
+	struct syno_r5defer *new_groups = NULL;
+	struct syno_r5defer *group;
+
+	if (*group_cnt <= 0 || *group_cnt > mddev->raid_disks) {
+		pr_err("%s: bad defer group count: %d, abort\n",
+				mdname(mddev), *group_cnt);
+		err = -EINVAL;
+		goto abort;
+	}
+
+	if (*group_cnt > SYNO_DEFER_GROUP_CNT_MAX) {
+		pr_err("%s: bad defer group count: %d, wrap count to %d\n",
+			mdname(mddev), *group_cnt, SYNO_DEFER_GROUP_CNT_MAX);
+		*group_cnt = SYNO_DEFER_GROUP_CNT_MAX;
+	}
+
+	new_groups = kcalloc(*group_cnt, sizeof(struct syno_r5defer),
+				GFP_NOIO);
+	if (!new_groups) {
+		err = -ENOMEM;
+		goto abort;
+	}
+
+	for (i = 0; i < *group_cnt; ++i) {
+		group = &new_groups[i];
+
+		INIT_LIST_HEAD(&group->free_list);
+		INIT_LIST_HEAD(&group->pending_list);
+		bio_list_init(&group->pending_bios);
+		spin_lock_init(&group->pending_bios_lock);
+		group->pending_data_cnt = 0;
+
+		group->pending_data = kcalloc(SYNO_MAX_SORT_ENT_CNT,
+					sizeof(struct r5pending_data), GFP_NOIO);
+		if (!group->pending_data) {
+			err = -ENOMEM;
+			goto abort;
+		}
+		for (j = 0; j < SYNO_MAX_SORT_ENT_CNT; ++j)
+			list_add(&group->pending_data[j].sibling, &group->free_list);
+
+		sprintf(name, "defer%d", i);
+		group->defer_thread = md_register_thread(syno_flush_deferred_bios,
+							mddev, name);
+		if (!group->defer_thread) {
+			pr_err("%s: failed to create defer_thread\n", mdname(mddev));
+			err = -ENOMEM;
+			goto abort;
+		}
+		group->defer_thread->private = group;
+	}
+
+	*syno_defer_groups = new_groups;
+	return err;
+
+abort:
+	free_syno_raid5_defer_groups(*group_cnt, new_groups);
+	return err;
+}
+#endif /* MY_ABC_HERE */
 
 static int alloc_thread_groups(struct r5conf *conf, int cnt, int *group_cnt,
 			       struct r5worker_group **worker_groups)
@@ -7077,6 +9614,9 @@ static void free_conf(struct r5conf *conf)
 	unregister_shrinker(&conf->shrinker);
 	free_thread_groups(conf);
 	shrink_stripes(conf);
+#ifdef MY_ABC_HERE
+	syno_raid5_heal_shrink_stripes(conf);
+#endif /* MY_ABC_HERE */
 	raid5_free_percpu(conf);
 	for (i = 0; i < conf->pool_size; i++)
 		if (conf->disks[i].extra_page)
@@ -7085,6 +9625,16 @@ static void free_conf(struct r5conf *conf)
 	bioset_exit(&conf->bio_split);
 	kfree(conf->stripe_hashtbl);
 	kfree(conf->pending_data);
+#ifdef MY_ABC_HERE
+	free_syno_raid5_defer_groups(conf->syno_defer_group_cnt,
+					conf->syno_defer_groups);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	if (conf->syno_dummy_page)
+		put_page(conf->syno_dummy_page);
+	if (conf->syno_dummy_bio)
+		bio_put(conf->syno_dummy_bio);
+#endif /* MY_ABC_HERE */
 	kfree(conf);
 }
 
@@ -7151,27 +9701,82 @@ static unsigned long raid5_cache_count(struct shrinker *shrink,
 	return conf->max_nr_stripes - conf->min_nr_stripes;
 }
 
+#ifdef MY_ABC_HERE
+static void syno_setup_dummy_read(struct r5conf *conf)
+{
+	int i = 0;
+	int page_cnt = (conf->chunk_sectors / RAID5_STRIPE_SECTORS(conf)) * 2;
+	struct mddev *mddev = conf->mddev;
+	struct bio *bio = bio_alloc_mddev(GFP_NOIO, page_cnt, mddev);
+	struct page *page = alloc_page(GFP_KERNEL);
+
+	conf->syno_dummy_read = 0;
+
+	if (!page || !bio) {
+		pr_err("%s: failed to allocate memory for dummy read\n", mdname(mddev));
+		goto err;
+	}
+
+	bio->bi_iter.bi_size = 0; // bio_add_page() will add bi_size
+	for (i = 0; i < page_cnt; ++i) {
+		if (bio_add_page(bio, page, RAID5_STRIPE_SIZE(conf), 0) == 0) {
+			pr_err("%s: failed to add page to bio\n", mdname(mddev));
+			goto err;
+		}
+	}
+
+	conf->syno_dummy_bio = bio;
+	conf->syno_dummy_page = page;
+	return;
+
+err:
+	if (bio)
+		bio_put(bio);
+	if (page)
+		put_page(page);
+}
+#endif /* MY_ABC_HERE */
+
 static struct r5conf *setup_conf(struct mddev *mddev)
 {
 	struct r5conf *conf;
 	int raid_disk, memory, max_disks;
 	struct md_rdev *rdev;
 	struct disk_info *disk;
+#ifdef MY_ABC_HERE
+	char pers_name[TASK_COMM_LEN];
+#else /* MY_ABC_HERE */
 	char pers_name[6];
+#endif /* MY_ABC_HERE */
 	int i;
 	int group_cnt;
 	struct r5worker_group *new_group;
 	int ret;
+#ifdef MY_ABC_HERE
+	struct syno_r5defer *syno_defer_groups = NULL;
+	int defer_group_cnt = (mddev->raid_disks - 1) / SYNO_DEFER_GROUP_DISK_CNT_MAX + 1;
+#endif /* MY_ABC_HERE */
 
 	if (mddev->new_level != 5
 	    && mddev->new_level != 4
+#ifdef MY_ABC_HERE
+	    && mddev->new_level != SYNO_RAID_LEVEL_F1
+#endif /* MY_ABC_HERE */
 	    && mddev->new_level != 6) {
+#ifdef MY_ABC_HERE
+		pr_warn("md/raid:%s: raid level not set to 4/5/6/F1 (%d)\n",
+#else /* MY_ABC_HERE */
 		pr_warn("md/raid:%s: raid level not set to 4/5/6 (%d)\n",
+#endif /* MY_ABC_HERE */
 			mdname(mddev), mddev->new_level);
 		return ERR_PTR(-EIO);
 	}
 	if ((mddev->new_level == 5
 	     && !algorithm_valid_raid5(mddev->new_layout)) ||
+#ifdef MY_ABC_HERE
+	    (mddev->new_level == SYNO_RAID_LEVEL_F1
+	     && !algorithm_valid_raid_f1(mddev->new_layout)) ||
+#endif /* MY_ABC_HERE */
 	    (mddev->new_level == 6
 	     && !algorithm_valid_raid6(mddev->new_layout))) {
 		pr_warn("md/raid:%s: layout %d not supported\n",
@@ -7217,6 +9822,30 @@ static struct r5conf *setup_conf(struct mddev *mddev)
 		conf->worker_groups = new_group;
 	} else
 		goto abort;
+#ifdef MY_ABC_HERE
+	conf->syno_defer_mode = 0;
+	conf->syno_defer_flush_threshold = SYNO_NONROT_FLUSH_THRESHOLD;
+	conf->syno_defer_flush_batch_size = SYNO_DEFAULT_FLUSH_BATCH;
+	conf->syno_defer_group_disk_cnt_max = SYNO_DEFER_GROUP_DISK_CNT_MAX;
+	conf->syno_defer_skip_sort = true;
+	atomic_set(&conf->syno_active_stripe_workers, 0);
+	rdev_for_each(rdev, mddev)
+		if (!blk_queue_nonrot(bdev_get_queue(rdev->bdev))) {
+			conf->syno_defer_flush_threshold = SYNO_DEFAULT_FLUSH_THRESHOLD;
+			conf->syno_defer_skip_sort = false;
+			break;
+		}
+
+	if (!alloc_syno_raid5_defer_groups(mddev, &defer_group_cnt,
+					&syno_defer_groups)) {
+		conf->syno_defer_group_cnt = defer_group_cnt;
+		conf->syno_defer_groups = syno_defer_groups;
+		conf->syno_defer_mode = 1;
+	} else {
+		conf->syno_defer_groups = NULL;
+		pr_err("md: %s: syno_defer_groups did not allocated\n", mdname(mddev));
+	}
+#endif /* MY_ABC_HERE */
 	spin_lock_init(&conf->device_lock);
 	seqcount_spinlock_init(&conf->gen_lock, &conf->device_lock);
 	mutex_init(&conf->cache_size_mutex);
@@ -7228,6 +9857,9 @@ static struct r5conf *setup_conf(struct mddev *mddev)
 	INIT_LIST_HEAD(&conf->hold_list);
 	INIT_LIST_HEAD(&conf->delayed_list);
 	INIT_LIST_HEAD(&conf->bitmap_list);
+#ifdef MY_ABC_HERE
+	INIT_LIST_HEAD(&conf->syno_stable_list);
+#endif /* MY_ABC_HERE */
 	init_llist_head(&conf->released_stripes);
 	atomic_set(&conf->active_stripes, 0);
 	atomic_set(&conf->preread_active_stripes, 0);
@@ -7339,6 +9971,9 @@ static struct r5conf *setup_conf(struct mddev *mddev)
 		conf->max_degraded = 1;
 		conf->rmw_level = PARITY_ENABLE_RMW;
 	}
+#ifdef MY_ABC_HERE
+	conf->rmw_level = PARITY_DISABLE_RMW;
+#endif /* MY_ABC_HERE */
 	conf->algorithm = mddev->new_layout;
 	conf->reshape_progress = mddev->reshape_position;
 	if (conf->reshape_progress != MaxSector) {
@@ -7349,6 +9984,9 @@ static struct r5conf *setup_conf(struct mddev *mddev)
 		conf->prev_algo = conf->algorithm;
 	}
 
+#ifdef MY_ABC_HERE
+	conf->syno_enable_stripe_grow = 0;
+#endif /* MY_ABC_HERE */
 	conf->min_nr_stripes = NR_STRIPES;
 	if (mddev->reshape_position != MaxSector) {
 		int stripes = max_t(int,
@@ -7368,6 +10006,23 @@ static struct r5conf *setup_conf(struct mddev *mddev)
 		goto abort;
 	} else
 		pr_debug("md/raid:%s: allocated %dkB\n", mdname(mddev), memory);
+#ifdef MY_ABC_HERE
+	atomic_set(&conf->syno_heal_active_stripes, 0);
+	conf->syno_heal_max_nr_stripes = 0;
+	spin_lock_init(&conf->syno_heal_stripe_lock);
+	INIT_LIST_HEAD(&conf->syno_heal_free_list);
+	INIT_LIST_HEAD(&conf->syno_heal_handle_list);
+	mutex_init(&conf->syno_heal_cache_size_mutex);
+	init_waitqueue_head(&conf->syno_heal_wait_for_stripe);
+
+	if (!syno_raid5_heal_grow_stripes(conf, SYNO_RAID5_HEAL_STRIPE_DEFAULT_CNT)) {
+		syno_md_data_correction_print(mddev->syno_md_data_correction_log_flag,
+			KERN_ERR,
+			"%s: [Self Heal] failed to allocate memory for data correction\n",
+			mdname(mddev));
+		syno_raid5_heal_shrink_stripes(conf);
+	}
+#endif /* MY_ABC_HERE */
 	/*
 	 * Losing a stripe head costs more than the time to refill it,
 	 * it reduces the queue depth and so can hurt throughput.
@@ -7384,6 +10039,24 @@ static struct r5conf *setup_conf(struct mddev *mddev)
 		goto abort;
 	}
 
+#ifdef MY_ABC_HERE
+	conf->syno_reshape_failed = 0;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	conf->syno_active_stripe_threshold = SYNO_DEFAULT_ACTIVE_STRIPE_THRESHOLD;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	conf->syno_handle_stripes_cpu = -1;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	conf->syno_stat_lat_enable = false;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	syno_setup_dummy_read(conf);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	conf->syno_full_stripe_merge = false;
+#endif /* MY_ABC_HERE */
 	sprintf(pers_name, "raid%d", mddev->new_level);
 	conf->thread = md_register_thread(raid5d, mddev, pers_name);
 	if (!conf->thread) {
@@ -7552,8 +10225,14 @@ static int raid5_run(struct mddev *mddev)
 		} else if (mddev->reshape_backwards
 		    ? (here_new * chunk_sectors + min_offset_diff <=
 		       here_old * chunk_sectors)
+#ifdef MY_ABC_HERE
+		    : ((here_new * chunk_sectors >=
+			here_old * chunk_sectors + (-min_offset_diff)) &&
+		       mddev->reshape_position != 0)) {
+#else /* MY_ABC_HERE */
 		    : (here_new * chunk_sectors >=
 		       here_old * chunk_sectors + (-min_offset_diff))) {
+#endif /* MY_ABC_HERE */
 			/* Reading from the same stripe as writing to - bad */
 			pr_warn("md/raid:%s: reshape_position too early for auto-recovery - aborting.\n",
 				mdname(mddev));
@@ -7595,6 +10274,12 @@ static int raid5_run(struct mddev *mddev)
 	}
 
 	conf->min_offset_diff = min_offset_diff;
+#ifdef MY_ABC_HERE
+	mddev->syno_flush_plug_threshold = SYNO_DEFAULT_FLUSH_PLUG_STRIPE_CNT;
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	mddev->syno_allow_fast_rebuild = (conf->rmw_level == PARITY_DISABLE_RMW);
+#endif /* MY_ABC_HERE */
 	mddev->thread = conf->thread;
 	conf->thread = NULL;
 	mddev->private = conf;
@@ -7656,9 +10341,17 @@ static int raid5_run(struct mddev *mddev)
 	mddev->degraded = raid5_calc_degraded(conf);
 
 	if (has_failed(conf)) {
+#ifdef MY_ABC_HERE
+		if (mddev->syno_nodev_and_crashed != MD_CRASHED_ASSEMBLE)
+			mddev->syno_nodev_and_crashed = MD_CRASHED;
+#endif /* MY_ABC_HERE */
 		pr_crit("md/raid:%s: not enough operational devices (%d/%d failed)\n",
 			mdname(mddev), mddev->degraded, conf->raid_disks);
+#ifdef MY_ABC_HERE
+		// Let crashed raid5 array could assemble in boot time.
+#else /* MY_ABC_HERE */
 		goto abort;
+#endif /* MY_ABC_HERE */
 	}
 
 	/* device size must be a multiple of chunk size */
@@ -7687,7 +10380,11 @@ static int raid5_run(struct mddev *mddev)
 
 	print_raid5_conf(conf);
 
+#ifdef MY_ABC_HERE
+	if (conf->reshape_progress != MaxSector && mddev->degraded <= conf->max_degraded) {
+#else /* MY_ABC_HERE */
 	if (conf->reshape_progress != MaxSector) {
+#endif /* MY_ABC_HERE */
 		conf->reshape_safe = conf->reshape_progress;
 		atomic_set(&conf->reshape_stripes, 0);
 		clear_bit(MD_RECOVERY_SYNC, &mddev->recovery);
@@ -7769,6 +10466,10 @@ static int raid5_run(struct mddev *mddev)
 			blk_queue_flag_clear(QUEUE_FLAG_DISCARD,
 						mddev->queue);
 
+#ifdef MY_ABC_HERE
+		blk_queue_flag_set(QUEUE_FLAG_UNUSED_HINT,
+				   mddev->queue);
+#endif /* MY_ABC_HERE */
 		blk_queue_max_hw_sectors(mddev->queue, UINT_MAX);
 	}
 
@@ -7804,7 +10505,13 @@ static void raid5_status(struct seq_file *seq, struct mddev *mddev)
 	rcu_read_lock();
 	for (i = 0; i < conf->raid_disks; i++) {
 		struct md_rdev *rdev = rcu_dereference(conf->disks[i].rdev);
+#ifdef MY_ABC_HERE
+		seq_printf(seq, "%s", rdev && test_bit(In_sync, &rdev->flags)
+			   ? (test_bit(SynoDiskError, &rdev->flags) ? "E" : "U")
+			   : "_");
+#else /* MY_ABC_HERE */
 		seq_printf (seq, "%s", rdev && test_bit(In_sync, &rdev->flags) ? "U" : "_");
+#endif /* MY_ABC_HERE */
 	}
 	rcu_read_unlock();
 	seq_printf (seq, "]");
@@ -7842,6 +10549,11 @@ static int raid5_spare_active(struct mddev *mddev)
 	int count = 0;
 	unsigned long flags;
 
+#ifdef MY_ABC_HERE
+	if (syno_is_disk_error_set(mddev))
+		return 0;
+#endif /* MY_ABC_HERE */
+
 	for (i = 0; i < conf->raid_disks; i++) {
 		tmp = conf->disks + i;
 		if (tmp->replacement
@@ -7867,6 +10579,10 @@ static int raid5_spare_active(struct mddev *mddev)
 		    && !test_bit(Faulty, &tmp->rdev->flags)
 		    && !test_and_set_bit(In_sync, &tmp->rdev->flags)) {
 			count++;
+#ifdef MY_ABC_HERE
+			if (mddev->syno_enable_requested_resync_hints)
+				set_bit(SynoNonFullInsync, &tmp->rdev->flags);
+#endif /* MY_ABC_HERE */
 			sysfs_notify_dirent_safe(tmp->rdev->sysfs_state);
 		}
 	}
@@ -7962,6 +10678,29 @@ abort:
 	return err;
 }
 
+#ifdef MY_ABC_HERE
+static int raid5_can_assign_disk(struct mddev *mddev, struct r5conf *conf)
+{
+	int resync_mode = mddev->syno_resync_mode;
+
+	if (conf->level != SYNO_RAID_LEVEL_F1)
+		return 1;
+
+	if (raid5_calc_degraded(conf) == 0)
+		return 1;
+
+	if (test_bit(MD_SYNO_RESHAPE_START, &mddev->recovery))
+		return 1;
+
+	if (raid5_calc_degraded(conf) != 0 && resync_mode != SYNO_RESYNC_MODE_REPAIR) {
+		pr_warn("md: %s: refuse to assign disk because md is degraded and do not enable resync\n",
+			mdname(mddev));
+		return 0;
+	}
+
+	return (resync_mode == SYNO_RESYNC_MODE_REPAIR ? 1 : 0);
+}
+#endif /* MY_ABC_HERE */
 static int raid5_add_disk(struct mddev *mddev, struct md_rdev *rdev)
 {
 	struct r5conf *conf = mddev->private;
@@ -7997,6 +10736,11 @@ static int raid5_add_disk(struct mddev *mddev, struct md_rdev *rdev)
 		/* no point adding a device */
 		return -EINVAL;
 
+#ifdef MY_ABC_HERE
+	if (syno_is_disk_error_set(mddev))
+		return -EINVAL;
+#endif /* MY_ABC_HERE */
+
 	if (rdev->raid_disk >= 0)
 		first = last = rdev->raid_disk;
 
@@ -8012,6 +10756,13 @@ static int raid5_add_disk(struct mddev *mddev, struct md_rdev *rdev)
 	for (disk = first; disk <= last; disk++) {
 		p = conf->disks + disk;
 		if (p->rdev == NULL) {
+#ifdef MY_ABC_HERE
+			if (!raid5_can_assign_disk(mddev, conf)) {
+				pr_warn("md: %s: refuse to assign disk: %s\n", mdname(mddev),
+					rdev->bdev->bd_disk->disk_name);
+				continue;
+			}
+#endif /* MY_ABC_HERE */
 			clear_bit(In_sync, &rdev->flags);
 			rdev->raid_disk = disk;
 			if (rdev->saved_raid_disk != disk)
@@ -8025,6 +10776,10 @@ static int raid5_add_disk(struct mddev *mddev, struct md_rdev *rdev)
 	}
 	for (disk = first; disk <= last; disk++) {
 		p = conf->disks + disk;
+#ifdef MY_ABC_HERE
+		if (p == NULL || p->rdev == NULL)
+			continue;
+#endif /* MY_ABC_HERE */
 		if (test_bit(WantReplacement, &p->rdev->flags) &&
 		    p->replacement == NULL) {
 			clear_bit(In_sync, &rdev->flags);
@@ -8055,6 +10810,10 @@ static int raid5_resize(struct mddev *mddev, sector_t sectors)
 
 	if (raid5_has_log(conf) || raid5_has_ppl(conf))
 		return -EINVAL;
+#ifdef MY_ABC_HERE
+	if (syno_is_disk_error_set(mddev))
+		return -EINVAL;
+#endif /* MY_ABC_HERE */
 	sectors &= ~((sector_t)conf->chunk_sectors - 1);
 	newsize = raid5_size(mddev, sectors, mddev->raid_disks);
 	if (mddev->external_size &&
@@ -8106,6 +10865,10 @@ static int check_reshape(struct mddev *mddev)
 
 	if (raid5_has_log(conf) || raid5_has_ppl(conf))
 		return -EINVAL;
+#ifdef MY_ABC_HERE
+	if (syno_is_disk_error_set(mddev))
+		return -EINVAL;
+#endif /* MY_ABC_HERE */
 	if (mddev->delta_disks == 0 &&
 	    mddev->new_layout == mddev->layout &&
 	    mddev->new_chunk_sectors == mddev->chunk_sectors)
@@ -8144,6 +10907,40 @@ static int check_reshape(struct mddev *mddev)
 				     + mddev->delta_disks));
 }
 
+#ifdef MY_ABC_HERE
+static int adjust_syno_raid5_defer_groups(struct mddev *mddev)
+{
+	int err = 0;
+	int old_group_cnt, new_group_cnt, disk_cnt_max;
+	struct syno_r5defer *old_groups = NULL;
+	struct syno_r5defer *new_groups = NULL;
+	struct r5conf *conf = mddev->private;
+
+	old_groups = conf->syno_defer_groups;
+	old_group_cnt = conf->syno_defer_group_cnt;
+	disk_cnt_max = conf->syno_defer_group_disk_cnt_max;
+	new_group_cnt = (mddev->raid_disks - 1) / disk_cnt_max + 1;
+
+	if ((new_group_cnt == old_group_cnt) ||
+		(new_group_cnt >= SYNO_DEFER_GROUP_CNT_MAX &&
+		old_group_cnt >= SYNO_DEFER_GROUP_CNT_MAX))
+		return 0;
+
+	err = alloc_syno_raid5_defer_groups(mddev, &new_group_cnt, &new_groups);
+	if (err) {
+		pr_err("md: %s: failed to adjust defer groups from %d to %d\n",
+				mdname(mddev), old_group_cnt, new_group_cnt);
+		return err;
+	}
+
+	conf->syno_defer_groups = new_groups;
+	conf->syno_defer_group_cnt = new_group_cnt;
+	free_syno_raid5_defer_groups(old_group_cnt, old_groups);
+
+	return err;
+}
+#endif /* MY_ABC_HERE */
+
 static int raid5_start_reshape(struct mddev *mddev)
 {
 	struct r5conf *conf = mddev->private;
@@ -8172,6 +10969,10 @@ static int raid5_start_reshape(struct mddev *mddev)
 		 */
 		return -EINVAL;
 
+#ifdef MY_ABC_HERE
+	if (syno_is_disk_error_set(mddev))
+		return -EINVAL;
+#endif /* MY_ABC_HERE */
 	/* Refuse to reduce size of the array.  Any reductions in
 	 * array size must be through explicit setting of array_size
 	 * attribute.
@@ -8183,6 +10984,13 @@ static int raid5_start_reshape(struct mddev *mddev)
 		return -EINVAL;
 	}
 
+#ifdef MY_ABC_HERE
+	set_bit(MD_SYNO_RESHAPE_START, &mddev->recovery);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	mddev_suspend(mddev);
+#endif /* MY_ABC_HERE */
+
 	atomic_set(&conf->reshape_stripes, 0);
 	spin_lock_irq(&conf->device_lock);
 	write_seqcount_begin(&conf->gen_lock);
@@ -8193,6 +11001,9 @@ static int raid5_start_reshape(struct mddev *mddev)
 	conf->prev_algo = conf->algorithm;
 	conf->algorithm = mddev->new_layout;
 	conf->generation++;
+#ifdef MY_ABC_HERE
+	conf->syno_reshape_failed = 0;
+#endif /* MY_ABC_HERE */
 	/* Code that selects data_offset needs to see the generation update
 	 * if reshape_progress has been set - so a memory barrier needed.
 	 */
@@ -8205,12 +11016,18 @@ static int raid5_start_reshape(struct mddev *mddev)
 	write_seqcount_end(&conf->gen_lock);
 	spin_unlock_irq(&conf->device_lock);
 
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 	/* Now make sure any requests that proceeded on the assumption
 	 * the reshape wasn't running - like Discard or Read - have
 	 * completed.
 	 */
 	mddev_suspend(mddev);
+#ifdef MY_ABC_HERE
+	adjust_syno_raid5_defer_groups(mddev);
+#endif /* MY_ABC_HERE */
 	mddev_resume(mddev);
+#endif /* MY_ABC_HERE */
 
 	/* Add some new drives, as many as will fit.
 	 * We know there are enough to make the newly sized array work.
@@ -8254,8 +11071,17 @@ static int raid5_start_reshape(struct mddev *mddev)
 	clear_bit(MD_RECOVERY_SYNC, &mddev->recovery);
 	clear_bit(MD_RECOVERY_CHECK, &mddev->recovery);
 	clear_bit(MD_RECOVERY_DONE, &mddev->recovery);
+#ifdef MY_ABC_HERE
+	clear_bit(MD_SYNO_RESHAPE_START, &mddev->recovery);
+#endif /* MY_ABC_HERE */
 	set_bit(MD_RECOVERY_RESHAPE, &mddev->recovery);
 	set_bit(MD_RECOVERY_RUNNING, &mddev->recovery);
+#ifdef MY_ABC_HERE
+#ifdef MY_ABC_HERE
+	adjust_syno_raid5_defer_groups(mddev);
+#endif /* MY_ABC_HERE */
+	mddev_resume(mddev);
+#endif /* MY_ABC_HERE */
 	mddev->sync_thread = md_register_thread(md_do_sync, mddev,
 						"reshape");
 	if (!mddev->sync_thread) {
@@ -8274,6 +11100,11 @@ static int raid5_start_reshape(struct mddev *mddev)
 		mddev->reshape_position = MaxSector;
 		write_seqcount_end(&conf->gen_lock);
 		spin_unlock_irq(&conf->device_lock);
+#ifdef MY_ABC_HERE
+		mddev_suspend(mddev);
+		adjust_syno_raid5_defer_groups(mddev);
+		mddev_resume(mddev);
+#endif /* MY_ABC_HERE */
 		return -EAGAIN;
 	}
 	conf->reshape_checkpoint = jiffies;
@@ -8356,6 +11187,9 @@ static void raid5_quiesce(struct mddev *mddev, int quiesce)
 		r5c_flush_cache(conf, INT_MAX);
 		conf->quiesce = 2;
 		wait_event_cmd(conf->wait_for_quiescent,
+#ifdef MY_ABC_HERE
+				    atomic_read(&conf->syno_heal_active_stripes) == 0 &&
+#endif /* MY_ABC_HERE */
 				    atomic_read(&conf->active_stripes) == 0 &&
 				    atomic_read(&conf->active_aligned_reads) == 0,
 				    unlock_all_device_hash_locks_irq(conf),
@@ -8400,6 +11234,53 @@ static void *raid45_takeover_raid0(struct mddev *mddev, int level)
 
 	return setup_conf(mddev);
 }
+
+#ifdef MY_ABC_HERE
+static int raid_f1_check_reshape(struct mddev *mddev)
+{
+	/* For a 2-drive array, the layout and chunk size can be changed
+	 * immediately as not restriping is needed.
+	 * For larger arrays we record the new value - after validation
+	 * to be used by a reshape pass.
+	 */
+	struct r5conf *conf = mddev->private;
+	int new_chunk = mddev->new_chunk_sectors;
+
+#ifdef MY_ABC_HERE
+	if (syno_is_disk_error_set(mddev))
+		return -EINVAL;
+#endif /* MY_ABC_HERE */
+
+	if (mddev->new_layout >= 0 && !algorithm_valid_raid_f1(mddev->new_layout))
+		return -EINVAL;
+	if (new_chunk > 0) {
+		if (!is_power_of_2(new_chunk))
+			return -EINVAL;
+		if (new_chunk < (PAGE_SIZE>>9))
+			return -EINVAL;
+		if (mddev->array_sectors & (new_chunk-1))
+			/* not factor of array size */
+			return -EINVAL;
+	}
+
+	/* They look valid */
+
+	if (mddev->raid_disks == 2) {
+		/* can make the change immediately */
+		if (mddev->new_layout >= 0) {
+			conf->algorithm = mddev->new_layout;
+			mddev->layout = mddev->new_layout;
+		}
+		if (new_chunk > 0) {
+			conf->chunk_sectors = new_chunk;
+			mddev->chunk_sectors = new_chunk;
+		}
+		set_bit(MD_SB_CHANGE_DEVS, &mddev->sb_flags);
+		md_wakeup_thread(mddev->thread);
+	}
+	return check_reshape(mddev);
+}
+#endif /* MY_ABC_HERE */
 
 static void *raid5_takeover_raid1(struct mddev *mddev)
 {
@@ -8475,6 +11356,11 @@ static int raid5_check_reshape(struct mddev *mddev)
 	 */
 	struct r5conf *conf = mddev->private;
 	int new_chunk = mddev->new_chunk_sectors;
+
+#ifdef MY_ABC_HERE
+	if (syno_is_disk_error_set(mddev))
+		return -EINVAL;
+#endif /* MY_ABC_HERE */
 
 	if (mddev->new_layout >= 0 && !algorithm_valid_raid5(mddev->new_layout))
 		return -EINVAL;
@@ -8565,6 +11451,13 @@ static void *raid4_takeover(struct mddev *mddev)
 	}
 	return ERR_PTR(-EINVAL);
 }
+
+#ifdef MY_ABC_HERE
+static void *raid_f1_takeover(struct mddev *mddev)
+{
+	return ERR_PTR(-EINVAL);
+}
+#endif /* MY_ABC_HERE */
 
 static struct md_personality raid5_personality;
 
@@ -8683,6 +11576,72 @@ static int raid5_start(struct mddev *mddev)
 	return r5l_start(conf->log);
 }
 
+#ifdef MY_ABC_HERE
+static void raid5_adjust_md_threads_node(struct mddev  *mddev)
+{
+	struct r5conf *conf = mddev->private;
+	int node = mddev->syno_md_thread_fixed_node;
+	int selected_cpu;
+
+	if (!conf)
+		return;
+
+	if (-1 == node) {
+		conf->syno_handle_stripes_cpu = -1;
+	} else {
+		selected_cpu = cpumask_any_and(cpumask_of_node(node), cpu_online_mask);
+		conf->syno_handle_stripes_cpu = selected_cpu < nr_cpu_ids ? selected_cpu : -1;
+	}
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static void raid5_align_chunk_addr_virt_to_dev(struct mddev *mddev,
+	sector_t virt_start, sector_t virt_end, sector_t* dev_start,
+	sector_t* dev_end)
+{
+	struct r5conf *conf = mddev->private;
+	int stripe_chunks = conf->raid_disks - conf->max_degraded;
+	sector_t chunk_sectors = conf->chunk_sectors;
+	sector_t virt_sectors_per_chunk_stripe = chunk_sectors * stripe_chunks;
+	sector_t chunk_stripe_index, shift_inner_chunk_stripe;
+
+	/**
+	 * For starting address,
+	 * we must check whether the current chunk stripe can be skipped or
+	 * not. If the starting address starts from middle of chunk stripe,
+	 * it cannot be skipped. So we will try to skip the next chunk stripe.
+	 * To check whether the starting address starts from middle, we check
+	 * the remainder is zero or not.
+	 *
+	 * For ending address,
+	 * we need not to do anything more. The unwanted part in last chunk
+	 * stripe will not appear because of integer division.
+	 *
+	 * Finally, we can multiply the chunk stripe index with only one chunk
+	 * size, and we can get the address of the rebulding device. (Each
+	 * device contribute exactly one chunk to a chunk stripe.)
+	 */
+
+	if (!dev_start && !dev_end)
+		return;
+
+	if (dev_start) {
+		chunk_stripe_index = virt_start;
+		shift_inner_chunk_stripe = sector_div(chunk_stripe_index,
+						      virt_sectors_per_chunk_stripe);
+		chunk_stripe_index += !!shift_inner_chunk_stripe;
+		*dev_start = chunk_stripe_index * chunk_sectors;
+	}
+
+	if (dev_end) {
+		chunk_stripe_index = virt_end;
+		sector_div(chunk_stripe_index, virt_sectors_per_chunk_stripe);
+		*dev_end = chunk_stripe_index * chunk_sectors;
+	}
+}
+#endif /* MY_ABC_HERE */
+
 static struct md_personality raid6_personality =
 {
 	.name		= "raid6",
@@ -8693,7 +11652,12 @@ static struct md_personality raid6_personality =
 	.start		= raid5_start,
 	.free		= raid5_free,
 	.status		= raid5_status,
+#ifdef MY_ABC_HERE
+	.syno_error_handler = syno_raid5_error_for_hotplug,
+	.error_handler	= syno_raid5_error_for_internal,
+#else /* MY_ABC_HERE */
 	.error_handler	= raid5_error,
+#endif /* MY_ABC_HERE */
 	.hot_add_disk	= raid5_add_disk,
 	.hot_remove_disk= raid5_remove_disk,
 	.spare_active	= raid5_spare_active,
@@ -8706,6 +11670,15 @@ static struct md_personality raid6_personality =
 	.quiesce	= raid5_quiesce,
 	.takeover	= raid6_takeover,
 	.change_consistency_policy = raid5_change_consistency_policy,
+#ifdef MY_ABC_HERE
+	.adjust_md_threads_node = raid5_adjust_md_threads_node,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.align_chunk_addr_virt_to_dev = raid5_align_chunk_addr_virt_to_dev,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_is_md_max_degrade = syno_raid5_is_max_degrade,
+#endif /* MY_ABC_HERE */
 };
 static struct md_personality raid5_personality =
 {
@@ -8717,7 +11690,12 @@ static struct md_personality raid5_personality =
 	.start		= raid5_start,
 	.free		= raid5_free,
 	.status		= raid5_status,
+#ifdef MY_ABC_HERE
+	.syno_error_handler = syno_raid5_error_for_hotplug,
+	.error_handler	= syno_raid5_error_for_internal,
+#else /* MY_ABC_HERE */
 	.error_handler	= raid5_error,
+#endif /* MY_ABC_HERE */
 	.hot_add_disk	= raid5_add_disk,
 	.hot_remove_disk= raid5_remove_disk,
 	.spare_active	= raid5_spare_active,
@@ -8730,6 +11708,15 @@ static struct md_personality raid5_personality =
 	.quiesce	= raid5_quiesce,
 	.takeover	= raid5_takeover,
 	.change_consistency_policy = raid5_change_consistency_policy,
+#ifdef MY_ABC_HERE
+	.adjust_md_threads_node = raid5_adjust_md_threads_node,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.align_chunk_addr_virt_to_dev = raid5_align_chunk_addr_virt_to_dev,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_is_md_max_degrade = syno_raid5_is_max_degrade,
+#endif /* MY_ABC_HERE */
 };
 
 static struct md_personality raid4_personality =
@@ -8742,7 +11729,12 @@ static struct md_personality raid4_personality =
 	.start		= raid5_start,
 	.free		= raid5_free,
 	.status		= raid5_status,
+#ifdef MY_ABC_HERE
+	.syno_error_handler = syno_raid5_error_for_hotplug,
+	.error_handler	= syno_raid5_error_for_internal,
+#else /* MY_ABC_HERE */
 	.error_handler	= raid5_error,
+#endif /* MY_ABC_HERE */
 	.hot_add_disk	= raid5_add_disk,
 	.hot_remove_disk= raid5_remove_disk,
 	.spare_active	= raid5_spare_active,
@@ -8755,7 +11747,743 @@ static struct md_personality raid4_personality =
 	.quiesce	= raid5_quiesce,
 	.takeover	= raid4_takeover,
 	.change_consistency_policy = raid5_change_consistency_policy,
+#ifdef MY_ABC_HERE
+	.adjust_md_threads_node = raid5_adjust_md_threads_node,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.align_chunk_addr_virt_to_dev = raid5_align_chunk_addr_virt_to_dev,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_is_md_max_degrade = syno_raid5_is_max_degrade,
+#endif /* MY_ABC_HERE */
 };
+
+#ifdef MY_ABC_HERE
+static struct md_personality raid_f1_personality = {
+	.name           = "raidF1",
+	.level          = SYNO_RAID_LEVEL_F1,
+	.owner          = THIS_MODULE,
+	.make_request   = raid5_make_request,
+	.run            = raid5_run,
+	.free           = raid5_free,
+	.status         = raid5_status,
+#ifdef MY_ABC_HERE
+	.syno_error_handler = syno_raid5_error_for_hotplug,
+	.error_handler	= syno_raid5_error_for_internal,
+#else /* MY_ABC_HERE */
+	.error_handler	= raid5_error,
+#endif /* MY_ABC_HERE */
+	.hot_add_disk   = raid5_add_disk,
+	.hot_remove_disk = raid5_remove_disk,
+	.spare_active   = raid5_spare_active,
+	.sync_request   = raid5_sync_request,
+	.resize         = raid5_resize,
+	.size           = raid5_size,
+	.check_reshape  = raid_f1_check_reshape,
+	.start_reshape  = raid5_start_reshape,
+	.finish_reshape = raid5_finish_reshape,
+	.quiesce        = raid5_quiesce,
+	.takeover       = raid_f1_takeover,
+	.change_consistency_policy = raid5_change_consistency_policy,
+#ifdef MY_ABC_HERE
+	.adjust_md_threads_node = raid5_adjust_md_threads_node,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.align_chunk_addr_virt_to_dev = raid5_align_chunk_addr_virt_to_dev,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	.syno_is_md_max_degrade = syno_raid5_is_max_degrade,
+#endif /* MY_ABC_HERE */
+};
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static const char *syno_raid5_get_bdevname(struct r5conf *conf, int disk_idx, char *buf)
+{
+	struct md_rdev *rdev = NULL;
+
+	if (!conf || disk_idx < 0 || disk_idx >= conf->raid_disks)
+		return "null";
+
+	rdev = rcu_dereference(conf->disks[disk_idx].rdev);
+	return rdev ? bdevname(rdev->bdev, buf) : "null";
+}
+
+static void syno_raid5_heal_add_stripe_to_handle_list(
+	struct r5conf *conf, struct syno_heal_stripe_head *heal_sh)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&conf->syno_heal_stripe_lock, flags);
+	list_add_tail(&heal_sh->sh_list, &conf->syno_heal_handle_list);
+	spin_unlock_irqrestore(&conf->syno_heal_stripe_lock, flags);
+}
+
+static void syno_raid5_heal_add_stripe_to_free_list(
+	struct r5conf *conf, struct syno_heal_stripe_head *heal_sh)
+{
+	spin_lock_irq(&conf->syno_heal_stripe_lock);
+	list_add_tail(&heal_sh->sh_list, &conf->syno_heal_free_list);
+	atomic_dec(&conf->syno_heal_active_stripes);
+	spin_unlock_irq(&conf->syno_heal_stripe_lock);
+
+	wake_up(&conf->syno_heal_wait_for_stripe);
+	wake_up(&conf->wait_for_quiescent);
+}
+
+static void syno_raid5_heal_release_stripe(struct syno_heal_stripe_head *heal_sh)
+{
+	if (atomic_dec_and_test(&heal_sh->count)) {
+		syno_raid5_heal_add_stripe_to_handle_list(heal_sh->raid_conf, heal_sh);
+		md_wakeup_thread(heal_sh->raid_conf->mddev->thread);
+	}
+}
+
+static struct syno_heal_stripe_head *syno_raid5_heal_get_free_stripe(
+	struct r5conf *conf)
+{
+	struct list_head *first;
+	struct syno_heal_stripe_head *heal_sh;
+
+	if (list_empty(&conf->syno_heal_free_list))
+		return NULL;
+
+	first = conf->syno_heal_free_list.next;
+	heal_sh = list_entry(first, struct syno_heal_stripe_head, sh_list);
+	list_del_init(first);
+	atomic_set(&heal_sh->count, 1);
+	atomic_inc(&conf->syno_heal_active_stripes);
+
+	return heal_sh;
+}
+
+static void syno_raid5_heal_free_stripe(
+	struct kmem_cache *sc, struct syno_heal_stripe_head *heal_sh)
+{
+	kmem_cache_free(sc, heal_sh);
+}
+
+static void syno_raid5_heal_reset_stripe(struct syno_heal_stripe_head *heal_sh)
+{
+	int i;
+	int disks = heal_sh->disks;
+
+	heal_sh->heal_record = NULL;
+	heal_sh->state = 0;
+	heal_sh->sh_sector = 0;
+	heal_sh->dd_idx = heal_sh->pd_idx = heal_sh->qd_idx = heal_sh->ddf_layout = 0;
+	atomic_set(&heal_sh->count, 0);
+
+	for (i = 0; i < disks; i++) {
+		struct syno_heal_r5dev *dev = &heal_sh->dev[i];
+
+		dev->bio.bi_status = BLK_STS_IOERR;
+		dev->rdev = NULL;
+	}
+}
+
+static void syno_raid5_heal_shrink_buffers(struct syno_heal_stripe_head *heal_sh)
+{
+	int i;
+	int disks = heal_sh->disks;
+
+	for (i = 0; i < disks ; i++) {
+		struct page *p = heal_sh->dev[i].page;
+
+		if (!p)
+			continue;
+		heal_sh->dev[i].page = NULL;
+		put_page(p);
+	}
+}
+
+static bool syno_raid5_heal_drop_one_stripe(struct r5conf *conf)
+{
+	struct syno_heal_stripe_head *heal_sh;
+
+	spin_lock_irq(&conf->syno_heal_stripe_lock);
+	heal_sh = syno_raid5_heal_get_free_stripe(conf);
+	spin_unlock_irq(&conf->syno_heal_stripe_lock);
+	if (!heal_sh)
+		return false;
+
+	syno_raid5_heal_shrink_buffers(heal_sh);
+	syno_raid5_heal_free_stripe(conf->syno_heal_slab_cache, heal_sh);
+	conf->syno_heal_max_nr_stripes--;
+	atomic_dec(&conf->syno_heal_active_stripes);
+	return true;
+}
+
+static void syno_raid5_heal_shrink_stripes(struct r5conf *conf)
+{
+	while (conf->syno_heal_max_nr_stripes &&
+	       syno_raid5_heal_drop_one_stripe(conf))
+		;
+
+	kmem_cache_destroy(conf->syno_heal_slab_cache);
+	conf->syno_heal_slab_cache = NULL;
+}
+
+static bool syno_raid5_heal_grow_buffers(
+	struct syno_heal_stripe_head *heal_sh, gfp_t gfp)
+{
+	int i;
+	int disks = heal_sh->disks;
+
+	for (i = 0; i < disks; i++) {
+		struct page *page;
+
+		page = alloc_page(gfp);
+		if (!page)
+			return false;
+
+		heal_sh->dev[i].page = page;
+	}
+	return true;
+}
+
+static struct syno_heal_stripe_head *syno_raid5_heal_alloc_stripe(
+	struct kmem_cache *sc, gfp_t gfp, int disks, struct r5conf *conf)
+{
+	int i;
+	struct syno_heal_stripe_head *heal_sh;
+
+	heal_sh = kmem_cache_zalloc(sc, gfp);
+	if (heal_sh) {
+		INIT_LIST_HEAD(&heal_sh->sh_list);
+		heal_sh->raid_conf = conf;
+		heal_sh->disks = disks;
+		atomic_set(&heal_sh->count, 1);
+		for (i = 0; i < disks; i++) {
+			struct syno_heal_r5dev *dev = &heal_sh->dev[i];
+
+			bio_init(&dev->bio, &dev->vec, 1);
+			dev->rdev = NULL;
+		}
+	}
+	return heal_sh;
+}
+
+static bool syno_raid5_heal_grow_one_stripe(struct r5conf *conf, gfp_t gfp)
+{
+	struct syno_heal_stripe_head *heal_sh;
+
+	heal_sh = syno_raid5_heal_alloc_stripe(
+		conf->syno_heal_slab_cache, gfp, conf->pool_size, conf);
+	if (!heal_sh)
+		return false;
+
+	if (!syno_raid5_heal_grow_buffers(heal_sh, gfp)) {
+		syno_raid5_heal_shrink_buffers(heal_sh);
+		syno_raid5_heal_free_stripe(conf->syno_heal_slab_cache, heal_sh);
+		return false;
+	}
+
+	atomic_inc(&conf->syno_heal_active_stripes);
+	conf->syno_heal_max_nr_stripes++;
+	syno_raid5_heal_release_stripe(heal_sh);
+	return true;
+}
+
+static bool syno_raid5_heal_grow_stripes(struct r5conf *conf, int num)
+{
+#if PAGE_SIZE != DEFAULT_STRIPE_SIZE
+	syno_md_data_correction_print(conf->mddev->syno_md_data_correction_log_flag,
+		KERN_WARNING,
+		"%s: [Self Heal] page size [%ld] does not match default stripe size [%d], data correction disabled\n",
+		mdname(conf->mddev), PAGE_SIZE, DEFAULT_STRIPE_SIZE);
+	conf->syno_heal_slab_cache = NULL;
+
+	return false;
+#else /* PAGE_SIZE != DEFAULT_STRIPE_SIZE */
+	struct mddev *mddev = conf->mddev;
+	struct kmem_cache *sc;
+	size_t namelen = sizeof(conf->syno_heal_cache_name[0]);
+	int devs = max(conf->raid_disks, conf->previous_raid_disks);
+
+	if (mddev->gendisk)
+		snprintf(conf->syno_heal_cache_name[0], namelen,
+			"raid%d-%s-heal", conf->level, mdname(mddev));
+	else
+		snprintf(conf->syno_heal_cache_name[0], namelen,
+			"raid%d-%p-heal", conf->level, mddev);
+	snprintf(conf->syno_heal_cache_name[1], namelen,
+		"%.27s-alt", conf->syno_heal_cache_name[0]);
+
+	conf->syno_heal_active_name = 0;
+	sc = kmem_cache_create(conf->syno_heal_cache_name[conf->syno_heal_active_name],
+		sizeof(struct syno_heal_stripe_head)+(devs-1)*sizeof(struct syno_heal_r5dev),
+		0, 0, NULL);
+	if (!sc)
+		return false;
+
+	conf->syno_heal_slab_cache = sc;
+	while (num--)
+		if (!syno_raid5_heal_grow_one_stripe(conf, GFP_KERNEL))
+			return false;
+
+	return true;
+#endif /* PAGE_SIZE != DEFAULT_STRIPE_SIZE */
+}
+
+static bool syno_raid5_heal_check_stripe_uptodate(
+	struct syno_heal_stripe_head *heal_sh)
+{
+	struct r5conf *conf = heal_sh->raid_conf;
+	int disks = heal_sh->disks;
+	int i;
+
+	for (i = 0; i < disks; i++) {
+		if (heal_sh->dev[i].bio.bi_status) {
+			syno_md_data_correction_print(conf->mddev->syno_md_data_correction_log_flag,
+				KERN_ERR,
+				"%s: [Self Heal] bio not uptodate at disk [%d] sector [%llu]\n",
+				mdname(conf->mddev), i, (u64)heal_sh->dev[i].bio.bi_iter.bi_sector);
+			return false;
+		}
+	}
+	return true;
+}
+
+static addr_conv_t *syno_raid5_heal_to_addr_conv(
+	int disks, struct raid5_percpu *percpu, int i)
+{
+	return (void *) (to_addr_page(percpu, i) + disks + 2);
+}
+
+static unsigned int *syno_raid5_heal_to_addr_offs(
+	int disks, struct raid5_percpu *percpu)
+{
+	return (unsigned int *)(syno_raid5_heal_to_addr_conv(disks, percpu, 0) + disks + 2);
+}
+
+static bool syno_raid5_heal_can_return_data(
+	struct bio *master_bio, struct syno_md_heal_record *heal_record)
+{
+	bool ret = true;
+	char *msg;
+	int msg_cnt;
+
+	if (syno_md_heal_record_hash_value(heal_record, master_bio) != 0) {
+		msg_cnt = heal_record->retry_cnt - 1;
+		if (heal_record->retry_cnt <= heal_record->max_retry_cnt) {
+			ret = false;
+			msg = "get same result, retry next round";
+		} else {
+			msg = "get same result, give up";
+			bio_set_flag(master_bio, BIO_CORRECTION_ERR);
+		}
+	} else {
+		msg_cnt = heal_record->retry_cnt;
+		msg = "return result to upper layer";
+		/* in parity mode, we do not pass BIO_CORRECTION_RETRY to underlying device,
+		 * if we add retry_cnt here, we can directly try next round correction if we receive
+		 * BIO_CORRECTION_RETRY again
+		 */
+		if (heal_record->retry_cnt != 1)
+			++(heal_record->retry_cnt);
+	}
+
+	syno_md_data_correction_print(heal_record->mddev->syno_md_data_correction_log_flag,
+		KERN_WARNING,
+		"%s: [Self Heal] retry sector [%llu] round [%d/%d] finished: %s\n",
+		mdname(heal_record->mddev), (u64)master_bio->bi_iter.bi_sector,
+		msg_cnt, heal_record->max_retry_cnt, msg);
+	return ret;
+}
+
+static void syno_raid5_heal_return_master_bio(
+	struct mddev *mddev, struct bio *master_bio,
+	struct syno_md_heal_record *heal_record, bool success)
+{
+	syno_md_heal_put_record(mddev, heal_record);
+
+	if (success) {
+		master_bio->bi_status = BLK_STS_OK;
+	} else {
+		master_bio->bi_status = BLK_STS_IOERR;
+		bio_set_flag(master_bio, BIO_CORRECTION_ERR);
+		syno_md_heal_find_and_del_record(mddev, master_bio);
+	}
+	bio_endio(master_bio);
+}
+
+static void syno_raid5_heal_compute_data_complete(void *heal_sh_ref)
+{
+	struct syno_heal_stripe_head *heal_sh = heal_sh_ref;
+	struct syno_md_heal_record *heal_record = heal_sh->heal_record;
+	struct bio *master_bio = heal_record->bio;
+	unsigned int offset_src = master_bio->bi_iter.bi_sector
+	                          % RAID5_STRIPE_SECTORS(heal_sh->raid_conf);
+	unsigned int offset_dst = bio_offset(master_bio);
+	char *pa_src = page_address(heal_sh->dev[heal_sh->dd_idx].page);
+	char *pa_dst = kmap_atomic(bio_page(master_bio));
+
+	memcpy(pa_dst + offset_dst,
+	       pa_src + offset_src,
+	       bio_iter_len(master_bio, master_bio->bi_iter));
+
+	kunmap_atomic(pa_dst);
+	syno_raid5_heal_release_stripe(heal_sh);
+}
+
+static void syno_raid5_heal_ops_compute(
+	struct syno_heal_stripe_head *heal_sh, struct raid5_percpu *percpu)
+{
+	struct r5conf *conf = heal_sh->raid_conf;
+	int i;
+	int count = 0;
+	int disks = heal_sh->disks;
+	int dd_idx = heal_sh->dd_idx;
+	int pd_idx = heal_sh->pd_idx;
+	int qd_idx = heal_sh->qd_idx;
+	int retry_cnt = heal_sh->heal_record->retry_cnt;
+	int max_retry_cnt = heal_sh->heal_record->max_retry_cnt;
+	struct page **src_page = to_addr_page(percpu, 0);
+	struct page *dst_page;
+	struct dma_async_tx_descriptor *tx;
+	struct async_submit_ctl submit;
+
+	syno_md_data_correction_print(conf->mddev->syno_md_data_correction_log_flag,
+		KERN_WARNING,
+		"%s: [Self Heal] retry sector [%llu] round [%d/%d] choose %s-disk\n",
+		mdname(conf->mddev), (u64)heal_sh->heal_record->bio->bi_iter.bi_sector,
+		retry_cnt, max_retry_cnt,
+		(retry_cnt == 2 ? "p" : (retry_cnt == 3 ? "q" : "d")));
+
+	if (retry_cnt == 2) {
+		init_async_submit(&submit, ASYNC_TX_FENCE|ASYNC_TX_XOR_ZERO_DST, NULL,
+			syno_raid5_heal_compute_data_complete,
+			heal_sh, syno_raid5_heal_to_addr_conv(disks, percpu, 0));
+
+		dst_page = heal_sh->dev[dd_idx].page;
+		for (i = 0; i < disks; i++) {
+			if (i != dd_idx && i != qd_idx)
+				src_page[count++] = heal_sh->dev[i].page;
+		}
+		tx = async_xor(dst_page, src_page, 0, count, RAID5_STRIPE_SIZE(conf), &submit);
+	} else if (retry_cnt == 3) {
+		/* reference ops_run_compute6_2(): We're missing D+P */
+		int d0_idx;
+		int faila = -1, failb = -1, count = 0;
+		int syndrome_disks = heal_sh->ddf_layout ? disks : disks-2;
+		struct stripe_head sh;
+		unsigned int *offs = syno_raid5_heal_to_addr_offs(disks, percpu);
+
+		WARN_ON(conf->level == 5);
+
+		sh.disks = disks;
+		sh.pd_idx = pd_idx;
+		sh.qd_idx = qd_idx;
+		sh.ddf_layout = heal_sh->ddf_layout;
+		d0_idx = raid6_d0(&sh);
+
+		for (i = 0; i < disks ; i++) {
+			offs[i] = 0;
+			src_page[i] = NULL;
+		}
+
+		i = d0_idx;
+		do {
+			int slot = raid6_idx_to_slot(i, &sh, &count, syndrome_disks);
+
+			src_page[slot] = heal_sh->dev[i].page;
+			if (i == dd_idx)
+				faila = slot;
+			if (i == pd_idx)
+				failb = slot;
+			i = raid6_next_disk(i, disks);
+		} while (i != d0_idx);
+
+		if (failb < faila)
+			swap(faila, failb);
+
+		WARN_ON(failb != syndrome_disks);
+
+		init_async_submit(&submit, ASYNC_TX_FENCE, NULL,
+			syno_raid5_heal_compute_data_complete,
+			heal_sh, syno_raid5_heal_to_addr_conv(disks, percpu, 0));
+		tx = async_raid6_datap_recov(syndrome_disks+2, RAID5_STRIPE_SIZE(conf),
+			faila, src_page, offs, &submit);
+	} else {
+		syno_raid5_heal_compute_data_complete(heal_sh);
+	}
+}
+
+static void syno_raid5_heal_compute_data(struct syno_heal_stripe_head *heal_sh)
+{
+	unsigned long cpu;
+	struct raid5_percpu *percpu;
+	struct r5conf *conf = heal_sh->raid_conf;
+
+	set_bit(HEAL_STRIPE_COMPUTE_RUN, &heal_sh->state);
+	atomic_inc(&heal_sh->count);
+
+	if (!syno_raid5_heal_check_stripe_uptodate(heal_sh))
+		goto abort;
+
+	cpu = get_cpu();
+	percpu = per_cpu_ptr(conf->percpu, cpu);
+	syno_raid5_heal_ops_compute(heal_sh, percpu);
+	put_cpu();
+
+	return;
+abort:
+	set_bit(HEAL_STRIPE_ERROR, &heal_sh->state);
+	syno_raid5_heal_release_stripe(heal_sh);
+}
+
+static void syno_raid5_heal_check_master_data(struct syno_heal_stripe_head *heal_sh)
+{
+	struct r5conf *conf = heal_sh->raid_conf;
+	struct mddev *mddev = conf->mddev;
+	struct syno_md_heal_record *heal_record = heal_sh->heal_record;
+	struct bio *master_bio = heal_record->bio;
+
+	if (syno_raid5_heal_can_return_data(master_bio, heal_record)) {
+		if (bio_flagged(master_bio, BIO_CORRECTION_ERR))
+			syno_raid5_heal_return_master_bio(mddev, master_bio, heal_record, false);
+		else
+			syno_raid5_heal_return_master_bio(mddev, master_bio, heal_record, true);
+		syno_raid5_heal_reset_stripe(heal_sh);
+		syno_raid5_heal_add_stripe_to_free_list(conf, heal_sh);
+	} else {
+		set_bit(HEAL_STRIPE_IO_STARTED, &heal_sh->state);
+		syno_raid5_heal_add_stripe_to_handle_list(conf, heal_sh);
+		md_wakeup_thread(mddev->thread);
+	}
+}
+
+static void syno_raid5_heal_handle_stripe(struct r5conf *conf)
+{
+	struct mddev *mddev = conf->mddev;
+	struct syno_heal_stripe_head *heal_sh;
+	struct syno_heal_stripe_head *tmp_sh;
+	LIST_HEAD(handle_list);
+
+	spin_lock_irq(&conf->syno_heal_stripe_lock);
+	if (!list_empty(&conf->syno_heal_handle_list))
+		list_replace_init(&conf->syno_heal_handle_list, &handle_list);
+	spin_unlock_irq(&conf->syno_heal_stripe_lock);
+
+	list_for_each_entry_safe(heal_sh, tmp_sh, &handle_list, sh_list) {
+		list_del_init(&heal_sh->sh_list);
+		if (test_and_clear_bit(HEAL_STRIPE_ERROR, &heal_sh->state)) {
+			syno_raid5_heal_return_master_bio(
+				mddev, heal_sh->heal_record->bio, heal_sh->heal_record, false);
+			syno_raid5_heal_reset_stripe(heal_sh);
+			syno_raid5_heal_add_stripe_to_free_list(conf, heal_sh);
+		} else if (test_and_clear_bit(HEAL_STRIPE_IO_STARTED, &heal_sh->state)) {
+			syno_raid5_heal_compute_data(heal_sh);
+		} else if (test_and_clear_bit(HEAL_STRIPE_COMPUTE_RUN, &heal_sh->state)) {
+			syno_raid5_heal_check_master_data(heal_sh);
+		} else {
+			syno_raid5_heal_reset_stripe(heal_sh);
+			syno_raid5_heal_add_stripe_to_free_list(conf, heal_sh);
+		}
+	}
+}
+
+static void syno_raid5_heal_end_request(struct bio *bio)
+{
+	struct md_rdev *rdev;
+	struct syno_heal_stripe_head *heal_sh = bio->bi_private;
+	struct r5conf *conf = heal_sh->raid_conf;
+	int disks = heal_sh->disks;
+	int i;
+
+	for (i = 0; i < disks; i++)
+		if (bio == &heal_sh->dev[i].bio)
+			break;
+
+	if (i == disks) {
+		syno_md_data_correction_print(conf->mddev->syno_md_data_correction_log_flag,
+			KERN_ERR,
+			"%s: [Self Heal] failed to find dev bio at sector [%llu] for master bio [%llu]\n",
+			mdname(conf->mddev), (u64)bio->bi_iter.bi_sector,
+			(u64)heal_sh->heal_record->bio->bi_iter.bi_sector);
+		set_bit(HEAL_STRIPE_ERROR, &heal_sh->state);
+		goto abort;
+	}
+
+	/* it should be fine if we do not take rcu_read_lock() here,
+	 * since we already added count before I/O.
+	 */
+	rdev = heal_sh->dev[i].rdev;
+	rdev_dec_pending(rdev, conf->mddev);
+
+abort:
+	syno_raid5_heal_release_stripe(heal_sh);
+}
+
+static void syno_raid5_heal_submit_heal_sh(
+	struct r5conf *conf, struct syno_heal_stripe_head *heal_sh)
+{
+	int i;
+	int disks = heal_sh->disks;
+
+	set_bit(HEAL_STRIPE_IO_STARTED, &heal_sh->state);
+
+	for (i = disks; i--; ) {
+		struct bio *bio;
+		struct md_rdev *rdev;
+
+		rcu_read_lock();
+		rdev = rcu_dereference(conf->disks[i].rdev);
+		if (!rdev || test_bit(Faulty, &rdev->flags)) {
+			rcu_read_unlock();
+			continue;
+		}
+
+		bio = &heal_sh->dev[i].bio;
+		bio_reset(bio);
+		/* pass BIO_CORRECTION_RETRY to underlying device,
+		 * since it might have the ability of data correction.
+		 * but we do not pass BIO_CORRECTION_RETRY in parity mode.
+		 */
+		if (heal_sh->heal_record->retry_cnt == 1)
+			bio_set_flag(bio, BIO_CORRECTION_RETRY);
+		heal_sh->dev[i].vec.bv_page = heal_sh->dev[i].page;
+		heal_sh->dev[i].rdev = rdev;
+		bio_set_dev(bio, rdev->bdev);
+		bio->bi_iter.bi_sector = heal_sh->sh_sector + rdev->data_offset;
+		bio->bi_end_io = syno_raid5_heal_end_request;
+		bio->bi_opf = REQ_OP_READ;
+		bio->bi_private = heal_sh;
+		bio->bi_vcnt = 1;
+		bio->bi_io_vec[0].bv_len = RAID5_STRIPE_SIZE(conf);
+		bio->bi_io_vec[0].bv_offset = 0;
+		bio->bi_iter.bi_size = RAID5_STRIPE_SIZE(conf);
+		bio->bi_write_hint = heal_sh->heal_record->bio->bi_write_hint;
+
+		atomic_inc(&rdev->nr_pending);
+		rcu_read_unlock();
+		atomic_inc(&heal_sh->count);
+
+		submit_bio_noacct(bio);
+	}
+
+	syno_raid5_heal_release_stripe(heal_sh);
+}
+
+static void syno_raid5_heal_handle_bio(struct r5conf *conf,
+	struct bio *master_bio, struct syno_md_heal_record *heal_record)
+{
+	int dd_idx;
+	int max_retry_cnt;
+	char d_buf[BDEVNAME_SIZE];
+	char p_buf[BDEVNAME_SIZE];
+	char q_buf[BDEVNAME_SIZE];
+	struct mddev *mddev = conf->mddev;
+	struct syno_heal_stripe_head *heal_sh;
+	struct stripe_head sh_role;
+	sector_t logical_sector, last_sector;
+	sector_t sh_sector;
+	DEFINE_WAIT(w);
+	signed long timeout = msecs_to_jiffies(180 * 1000);
+
+	max_retry_cnt = heal_record->max_retry_cnt;
+	if (max_retry_cnt < heal_record->retry_cnt) {
+		syno_md_data_correction_print(mddev->syno_md_data_correction_log_flag,
+			KERN_ERR,
+			"%s: [Self Heal] retry sector [%llu] round [%d/%d] reach max retry count: request_cnt [%d]\n",
+			mdname(mddev), (u64)master_bio->bi_iter.bi_sector,
+			heal_record->retry_cnt, max_retry_cnt, heal_record->request_cnt);
+		goto abort;
+	}
+
+	logical_sector = master_bio->bi_iter.bi_sector & ~((sector_t)RAID5_STRIPE_SECTORS(conf)-1);
+	last_sector = bio_end_sector(master_bio);
+	sh_sector = raid5_compute_sector(conf, logical_sector, 0, &dd_idx, &sh_role);
+
+	rcu_read_lock();
+	syno_md_data_correction_print(mddev->syno_md_data_correction_log_flag,
+		KERN_WARNING,
+		"%s: [Self Heal] retry sector [%llu] round [%d/%d] start: logical-sector [%llu], sh-sector [%llu], d-disk [%d:%s], p-disk [%d:%s], q-disk [%d:%s]\n",
+		mdname(mddev), (u64)master_bio->bi_iter.bi_sector,
+		heal_record->retry_cnt, max_retry_cnt,
+		(u64)logical_sector, (u64)sh_sector,
+		dd_idx, syno_raid5_get_bdevname(conf, dd_idx, d_buf),
+		sh_role.pd_idx, syno_raid5_get_bdevname(conf, sh_role.pd_idx, p_buf),
+		sh_role.qd_idx, syno_raid5_get_bdevname(conf, sh_role.qd_idx, q_buf));
+	rcu_read_unlock();
+
+retry:
+	syno_raid5_lock_device_heal_lock(conf);
+	wait_event_cmd(conf->wait_for_quiescent,
+	               conf->quiesce == 0,
+	               syno_raid5_unlock_device_heal_lock(conf),
+	               syno_raid5_lock_device_heal_lock(conf));
+
+	heal_sh = syno_raid5_heal_get_free_stripe(conf);
+	if (!heal_sh) {
+		syno_raid5_unlock_device_heal_lock(conf);
+
+		prepare_to_wait(&conf->syno_heal_wait_for_stripe, &w, TASK_UNINTERRUPTIBLE);
+		timeout = schedule_timeout(timeout);
+		finish_wait(&conf->syno_heal_wait_for_stripe, &w);
+
+		if (timeout == 0) {
+			syno_md_data_correction_print(mddev->syno_md_data_correction_log_flag,
+				KERN_ERR,
+				"%s: [Self Heal] retry sector [%llu] round [%d/%d] failed to get stripe\n",
+				mdname(mddev), (u64)logical_sector, heal_record->retry_cnt, max_retry_cnt);
+			goto abort;
+		}
+		goto retry;
+	}
+	syno_raid5_unlock_device_heal_lock(conf);
+
+	heal_sh->sh_sector = sh_sector;
+	heal_sh->dd_idx = dd_idx;
+	heal_sh->pd_idx = sh_role.pd_idx;
+	heal_sh->qd_idx = sh_role.qd_idx;
+	heal_sh->ddf_layout = sh_role.ddf_layout;
+	heal_sh->heal_record = heal_record;
+	syno_raid5_heal_submit_heal_sh(conf, heal_sh);
+
+	return;
+abort:
+	syno_raid5_heal_return_master_bio(mddev, master_bio, heal_record, false);
+}
+
+static void syno_raid5_heal_read_request(struct mddev *mddev, struct bio *bio)
+{
+	struct r5conf *conf = mddev->private;
+	int max_retry_cnt = (conf->level == 6 ? 3 : 2);
+	struct syno_md_heal_record *heal_record;
+	sector_t logical_sector, last_sector;
+
+	/* our system should only submit a 4k correction bio,
+	 * and our system should be 4k-aligned,
+	 * so we simply refuse unexpected correction bio.
+	 */
+	logical_sector = bio->bi_iter.bi_sector & ~((sector_t)RAID5_STRIPE_SECTORS(conf)-1);
+	last_sector = bio_end_sector(bio);
+	if (last_sector - logical_sector > RAID5_STRIPE_SECTORS(conf)) {
+		syno_md_data_correction_print(mddev->syno_md_data_correction_log_flag,
+			KERN_ERR,
+			"%s: [Self Heal] retry sector [%llu] not aligned: logical sector [%llu], last sector [%llu], stripe sector [%llu]\n",
+			mdname(mddev), (u64)bio->bi_iter.bi_sector,
+			(u64)logical_sector, (u64)last_sector, (u64)RAID5_STRIPE_SECTORS(conf));
+		goto abort;
+	}
+
+	heal_record = syno_md_heal_get_record(mddev, bio, max_retry_cnt);
+	if (!heal_record) {
+		syno_md_data_correction_print(mddev->syno_md_data_correction_log_flag,
+			KERN_ERR,
+			"%s: [Self Heal] failed to get record at sector [%llu]\n",
+			mdname(mddev), (u64)bio->bi_iter.bi_sector);
+		goto abort;
+	}
+	syno_raid5_heal_handle_bio(conf, bio, heal_record);
+
+	return;
+abort:
+	syno_raid5_heal_return_master_bio(mddev, bio, heal_record, false);
+}
+#endif /* MY_ABC_HERE */
 
 static int __init raid5_init(void)
 {
@@ -8777,6 +12505,9 @@ static int __init raid5_init(void)
 	register_md_personality(&raid6_personality);
 	register_md_personality(&raid5_personality);
 	register_md_personality(&raid4_personality);
+#ifdef MY_ABC_HERE
+	register_md_personality(&raid_f1_personality);
+#endif /* MY_ABC_HERE */
 	return 0;
 }
 
@@ -8785,6 +12516,9 @@ static void raid5_exit(void)
 	unregister_md_personality(&raid6_personality);
 	unregister_md_personality(&raid5_personality);
 	unregister_md_personality(&raid4_personality);
+#ifdef MY_ABC_HERE
+	unregister_md_personality(&raid_f1_personality);
+#endif /* MY_ABC_HERE */
 	cpuhp_remove_multi_state(CPUHP_MD_RAID5_PREPARE);
 	destroy_workqueue(raid5_wq);
 }
@@ -8801,6 +12535,10 @@ MODULE_ALIAS("md-level-4");
 MODULE_ALIAS("md-personality-8"); /* RAID6 */
 MODULE_ALIAS("md-raid6");
 MODULE_ALIAS("md-level-6");
+#ifdef MY_ABC_HERE
+MODULE_ALIAS("md-raidF1");
+MODULE_ALIAS("md-level-45");
+#endif /* MY_ABC_HERE */
 
 /* This used to be two separate modules, they were: */
 MODULE_ALIAS("raid5");

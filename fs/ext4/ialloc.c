@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/ext4/ialloc.c
@@ -32,6 +35,10 @@
 #include "acl.h"
 
 #include <trace/events/ext4.h>
+
+#ifdef MY_ABC_HERE
+#define MAX_U32_IN_U64 ((u64)(UINT_MAX))
+#endif /* MY_ABC_HERE */
 
 /*
  * ialloc.c contains the inodes allocation and deallocation routines
@@ -426,7 +433,12 @@ static int find_group_orlov(struct super_block *sb, struct inode *parent,
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
 	ext4_group_t real_ngroups = ext4_get_groups_count(sb);
 	int inodes_per_group = EXT4_INODES_PER_GROUP(sb);
+#ifdef MY_ABC_HERE
+	ext4_fsblk_t freei, avefreei;
+	unsigned int grp_free;
+#else /* MY_ABC_HERE */
 	unsigned int freei, avefreei, grp_free;
+#endif /* MY_ABC_HERE */
 	ext4_fsblk_t freec, avefreec;
 	unsigned int ndirs;
 	int max_dirs, min_inodes;
@@ -726,6 +738,16 @@ next:
 	if (*ino >= EXT4_INODES_PER_GROUP(sb))
 		goto not_found;
 
+#ifdef MY_ABC_HERE
+	/*
+	 * Since the inode bitmap is zero-based, so the ino should not
+	 * equal to MAX_U32_IN_U64. Also, we don't care about deleted_ino,
+	 * because the deleted_ino cannot be overflow.
+	 */
+	if (MAX_U32_IN_U64 <= (u64) (*ino) + (u64) group * EXT4_INODES_PER_GROUP(sb))
+		goto not_found;
+#endif /* MY_ABC_HERE */
+
 	if (check_recently_deleted && recently_deleted(sb, group, *ino)) {
 		recently_deleted_ino = *ino;
 		*ino = *ino + 1;
@@ -1021,6 +1043,13 @@ got_group:
 	if (ret2 == -1)
 		goto out;
 
+#ifdef MY_ABC_HERE
+	if (MAX_U32_IN_U64 < (u64)group*EXT4_INODES_PER_GROUP(sb)) {
+		u32 max_group =	(u32)((MAX_U32_IN_U64 + 1) / EXT4_INODES_PER_GROUP(sb));
+		group %= max_group;
+	}
+#endif /* MY_ABC_HERE */
+
 	/*
 	 * Normally we will only go through one pass of this loop,
 	 * unless we get unlucky and it turns out the group we selected
@@ -1111,8 +1140,13 @@ repeat_in_this_group:
 		if (ino < EXT4_INODES_PER_GROUP(sb))
 			goto repeat_in_this_group;
 next_group:
+#ifdef MY_ABC_HERE
+		if (++group == ngroups || (MAX_U32_IN_U64 < (u64)group*EXT4_INODES_PER_GROUP(sb)))
+			group = 0;
+#else /* MY_ABC_HERE */
 		if (++group == ngroups)
 			group = 0;
+#endif /* MY_ABC_HERE */
 	}
 	err = -ENOSPC;
 	goto out;
@@ -1246,6 +1280,10 @@ got:
 	inode->i_mtime = inode->i_atime = inode->i_ctime = current_time(inode);
 	ei->i_crtime = inode->i_mtime;
 
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+	inode->i_archive_bit = ALL_SYNO_ARCHIVE; /* set archive bit on creation */
+#endif /* MY_ABC_HERE || MY_ABC_HERE*/
+
 	memset(ei->i_data, 0, sizeof(ei->i_data));
 	ei->i_dir_start_lookup = 0;
 	ei->i_disksize = 0;
@@ -1258,6 +1296,9 @@ got:
 	ei->i_dtime = 0;
 	ei->i_block_group = group;
 	ei->i_last_alloc_group = ~0;
+#ifdef MY_ABC_HERE
+	ei->i_is_swapfile = false;
+#endif /* MY_ABC_HERE */
 
 	ext4_set_inode_flags(inode, true);
 	if (IS_DIRSYNC(inode))

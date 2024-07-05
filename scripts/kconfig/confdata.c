@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2002 Roman Zippel <zippel@linux-m68k.org>
@@ -17,6 +20,7 @@
 #include <unistd.h>
 
 #include "lkc.h"
+
 
 /* return true if 'path' exists, false otherwise */
 static bool is_present(const char *path)
@@ -1045,6 +1049,9 @@ int conf_write_autoconf(int overwrite)
 	const char *autoconf_name = conf_get_autoconfig_name();
 	FILE *out, *out_h;
 	int i;
+#ifdef MY_ABC_HERE
+	FILE *syno_h;
+#endif /* MY_ABC_HERE */
 
 	if (!overwrite && is_present(autoconf_name))
 		return 0;
@@ -1064,6 +1071,18 @@ int conf_write_autoconf(int overwrite)
 		return 1;
 	}
 
+#ifdef MY_ABC_HERE
+	syno_h = fopen(".tmpsynoconfig.h", "w");
+	if (!syno_h) {
+		fclose(out);
+		fclose(out_h);
+		return 1;
+	}
+	conf_write_heading(syno_h, &header_printer_cb, NULL);
+	fprintf(syno_h, "#ifndef __SYNO_AUTOCONF_H__\n"
+			"#define __SYNO_AUTOCONF_H__\n");
+#endif /* MY_ABC_HERE */
+
 	conf_write_heading(out, &kconfig_printer_cb, NULL);
 	conf_write_heading(out_h, &header_printer_cb, NULL);
 
@@ -1075,9 +1094,24 @@ int conf_write_autoconf(int overwrite)
 		/* write symbols to auto.conf and autoconf.h */
 		conf_write_symbol(out, sym, &kconfig_printer_cb, (void *)1);
 		conf_write_symbol(out_h, sym, &header_printer_cb, NULL);
+#ifdef MY_ABC_HERE
+		if (strncmp(sym->name, "SYNO", 4) == 0) {
+			conf_write_symbol(syno_h, sym, &header_printer_cb, NULL);
+		}
+#endif /* MY_ABC_HERE */
 	}
 	fclose(out);
 	fclose(out_h);
+
+#ifdef MY_ABC_HERE
+	fprintf(syno_h, "#endif /* __SYNO_AUTOCONF_H__ */");
+	fclose(syno_h);
+	name = "include/generated/uapi/linux/syno_autoconf.h";
+	if (make_parent_dir(name))
+		return 1;
+	if (rename(".tmpsynoconfig.h", name))
+		return 1;
+#endif /* MY_ABC_HERE */
 
 	name = getenv("KCONFIG_AUTOHEADER");
 	if (!name)

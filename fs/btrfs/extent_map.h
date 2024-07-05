@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 
 #ifndef BTRFS_EXTENT_MAP_H
@@ -25,6 +28,10 @@ enum {
 	EXTENT_FLAG_FILLING,
 	/* filesystem extent mapping type */
 	EXTENT_FLAG_FS_MAPPING,
+#ifdef MY_ABC_HERE
+	/* dedupe processing, don't flush pages */
+	EXTENT_FLAG_DEDUPED,
+#endif /* MY_ABC_HERE */
 };
 
 struct extent_map {
@@ -47,12 +54,26 @@ struct extent_map {
 	refcount_t refs;
 	unsigned int compress_type;
 	struct list_head list;
+#ifdef MY_ABC_HERE
+	struct list_head free_list;
+	bool bl_increase;
+#endif /* MY_ABC_HERE */
 };
+
+#ifdef MY_ABC_HERE
+struct btrfs_inode;
+#endif /* MY_ABC_HERE */
 
 struct extent_map_tree {
 	struct rb_root_cached map;
 	struct list_head modified_extents;
 	rwlock_t lock;
+#ifdef MY_ABC_HERE
+	struct list_head not_modified_extents;
+	struct list_head syno_modified_extents;
+	atomic_t nr_extent_maps;
+	struct btrfs_inode *inode;
+#endif /* MY_ABC_HERE */
 };
 
 static inline int extent_map_in_tree(const struct extent_map *em)

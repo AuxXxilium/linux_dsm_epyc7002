@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2001-2002 by David Brownell
@@ -867,6 +870,30 @@ static ssize_t fill_registers_buffer(struct debug_buffer *buf)
 	size -= temp;
 	next += temp;
 
+#if defined(MY_DEF_HERE)
+#ifdef CONFIG_USB_PATCH_ON_RTK
+	temp = scnprintf (next, size, "CTRLDSSEGMENT %08x\n",
+			ehci_readl(ehci, &ehci->regs->segment));
+	size -= temp;
+	next += temp;
+
+	temp = scnprintf (next, size, "PERIODIC_LIST_BASE %08x\n",
+			ehci_readl(ehci, &ehci->regs->frame_list));
+	size -= temp;
+	next += temp;
+
+	temp = scnprintf (next, size, "ASYNC_LIST_ADDR %08x\n",
+			ehci_readl(ehci, &ehci->regs->async_next));
+	size -= temp;
+	next += temp;
+
+	temp = scnprintf (next, size, "CONFIG_FLAG %08x\n",
+			ehci_readl(ehci, &ehci->regs->configured_flag));
+	size -= temp;
+	next += temp;
+#endif // CONFIG_USB_PATCH_ON_RTK
+
+#endif /* MY_DEF_HERE */
 	for (i = 1; i <= HCS_N_PORTS(ehci->hcs_params); i++) {
 		temp = dbg_port_buf(scratch, sizeof(scratch), label, i,
 				ehci_readl(ehci,

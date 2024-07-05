@@ -1,0 +1,59 @@
+menu "Realtek SoC drivers"
+
+menuconfig RTD13XX_RTK_CODEC
+	bool "Realtek RTD13XX Codec"
+	default n
+	help
+	  Realtek RTD13XX codec support.
+
+	  If unsure, say N.
+
+config RTK_RESERVE_MEMORY
+	bool "RTK Reserve Memory for Video/Image Codec"
+	depends on ION_REALTEK && RTD13XX_RTK_CODEC
+	default n
+
+config RTD13XX_VE1_CODEC
+	bool "RTK Video Engine 1 Codec"
+	depends on RTD13XX_RTK_CODEC
+	default n
+
+config RTD13XX_IMAGE_CODEC
+	bool "RTK Image Codec"
+	depends on RTD13XX_RTK_CODEC
+	default n
+
+menuconfig RTD16XXB_RTK_CODEC
+	bool "Realtek RTD16XXB Codec"
+	default n
+	help
+	  Realtek RTD16XXB codec support.
+
+	  If unsure, say N.
+
+config RTK_RESERVE_MEMORY
+	bool "RTK Reserve Memory for Video/Image Codec"
+	depends on ION_REALTEK && RTD16XXB_RTK_CODEC
+	default n
+
+config RTD16XXB_VE1_CODEC
+	bool "RTK Video Engine 1 Codec"
+	depends on RTD16XXB_RTK_CODEC
+	default n
+
+config RTD16XXB_IMAGE_CODEC
+	bool "RTK Image Codec"
+	depends on RTD16XXB_RTK_CODEC
+	default n
+
+config REALTEK_SOC
+	bool
+	depends on ARCH_REALTEK
+	default y
+	help
+	  Realtek SoC drivers.
+
+	  If unsure, say N.
+
+source "drivers/soc/realtek/common/Kconfig"
+endmenu

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * kernel/workqueue_internal.h
@@ -76,5 +79,30 @@ static inline struct worker *current_wq_worker(void)
 void wq_worker_running(struct task_struct *task);
 void wq_worker_sleeping(struct task_struct *task);
 work_func_t wq_worker_last_func(struct task_struct *task);
+
+#ifdef MY_ABC_HERE
+/* For in-thread I/O accumulation. We don't need atomic ops */
+struct work_io_acct {
+	unsigned long last_update_jiffies;
+
+	/*
+	 * Please refer to task_io_accounting.h for the following
+	 * I/O statistics
+	 */
+	u64 read_bytes;
+	u64 write_bytes;
+	u64 cancelled_write_bytes;
+};
+
+struct work_acct {
+	struct workqueue_struct *wq;
+	work_func_t func;
+	struct work_io_acct io_acct;
+};
+
+void worker_run_work(struct worker *worker, struct work_struct *work);
+void account_work_time(struct work_acct *acct, u64 us, gfp_t gfp);
+struct workqueue_struct* get_pwq_wq(struct pool_workqueue *pwq);
+#endif /* MY_ABC_HERE */
 
 #endif /* _KERNEL_WORKQUEUE_INTERNAL_H */

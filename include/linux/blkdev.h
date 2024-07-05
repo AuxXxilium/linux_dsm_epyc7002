@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_BLKDEV_H
 #define _LINUX_BLKDEV_H
@@ -242,6 +245,11 @@ struct request {
 	 */
 	rq_end_io_fn *end_io;
 	void *end_io_data;
+#ifdef MY_ABC_HERE
+	unsigned int syno_seq;
+	u64 u64IssueTime;
+#endif /* MY_ABC_HERE */
+
 };
 
 static inline bool blk_op_is_scsi(unsigned int op)
@@ -621,6 +629,9 @@ struct request_queue {
 #define QUEUE_FLAG_RQ_ALLOC_TIME 27	/* record rq->alloc_time_ns */
 #define QUEUE_FLAG_HCTX_ACTIVE	28	/* at least one blk-mq hctx is active */
 #define QUEUE_FLAG_NOWAIT       29	/* device supports NOWAIT */
+#ifdef MY_ABC_HERE
+#define QUEUE_FLAG_UNUSED_HINT 31   /* supports unused hint */
+#endif /* MY_ABC_HERE */
 
 #define QUEUE_FLAG_MQ_DEFAULT	((1 << QUEUE_FLAG_IO_STAT) |		\
 				 (1 << QUEUE_FLAG_SAME_COMP) |		\
@@ -667,6 +678,10 @@ bool blk_queue_flag_test_and_set(unsigned int flag, struct request_queue *q);
 #define blk_queue_fua(q)	test_bit(QUEUE_FLAG_FUA, &(q)->queue_flags)
 #define blk_queue_registered(q)	test_bit(QUEUE_FLAG_REGISTERED, &(q)->queue_flags)
 #define blk_queue_nowait(q)	test_bit(QUEUE_FLAG_NOWAIT, &(q)->queue_flags)
+#ifdef MY_ABC_HERE
+#define blk_queue_unused_hint(q)	\
+	test_bit(QUEUE_FLAG_UNUSED_HINT, &(q)->queue_flags)
+#endif /* MY_ABC_HERE */
 
 extern void blk_set_pm_only(struct request_queue *q);
 extern void blk_clear_pm_only(struct request_queue *q);
@@ -1340,6 +1355,10 @@ extern int blkdev_issue_discard(struct block_device *bdev, sector_t sector,
 extern int __blkdev_issue_discard(struct block_device *bdev, sector_t sector,
 		sector_t nr_sects, gfp_t gfp_mask, int flags,
 		struct bio **biop);
+#ifdef MY_ABC_HERE
+extern int blkdev_hint_unused(struct block_device *bdev, sector_t sector,
+		sector_t nr_sects, gfp_t gfp_mask);
+#endif /* MY_ABC_HERE */
 
 #define BLKDEV_ZERO_NOUNMAP	(1 << 0)  /* do not free blocks */
 #define BLKDEV_ZERO_NOFALLBACK	(1 << 1)  /* don't write explicit zeroes */
@@ -1360,6 +1379,18 @@ static inline int sb_issue_discard(struct super_block *sb, sector_t block,
 						  SECTOR_SHIFT),
 				    gfp_mask, flags);
 }
+#ifdef MY_ABC_HERE
+static inline int sb_hint_unused(struct super_block *sb, sector_t block,
+		sector_t nr_blocks, gfp_t gfp_mask)
+{
+	return blkdev_hint_unused(sb->s_bdev,
+				    block << (sb->s_blocksize_bits -
+					      SECTOR_SHIFT),
+				    nr_blocks << (sb->s_blocksize_bits -
+						  SECTOR_SHIFT),
+				    gfp_mask);
+}
+#endif /* MY_ABC_HERE */
 static inline int sb_issue_zeroout(struct super_block *sb, sector_t block,
 		sector_t nr_blocks, gfp_t gfp_mask)
 {

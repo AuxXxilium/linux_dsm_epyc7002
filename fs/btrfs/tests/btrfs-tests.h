@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2013 Fusion IO.  All rights reserved.
@@ -34,7 +37,10 @@ int btrfs_test_extent_buffer_operations(u32 sectorsize, u32 nodesize);
 int btrfs_test_free_space_cache(u32 sectorsize, u32 nodesize);
 int btrfs_test_extent_io(u32 sectorsize, u32 nodesize);
 int btrfs_test_inodes(u32 sectorsize, u32 nodesize);
+#ifdef MY_ABC_HERE
+#else
 int btrfs_test_qgroups(u32 sectorsize, u32 nodesize);
+#endif /* MY_ABC_HERE */
 int btrfs_test_free_space_tree(u32 sectorsize, u32 nodesize);
 int btrfs_test_extent_map(void);
 struct inode *btrfs_new_test_inode(void);

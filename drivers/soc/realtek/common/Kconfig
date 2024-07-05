@@ -1,0 +1,105 @@
+
+config REALTEK_PM
+	tristate "Realtek power management driver"
+	default y
+	help
+	  Suspend to RAM and shutdown support.
+
+config RTK_MCP
+	bool "Realtek MCP driver"
+	default n
+	help
+	  Realtek MCP driver
+
+config RTK_SC_WRAP_FSS
+	bool "Realtek FSS Driver"
+	default n
+	help
+	  This enable FSS control interface, if not sure say N.
+
+config RTK_USB_CTRL_MANAGER
+	tristate "RTK Multiple USB Host/Device Controller Manager"
+	default y if USB_OHCI_RTK || USB_EHCI_RTK || USB_DWC3_RTK
+	help
+	  The Realtek chips are Multiple host/peripheral USB controllers.
+	  Enable the driver to control clock, reset and usb power gpio.
+
+config REALTEK_CHIP_INFO
+	bool "Realtek SoC information"
+	default y
+	select SOC_BUS
+	help
+	  The Realtek chips information.
+
+config RTK_FAN
+	bool "RTK Fan driver"
+	default n
+	help
+	  Realtek Fan driver
+
+config RTK_FSS_SCAN
+	bool "Realtek FSS Scan Driver"
+	default n
+	help
+	  This enable FSS Scan control interface, if not sure say N.
+
+config RTK_VCPU
+	bool "Realtek VCPU driver"
+	select DEVFREQ_GOV_USERSPACE if PM_DEVFREQ
+	default y
+	help
+	  This enables Realtek VCPU driver.
+
+config RTK_VE3_UART
+	bool "Realtek VE3 uart driver"
+	default y
+	help
+	  This enables Realtek VE3 Pseudo Uart driver.
+
+config RTK_WATCHDOG_STATUS
+	tristate "Realtek Watchdog Status Driver"
+	default n
+	help
+	  This enables Realtek Watchdog Status Driver to show
+	  information of hardware controlled watchdog.
+
+config RTK_GPIO_DEFAULT
+	bool "Realtek GPIO default setting driver"
+	default y
+	help
+	  This enables Realtek GPIO default setting driver to set gpio default value.
+
+config RTK_VSFC_CTRL
+	bool "Realtek VSFC Controller"
+	depends on COMMON_CLK && REGULATOR
+	help
+	  This enables Realtek VSFC controller
+
+config RTK_CPUHP_QOS
+	bool
+
+config RTK_CPUHP_CONTROL
+	bool "Realtek CPU Hotplug Controller"
+	select RTK_CPUHP_QOS
+	help
+	  This enables Realtek CPU Hotplug Controller
+
+config RTK_CPU_VCLK
+	bool "Realtek CPU virtual Clock"
+	select RTK_CPUHP_QOS
+	help
+	  This driver provides equivalent frequencies of CPU clocks.
+
+config RTK_BSV_CTRL
+	bool "Realtek BSV Controller for CPU DVFS"
+	help
+	  This driver provides CPU voltage conversion based
+	  on input frequency, if BSV OTP is valid.
+
+source "drivers/soc/realtek/common/rpc/Kconfig"
+source "drivers/soc/realtek/common/mem_allocator/Kconfig"
+source "drivers/soc/realtek/common/hse/Kconfig"
+source "drivers/soc/realtek/common/rtk_pd/Kconfig"
+source "drivers/soc/realtek/common/info/Kconfig"
+source "drivers/soc/realtek/common/dvfs/Kconfig"
+source "drivers/soc/realtek/common/buflock/Kconfig"

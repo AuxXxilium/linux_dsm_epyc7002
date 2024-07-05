@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  *	linux/kernel/softirq.c
@@ -81,7 +84,11 @@ static void wakeup_softirqd(void)
  * right now. Let ksoftirqd handle this at its own rate, to get fairness,
  * unless we're doing some of the synchronous softirqs.
  */
+#ifdef MY_ABC_HERE
+#define SOFTIRQ_NOW_MASK ((1 << HI_SOFTIRQ) | (1 << TASKLET_SOFTIRQ) | (1 << BLOCK_SOFTIRQ))
+#else /* MY_ABC_HERE */
 #define SOFTIRQ_NOW_MASK ((1 << HI_SOFTIRQ) | (1 << TASKLET_SOFTIRQ))
+#endif /* MY_ABC_HERE */
 static bool ksoftirqd_running(unsigned long pending)
 {
 	struct task_struct *tsk = __this_cpu_read(ksoftirqd);

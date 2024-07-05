@@ -17,3 +17,4 @@ obj-$(CONFIG_PINCTRL_JASPERLAKE)	+= pinctrl-jasperlake.o
 obj-$(CONFIG_PINCTRL_LEWISBURG)		+= pinctrl-lewisburg.o
 obj-$(CONFIG_PINCTRL_SUNRISEPOINT)	+= pinctrl-sunrisepoint.o
 obj-$(CONFIG_PINCTRL_TIGERLAKE)		+= pinctrl-tigerlake.o
+obj-$(CONFIG_SYNO_PINCTRL_LEWISBURG)+= syno-pinctrl-lewisburg.o

@@ -1307,16 +1307,28 @@ static void prepare_write_message(struct ceph_connection *con)
 			m->middle->vec.iov_base);
 
 	/* fill in hdr crc and finalize hdr */
+#ifdef CONFIG_SYNO_CEPH_SKIP_CRC
+	crc = 0;
+#else
 	crc = crc32c(0, &m->hdr, offsetof(struct ceph_msg_header, crc));
+#endif /* CONFIG_SYNO_CEPH_SKIP_CRC */
 	con->out_msg->hdr.crc = cpu_to_le32(crc);
 	memcpy(&con->out_hdr, &con->out_msg->hdr, sizeof(con->out_hdr));
 
 	/* fill in front and middle crc, footer */
+#ifdef CONFIG_SYNO_CEPH_SKIP_CRC
+	crc = 0;
+#else
 	crc = crc32c(0, m->front.iov_base, m->front.iov_len);
+#endif /* CONFIG_SYNO_CEPH_SKIP_CRC */
 	con->out_msg->footer.front_crc = cpu_to_le32(crc);
 	if (m->middle) {
+#ifdef CONFIG_SYNO_CEPH_SKIP_CRC
+		crc = 0;
+#else
 		crc = crc32c(0, m->middle->vec.iov_base,
 				m->middle->vec.iov_len);
+#endif /* CONFIG_SYNO_CEPH_SKIP_CRC */
 		con->out_msg->footer.middle_crc = cpu_to_le32(crc);
 	} else
 		con->out_msg->footer.middle_crc = 0;
@@ -1537,7 +1549,11 @@ static u32 ceph_crc32c_page(u32 crc, struct page *page,
 
 	kaddr = kmap(page);
 	BUG_ON(kaddr == NULL);
+#ifdef CONFIG_SYNO_CEPH_SKIP_CRC
+	crc = 0;
+#else
 	crc = crc32c(crc, kaddr + page_offset, length);
+#endif /* CONFIG_SYNO_CEPH_SKIP_CRC */
 	kunmap(page);
 
 	return crc;
@@ -2302,7 +2318,11 @@ static int read_partial_message_section(struct ceph_connection *con,
 		section->iov_len += ret;
 	}
 	if (section->iov_len == sec_len)
+#ifdef CONFIG_SYNO_CEPH_SKIP_CRC
+		*crc = 0;
+#else
 		*crc = crc32c(0, section->iov_base, section->iov_len);
+#endif /* CONFIG_SYNO_CEPH_SKIP_CRC */
 
 	return 1;
 }
@@ -2374,7 +2394,11 @@ static int read_partial_message(struct ceph_connection *con)
 	if (ret <= 0)
 		return ret;
 
+#ifdef CONFIG_SYNO_CEPH_SKIP_CRC
+	crc = 0;
+#else
 	crc = crc32c(0, &con->in_hdr, offsetof(struct ceph_msg_header, crc));
+#endif /* CONFIG_SYNO_CEPH_SKIP_CRC */
 	if (cpu_to_le32(crc) != con->in_hdr.crc) {
 		pr_err("read_partial_message bad hdr crc %u != expected %u\n",
 		       crc, con->in_hdr.crc);

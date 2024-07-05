@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __LINUX_DCACHE_H
 #define __LINUX_DCACHE_H
@@ -138,6 +141,10 @@ struct dentry_operations {
 	int (*d_hash)(const struct dentry *, struct qstr *);
 	int (*d_compare)(const struct dentry *,
 			unsigned int, const char *, const struct qstr *);
+#ifdef MY_ABC_HERE
+	int (*d_compare_case)(const struct dentry *, unsigned int, const char *,
+			const struct qstr *, int caseless);
+#endif /* MY_ABC_HERE */
 	int (*d_delete)(const struct dentry *);
 	int (*d_init)(struct dentry *);
 	void (*d_release)(struct dentry *);
@@ -220,7 +227,17 @@ struct dentry_operations {
 #define DCACHE_DENTRY_CURSOR		0x20000000
 #define DCACHE_NORCU			0x40000000 /* No RCU delay for freeing */
 
+#ifdef MY_ABC_HERE
+#define DCACHE_OP_COMPARE_CASE 		0x80000000
+#endif /* MY_ABC_HERE */
+
 extern seqlock_t rename_lock;
+
+#ifdef MY_ABC_HERE
+extern inline int dentry_cmp(const struct dentry *dentry, const unsigned char *ct, unsigned tcount);
+extern inline int dentry_string_cmp(const unsigned char *cs, const unsigned char *ct, unsigned tcount);
+extern int dentry_replace_name(struct dentry *dentry, const char *new_name, u32 name_len);
+#endif /* MY_ABC_HERE */
 
 /*
  * These are the low-level FS interfaces to the dcache..
@@ -237,8 +254,16 @@ extern void d_set_d_op(struct dentry *dentry, const struct dentry_operations *op
 /* allocate/de-allocate */
 extern struct dentry * d_alloc(struct dentry *, const struct qstr *);
 extern struct dentry * d_alloc_anon(struct super_block *);
+#ifdef MY_ABC_HERE
+extern struct dentry * __d_alloc_parallel(struct dentry *, const struct qstr *,
+					  wait_queue_head_t *,
+					  const int caseless);
+#define d_alloc_parallel_case(d, n, wq, caseless) __d_alloc_parallel(d, n, wq, caseless)
+#define d_alloc_parallel(d, n, wq) __d_alloc_parallel(d, n, wq, 0)
+#else /* MY_ABC_HERE */
 extern struct dentry * d_alloc_parallel(struct dentry *, const struct qstr *,
 					wait_queue_head_t *);
+#endif /* MY_ABC_HERE */
 extern struct dentry * d_splice_alias(struct inode *, struct dentry *);
 extern struct dentry * d_add_ci(struct dentry *, struct inode *, struct qstr *);
 extern struct dentry * d_exact_alias(struct dentry *, struct inode *);
@@ -279,9 +304,19 @@ extern struct dentry *d_ancestor(struct dentry *, struct dentry *);
 /* appendix may either be NULL or be used for transname suffixes */
 extern struct dentry *d_lookup(const struct dentry *, const struct qstr *);
 extern struct dentry *d_hash_and_lookup(struct dentry *, struct qstr *);
-extern struct dentry *__d_lookup(const struct dentry *, const struct qstr *);
+
+extern struct dentry *__d_lookup(const struct dentry *, const struct qstr *
+#ifdef MY_ABC_HERE
+		, int caseless
+#endif /* MY_ABC_HERE */
+		);
+
 extern struct dentry *__d_lookup_rcu(const struct dentry *parent,
-				const struct qstr *name, unsigned *seq);
+				const struct qstr *name, unsigned *seq
+#ifdef MY_ABC_HERE
+				, const int caseless
+#endif /* MY_ABC_HERE */
+				);
 
 static inline unsigned d_count(const struct dentry *dentry)
 {

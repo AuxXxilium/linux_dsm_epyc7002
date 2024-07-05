@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _ASM_X86_STAT_H
 #define _ASM_X86_STAT_H
@@ -134,5 +137,29 @@ struct __old_kernel_stat {
 	unsigned int  st_ctime;
 #endif
 };
+
+#ifdef MY_ABC_HERE
+#ifdef __KERNEL__
+#include <linux/time.h>
+#endif
+
+struct SYNOSTAT_EXTRA {
+#ifdef __KERNEL__
+	struct __kernel_old_timespec create_time;
+#else
+	struct timespec create_time;
+#endif
+	unsigned int archive_version;
+	unsigned int archive_bit;
+	unsigned int compressed;
+	unsigned int flags;
+	unsigned int reserved[7];
+};
+
+struct SYNOSTAT {
+	struct stat st;
+	struct SYNOSTAT_EXTRA ext;
+};
+#endif /* MY_ABC_HERE */
 
 #endif /* _ASM_X86_STAT_H */

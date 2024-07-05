@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 
 #ifndef BTRFS_BLOCK_GROUP_H
@@ -48,7 +51,6 @@ struct btrfs_caching_control {
 	wait_queue_head_t wait;
 	struct btrfs_work work;
 	struct btrfs_block_group *block_group;
-	u64 progress;
 	refcount_t count;
 };
 
@@ -101,7 +103,6 @@ struct btrfs_block_group {
 	/* Cache tracking stuff */
 	int cached;
 	struct btrfs_caching_control *caching_ctl;
-	u64 last_byte_to_unpin;
 
 	struct btrfs_space_info *space_info;
 
@@ -189,6 +190,24 @@ struct btrfs_block_group {
 
 	/* Record locked full stripes for RAID5/6 block group */
 	struct btrfs_full_stripe_locks_tree full_stripe_locks_root;
+
+#ifdef MY_ABC_HERE
+	struct {
+		struct btrfs_space_info *space_info;
+		/* protect with space_info->syno_allocator.lock */
+		struct rb_node bytes_index;
+		struct rb_node max_length_index;
+		struct rb_node max_length_with_extent_index;
+		u64 last_bytes, last_max_length, last_max_length_with_extent;
+		struct rb_node preload_index;
+		u64 preload_free_space;
+		bool ro;
+		bool cache_error;
+		bool removed;
+		bool initialized;
+		atomic_t refs;
+	} syno_allocator;
+#endif /* MY_ABC_HERE */
 };
 
 static inline u64 btrfs_block_group_end(struct btrfs_block_group *block_group)
@@ -236,9 +255,7 @@ void btrfs_dec_nocow_writers(struct btrfs_fs_info *fs_info, u64 bytenr);
 void btrfs_wait_nocow_writers(struct btrfs_block_group *bg);
 void btrfs_wait_block_group_cache_progress(struct btrfs_block_group *cache,
 				           u64 num_bytes);
-int btrfs_wait_block_group_cache_done(struct btrfs_block_group *cache);
-int btrfs_cache_block_group(struct btrfs_block_group *cache,
-			    int load_cache_only);
+int btrfs_cache_block_group(struct btrfs_block_group *cache, bool wait);
 void btrfs_put_caching_control(struct btrfs_caching_control *ctl);
 struct btrfs_caching_control *btrfs_get_caching_control(
 		struct btrfs_block_group *cache);
@@ -274,6 +291,8 @@ void check_system_chunk(struct btrfs_trans_handle *trans, const u64 type);
 u64 btrfs_get_alloc_profile(struct btrfs_fs_info *fs_info, u64 orig_flags);
 void btrfs_put_block_group_cache(struct btrfs_fs_info *info);
 int btrfs_free_block_groups(struct btrfs_fs_info *info);
+void btrfs_wait_space_cache_v1_finished(struct btrfs_block_group *cache,
+				struct btrfs_caching_control *caching_ctl);
 
 static inline u64 btrfs_data_alloc_profile(struct btrfs_fs_info *fs_info)
 {
@@ -304,6 +323,22 @@ void btrfs_unfreeze_block_group(struct btrfs_block_group *cache);
 int btrfs_rmap_block(struct btrfs_fs_info *fs_info, u64 chunk_start,
 		     u64 physical, u64 **logical, int *naddrs, int *stripe_len);
 #endif
+
+#ifdef MY_ABC_HERE
+int btrfs_reserve_log_tree_bg(struct btrfs_root *root,
+			      u64 *rsv_start, u64 *rsv_size);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+int btrfs_clear_block_group_cache_tree(struct btrfs_fs_info *fs_info);
+int btrfs_create_block_group_cache_tree(struct btrfs_fs_info *fs_info);
+int btrfs_check_syno_block_group_cache_tree(struct btrfs_fs_info *fs_info);
+static inline bool btrfs_syno_block_group_cache_tree_enabled(struct btrfs_fs_info *fs_info)
+{
+	if (!fs_info || !fs_info->block_group_cache_root || test_bit(BTRFS_FS_BLOCK_GROUP_CACHE_TREE_BROKEN, &fs_info->flags))
+		return false;
+	return true;
+}
+#endif /* MY_ABC_HERE */
 
 bool btrfs_inc_block_group_swap_extents(struct btrfs_block_group *bg);
 void btrfs_dec_block_group_swap_extents(struct btrfs_block_group *bg, int amount);

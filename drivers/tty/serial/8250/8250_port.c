@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0+
 /*
  *  Base port operations for 8250/16550-type serial ports
@@ -51,6 +54,15 @@
 #endif
 
 #define BOTH_EMPTY	(UART_LSR_TEMT | UART_LSR_THRE)
+
+#ifdef MY_ABC_HERE
+extern int (*syno_test_list)(unsigned char, struct tty_struct *);
+#endif /* MY_ABC_HERE  */
+
+#ifdef MY_ABC_HERE
+#include <linux/synobios.h>
+extern int (*syno_get_current)(unsigned char, struct tty_struct *);
+#endif /* MY_ABC_HERE */
 
 /*
  * Here we define the default xmit fifo size used for each type of UART.
@@ -1765,6 +1777,20 @@ void serial8250_read_char(struct uart_8250_port *up, unsigned char lsr)
 	if (uart_prepare_sysrq_char(port, ch))
 		return;
 
+#ifdef MY_ABC_HERE
+	if (NULL != syno_test_list && syno_test_list(ch, port->state->port.tty)) {
+		return;
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	if (NULL != syno_get_current && syno_get_current(ch, port->state->port.tty)) {
+		return;
+	} else if (NULL != func_synobios_event_handler && !strcmp(port->state->port.tty->name, SYNO_MICROP_TTY_NAME)) {
+		func_synobios_event_handler(SYNO_EVENT_MICROP_GET, 0);
+	}
+#endif /* MY_ABC_HERE */
+
 	uart_insert_char(port, lsr, UART_LSR_OE, ch, flag);
 }
 EXPORT_SYMBOL_GPL(serial8250_read_char);
@@ -2060,6 +2086,78 @@ static void serial8250_break_ctl(struct uart_port *port, int break_state)
 	spin_unlock_irqrestore(&port->lock, flags);
 	serial8250_rpm_put(up);
 }
+
+/*
+ *	Wait for transmitter & holding register to empty
+ */
+#ifdef MY_ABC_HERE
+static void syno_kt_wait_for_xmitr(struct uart_8250_port *up, int bits)
+{
+	unsigned int status, tmout = 10000;
+	static int iCtsTimeoutCt = 0;
+	static int iTransTimeoutCt = 0;
+	static int iTransCt = 0;
+	struct console *con = NULL;
+
+	if (false == up->blXmitrCheck) {
+		return;
+	}
+	/* Wait up to 10ms for the character(s) to be sent. */
+	iTransCt++;
+	for (;;) {
+		status = serial_in(up, UART_LSR);
+
+		up->lsr_saved_flags |= status & LSR_SAVE_FLAGS;
+
+		if ((status & bits) == bits)
+			break;
+		if (--tmout == 0) {
+			iTransTimeoutCt++;
+			break;
+		}
+		udelay(1);
+	}
+	if (SYNO_TX_CHECK_COUNT <= iTransCt) {
+		if (SYNO_TX_CHECK_THRESHOLD <= iTransTimeoutCt) {
+			for_each_console(con) {
+				if (SYNO_OOB_TTY == con->index) {
+					con->flags &= ~CON_ENABLED;
+					up->blXmitrCheck = false;
+				}
+			}
+		}
+		iTransCt = 0;
+		iTransTimeoutCt = 0;
+	}
+
+	/* Wait up to 1s for flow control if necessary */
+	{
+		for (tmout = 1000000; tmout; tmout--) {
+			unsigned int msr = serial_in(up, UART_MSR);
+			up->msr_saved_flags |= msr & MSR_SAVE_FLAGS;
+			if (msr & UART_MSR_CTS)
+				break;
+			udelay(1);
+			touch_nmi_watchdog();
+		}
+		if (unlikely(0 == tmout)) {
+			iCtsTimeoutCt++;
+		} else {
+			iCtsTimeoutCt = 0;
+		}
+		// stuck more than 10s, disable CTS check
+		if (SYNO_CTS_CHECK_COUNT <= iCtsTimeoutCt) {
+			for_each_console(con) {
+				if (SYNO_OOB_TTY == con->index) {
+					con->flags &= ~CON_ENABLED;
+					up->blXmitrCheck = false;
+				}
+			}
+			iCtsTimeoutCt = 0;
+		}
+	}
+}
+#endif /* MY_ABC_HERE */
 
 /*
  *	Wait for transmitter & holding register to empty
@@ -3117,8 +3215,70 @@ static ssize_t rx_trig_bytes_store(struct device *dev,
 
 static DEVICE_ATTR_RW(rx_trig_bytes);
 
+#ifdef MY_ABC_HERE
+static ssize_t serial8250_get_attr_console_enable(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct tty_port *port = dev_get_drvdata(dev);
+	struct uart_state *state = container_of(port, struct uart_state, port);
+	struct uart_port *uport = state->uart_port;
+	struct uart_8250_port *up =
+		container_of(uport, struct uart_8250_port, port);
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", up->blXmitrCheck);
+}
+
+static ssize_t serial8250_set_attr_console_enable(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct tty_port *port = dev_get_drvdata(dev);
+	struct uart_state *state = container_of(port, struct uart_state, port);
+	struct uart_port *uport = state->uart_port;
+	struct uart_8250_port *up =
+		container_of(uport, struct uart_8250_port, port);
+	unsigned char enable;
+	struct console *con = NULL;
+	unsigned long flags;
+	int ret;
+
+	if (!count)
+		return -EINVAL;
+
+	if (SYNO_OOB_TTY != up->port.line) {
+		return count;
+	}
+
+	ret = kstrtou8(buf, 10, &enable);
+	if (ret < 0)
+		return ret;
+
+	for_each_console(con) {
+		if (SYNO_OOB_TTY == con->index) {
+			spin_lock_irqsave(&uport->lock, flags);
+			if (1 == enable) {
+				con->flags |= CON_ENABLED;
+				up->blXmitrCheck = true;
+			} else if (0 == enable) {
+				con->flags &= ~CON_ENABLED;
+				up->blXmitrCheck = false;
+			}
+			spin_unlock_irqrestore(&uport->lock, flags);
+		}
+	}
+
+	return count;
+}
+
+static DEVICE_ATTR(console_enable, S_IRUSR | S_IWUSR | S_IRGRP,
+		   serial8250_get_attr_console_enable,
+		   serial8250_set_attr_console_enable);
+#endif /* MY_ABC_HERE */
+
 static struct attribute *serial8250_dev_attrs[] = {
 	&dev_attr_rx_trig_bytes.attr,
+#ifdef MY_ABC_HERE
+	&dev_attr_console_enable.attr,
+#endif /* MY_ABC_HERE */
 	NULL
 };
 
@@ -3266,7 +3426,15 @@ static void serial8250_console_putchar(struct uart_port *port, int ch)
 {
 	struct uart_8250_port *up = up_to_u8250p(port);
 
+#ifdef MY_ABC_HERE
+	if (SYNO_OOB_TTY == up->port.line) {
+		syno_kt_wait_for_xmitr(up, UART_LSR_THRE);
+	} else {
+#endif /* MY_ABC_HERE */
 	wait_for_xmitr(up, UART_LSR_THRE);
+#ifdef MY_ABC_HERE
+	}
+#endif /* MY_ABC_HERE */
 	serial_port_out(port, UART_TX, ch);
 }
 
@@ -3385,7 +3553,11 @@ static unsigned int probe_baud(struct uart_port *port)
 
 int serial8250_console_setup(struct uart_port *port, char *options, bool probe)
 {
+#ifdef MY_ABC_HERE
+	int baud = 115200;
+#else /* MY_ABC_HERE */
 	int baud = 9600;
+#endif /* MY_ABC_HERE */
 	int bits = 8;
 	int parity = 'n';
 	int flow = 'n';

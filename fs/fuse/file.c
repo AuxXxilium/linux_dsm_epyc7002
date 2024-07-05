@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
   FUSE: Filesystem in Userspace
   Copyright (C) 2001-2008  Miklos Szeredi <miklos@szeredi.hu>
@@ -1132,6 +1135,74 @@ static ssize_t fuse_send_write_pages(struct fuse_io_args *ia,
 	return err;
 }
 
+#ifdef MY_ABC_HERE
+static ssize_t fuse_perform_write_page(struct file *file,
+				struct address_space *mapping,
+				loff_t pos, unsigned len, struct page *page)
+{
+	int err = 0;
+	int need_unlock = 1;
+	ssize_t res = 0;
+	size_t num_written;
+	struct kiocb iocb;
+	struct fuse_io_args ia = {};
+	struct fuse_args_pages *ap = &ia.ap;
+	struct inode *inode = mapping->host;
+	struct fuse_inode *fi = get_fuse_inode(inode);
+	unsigned offset = pos & (PAGE_SIZE - 1);
+
+	if (is_bad_inode(inode)) {
+		err = -EIO;
+		goto end;
+	}
+
+	if (inode->i_size < pos + len)
+		set_bit(FUSE_I_SIZE_UNSTABLE, &fi->state);
+
+	ap->pages = fuse_pages_alloc(1, GFP_KERNEL, &ap->descs);
+	if (!ap->pages) {
+		err = -ENOMEM;
+		goto end;
+	}
+
+	ap->args.in_pages = true;
+	ap->descs[0].offset = offset;
+	ap->pages[ap->num_pages] = page;
+	ap->descs[ap->num_pages].length = len;
+	ap->num_pages++;
+	ia.write.page_locked = true;
+	init_sync_kiocb(&iocb, file);
+
+	err = fuse_send_write_pages(&ia, &iocb, inode,
+						pos, len);
+	need_unlock = 0;
+	if (!err) {
+		num_written = ia.write.out.size;
+
+		res += num_written;
+		pos += num_written;
+
+		/* break out of the loop on short write */
+		if (num_written != len)
+			err = -EIO;
+	}
+
+	if (res > 0)
+		fuse_write_update_size(inode, pos);
+
+	clear_bit(FUSE_I_SIZE_UNSTABLE, &fi->state);
+	fuse_invalidate_attr(inode);
+
+end:
+	if (need_unlock) {
+		unlock_page(page);
+		put_page(page);
+	}
+	kfree(ap->pages);
+	return res > 0 ? res : err;
+}
+#endif /* MY_ABC_HERE */
+
 static ssize_t fuse_fill_write_pages(struct fuse_io_args *ia,
 				     struct address_space *mapping,
 				     struct iov_iter *ii, loff_t pos,
@@ -1415,6 +1486,7 @@ static int fuse_get_user_pages(struct fuse_args_pages *ap, struct iov_iter *ii,
 			(PAGE_SIZE - ret) & (PAGE_SIZE - 1);
 	}
 
+	ap->args.user_pages = true;
 	if (write)
 		ap->args.in_pages = true;
 	else
@@ -2242,6 +2314,9 @@ static int fuse_write_begin(struct file *file, struct address_space *mapping,
 	loff_t fsize;
 	int err = -ENOMEM;
 
+#ifdef MY_ABC_HERE
+	if (!(flags & AOP_FLAG_RECVFILE)) /* Don't trigger WARN_ON if caller is recvfile() */
+#endif /* MY_ABC_HERE */
 	WARN_ON(!fc->writeback_cache);
 
 	page = grab_cache_page_write_begin(mapping, index, flags);
@@ -2282,6 +2357,17 @@ static int fuse_write_end(struct file *file, struct address_space *mapping,
 		struct page *page, void *fsdata)
 {
 	struct inode *inode = page->mapping->host;
+#ifdef MY_ABC_HERE
+	struct fuse_conn *fc = get_fuse_conn(file_inode(file));
+
+	/*
+	 * recvfile() calls fuse_write_end(), but fuse lib might not support
+	 * writeback cache (e.g., ntfs-3g fuse-lite). If writeback cache is
+	 * not enabled, we write through this page.
+	 */
+	if (!fc->writeback_cache)
+		return fuse_perform_write_page(file, mapping, pos, len, page);
+#endif /* MY_ABC_HERE */
 
 	/* Haven't copied anything?  Skip zeroing, size extending, dirtying. */
 	if (!copied)

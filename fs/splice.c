@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * "splice": joining two ropes together by interweaving their strands.
@@ -30,6 +33,9 @@
 #include <linux/export.h>
 #include <linux/syscalls.h>
 #include <linux/uio.h>
+#ifdef MY_ABC_HERE
+#include <linux/fsnotify.h>
+#endif /* MY_ABC_HERE */
 #include <linux/security.h>
 #include <linux/gfp.h>
 #include <linux/socket.h>
@@ -756,20 +762,34 @@ static int warn_unsupported(struct file *file, const char *op)
 /*
  * Attempt to initiate a splice from pipe to file.
  */
+#ifdef MY_ABC_HERE
+long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
+		    loff_t *ppos, size_t len, unsigned int flags)
+#else
 static long do_splice_from(struct pipe_inode_info *pipe, struct file *out,
 			   loff_t *ppos, size_t len, unsigned int flags)
+#endif /* MY_ABC_HERE */
 {
 	if (unlikely(!out->f_op->splice_write))
 		return warn_unsupported(out, "write");
 	return out->f_op->splice_write(pipe, out, ppos, len, flags);
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL_GPL(do_splice_from);
+#endif /* MY_ABC_HERE */
 
 /*
  * Attempt to initiate a splice from a file to a pipe.
  */
+#ifdef MY_ABC_HERE
+long do_splice_to(struct file *in, loff_t *ppos,
+		  struct pipe_inode_info *pipe, size_t len,
+		  unsigned int flags)
+#else
 static long do_splice_to(struct file *in, loff_t *ppos,
 			 struct pipe_inode_info *pipe, size_t len,
 			 unsigned int flags)
+#endif /* MY_ABC_HERE */
 {
 	int ret;
 
@@ -787,6 +807,9 @@ static long do_splice_to(struct file *in, loff_t *ppos,
 		return warn_unsupported(in, "read");
 	return in->f_op->splice_read(in, ppos, pipe, len, flags);
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL_GPL(do_splice_to);
+#endif /* MY_ABC_HERE */
 
 /**
  * splice_direct_to_actor - splices data directly between two non-pipes
@@ -1059,6 +1082,11 @@ long do_splice(struct file *in, loff_t *off_in, struct file *out,
 		ret = do_splice_from(ipipe, out, &offset, len, flags);
 		file_end_write(out);
 
+#ifdef MY_ABC_HERE
+		if (ret > 0)
+			fsnotify_modify(out);
+#endif /* MY_ABC_HERE */
+
 		if (!off_out)
 			out->f_pos = offset;
 		else
@@ -1095,6 +1123,11 @@ long do_splice(struct file *in, loff_t *off_in, struct file *out,
 		pipe_unlock(opipe);
 		if (ret > 0)
 			wakeup_pipe_readers(opipe);
+#ifdef MY_ABC_HERE
+		if (ret > 0)
+			fsnotify_access(in);
+#endif /* MY_ABC_HERE */
+
 		if (!off_in)
 			in->f_pos = offset;
 		else

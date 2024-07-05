@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_SCHED_USER_H
 #define _LINUX_SCHED_USER_H
@@ -14,6 +17,9 @@ struct user_struct {
 	refcount_t __count;	/* reference count */
 	atomic_t processes;	/* How many processes does this user have? */
 	atomic_t sigpending;	/* How many pending signals does this user have? */
+#ifdef MY_ABC_HERE
+	atomic_t synotify_instances;
+#endif /* MY_ABC_HERE */
 #ifdef CONFIG_FANOTIFY
 	atomic_t fanotify_listeners;
 #endif

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 1991, 1992 Linus Torvalds
@@ -42,6 +45,9 @@
 #include <linux/psi.h>
 #include <linux/sched/sysctl.h>
 #include <linux/blk-crypto.h>
+#ifdef MY_ABC_HERE
+#include <linux/sched/mm.h>
+#endif /* MY_ABC_HERE */
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/block.h>
@@ -121,8 +127,10 @@ void blk_rq_init(struct request_queue *q, struct request *rq)
 	rq->internal_tag = BLK_MQ_NO_TAG;
 	rq->start_time_ns = ktime_get_ns();
 	rq->part = NULL;
-	refcount_set(&rq->ref, 1);
 	blk_crypto_rq_set_defaults(rq);
+#ifdef MY_ABC_HERE
+	rq->syno_seq = 0;
+#endif /* MY_ABC_HERE */
 }
 EXPORT_SYMBOL(blk_rq_init);
 
@@ -145,6 +153,9 @@ static const char *const blk_op_name[] = {
 	REQ_OP_NAME(SCSI_OUT),
 	REQ_OP_NAME(DRV_IN),
 	REQ_OP_NAME(DRV_OUT),
+#ifdef MY_ABC_HERE
+	REQ_OP_NAME(UNUSED_HINT),
+#endif /* MY_ABC_HERE */
 };
 #undef REQ_OP_NAME
 
@@ -706,7 +717,11 @@ static inline bool bio_check_ro(struct bio *bio, struct hd_struct *part)
 		       "Trying to write to read-only block-device %s (partno %d)\n",
 			bio_devname(bio, b), part->partno);
 		/* Older lvm-tools actually trigger this */
+#ifdef MY_ABC_HERE
+		return true;
+#else
 		return false;
+#endif /* MY_ABC_HERE */
 	}
 
 	return false;
@@ -861,6 +876,12 @@ static noinline_for_stack bool submit_bio_checks(struct bio *bio)
 		if (!blk_queue_secure_erase(q))
 			goto not_supported;
 		break;
+#ifdef MY_ABC_HERE
+	case REQ_OP_UNUSED_HINT:
+		if (!blk_queue_unused_hint(q))
+			goto not_supported;
+		break;
+#endif /* MY_ABC_HERE */
 	case REQ_OP_WRITE_SAME:
 		if (!q->limits.max_write_same_sectors)
 			goto not_supported;
@@ -960,9 +981,15 @@ static blk_qc_t __submit_bio_noacct(struct bio *bio)
 {
 	struct bio_list bio_list_on_stack[2];
 	blk_qc_t ret = BLK_QC_T_NONE;
+#ifdef MY_ABC_HERE
+	unsigned int noio_flag;
+#endif /* MY_ABC_HERE */
 
 	BUG_ON(bio->bi_next);
 
+#ifdef MY_ABC_HERE
+	noio_flag = memalloc_noio_save();
+#endif /* MY_ABC_HERE */
 	bio_list_init(&bio_list_on_stack[0]);
 	current->bio_list = bio_list_on_stack;
 
@@ -1002,6 +1029,10 @@ static blk_qc_t __submit_bio_noacct(struct bio *bio)
 	} while ((bio = bio_list_pop(&bio_list_on_stack[0])));
 
 	current->bio_list = NULL;
+#ifdef MY_ABC_HERE
+	memalloc_noio_restore(noio_flag);
+#endif /* MY_ABC_HERE */
+
 	return ret;
 }
 
@@ -1052,7 +1083,19 @@ blk_qc_t submit_bio_noacct(struct bio *bio)
 	 * it is active, and then process them after it returned.
 	 */
 	if (current->bio_list) {
+#ifdef MY_ABC_HERE
+		if (bio_flagged(bio, BIO_SYNO_DELAYED)) {
+			bio_clear_flag(bio, BIO_SYNO_DELAYED);
+			/* mq device never use bio_list[1] */
+			if (!bio->bi_disk->fops->submit_bio)
+				bio_list_add(&current->bio_list[0], bio);
+			else
+				bio_list_add_head(&current->bio_list[1], bio);
+		} else
+			bio_list_add(&current->bio_list[0], bio);
+#else /* MY_ABC_HERE */
 		bio_list_add(&current->bio_list[0], bio);
+#endif /* MY_ABC_HERE */
 		return BLK_QC_T_NONE;
 	}
 
@@ -1101,8 +1144,14 @@ blk_qc_t submit_bio(struct bio *bio)
 
 		if (unlikely(block_dump)) {
 			char b[BDEVNAME_SIZE];
+#ifdef MY_ABC_HERE
+			printk(KERN_DEBUG "ppid:%d(%s), pid:%d(%s), %s block %Lu on %s (%u sectors)\n",
+			task_pid_nr(current->real_parent), current->real_parent->comm,
+			task_pid_nr(current), current->comm,
+#else /* MY_ABC_HERE */
 			printk(KERN_DEBUG "%s(%d): %s block %Lu on %s (%u sectors)\n",
 			current->comm, task_pid_nr(current),
+#endif /* MY_ABC_HERE */
 				op_is_write(bio_op(bio)) ? "WRITE" : "READ",
 				(unsigned long long)bio->bi_iter.bi_sector,
 				bio_devname(bio, b), count);
@@ -1289,6 +1338,58 @@ static void blk_account_io_completion(struct request *req, unsigned int bytes)
 	}
 }
 
+#ifdef MY_ABC_HERE
+static inline unsigned int syno_block_latency_bucket_offset_get(const u64 u64Latency)
+{
+	unsigned int uOffset = 0;
+
+	/* latency >= 1024 us */
+	if ( 0x1F < u64Latency) {
+		uOffset += 1;
+	}
+
+	/* latency >= 32ms */
+	if (unlikely( 0x3FF < u64Latency)) {
+		uOffset += 1;
+	}
+
+	/* latency >= 1024ms */
+	if (unlikely( 0x7FFF < u64Latency)) {
+		uOffset += 1;
+	}
+
+	return uOffset;
+}
+
+static void syno_block_latency_cal(struct request *req)
+{
+	int iDirection = rq_data_dir(req);
+	unsigned int uBucketOffset = 0;
+	u64 u64StepOffset = 0;
+	u64 u64CmdRespTime = 0;
+
+	if  (!req->rq_disk) {
+		return;
+	}
+	u64CmdRespTime = cpu_clock(0) - req->u64IssueTime;
+
+	req->rq_disk->u64CplCmdCnt[iDirection] += 1;
+
+	// calculate the response time buckets
+	// shift to 32us
+	u64StepOffset = (u64CmdRespTime >> 15);
+	// calculate the offset of buckets with the response time
+	uBucketOffset = syno_block_latency_bucket_offset_get(u64StepOffset);
+	u64StepOffset >>= (5 * uBucketOffset);
+	if (unlikely(31 < u64StepOffset)) {
+		uBucketOffset = (SYNO_BLOCK_RESPONSE_BUCKETS_END - 1);
+		u64StepOffset = 31;
+	}
+	req->rq_disk->u64RespTimeSum[iDirection] += u64CmdRespTime;
+	req->rq_disk->u64RespTimeBuckets[iDirection][uBucketOffset][u64StepOffset] += 1;
+}
+#endif /* MY_ABC_HERE */
+
 void blk_account_io_done(struct request *req, u64 now)
 {
 	/*
@@ -1310,6 +1411,21 @@ void blk_account_io_done(struct request *req, u64 now)
 		part_stat_unlock();
 
 		hd_struct_put(part);
+#ifdef MY_ABC_HERE
+		if (likely(req->start_time_ns < req->io_start_time_ns)) {
+			req->rq_disk->u64WaitTime[rq_data_dir(req)] +=
+				req->io_start_time_ns - req->start_time_ns;
+		}
+		syno_block_latency_cal(req);
+#ifdef MY_ABC_HERE
+		if (0 != req->syno_seq) {
+			req->rq_disk->seq_ios[SYNO_DISK_SEQ_STAT_NEAR_SEQ]++;
+			req->rq_disk->seq_ios[SYNO_DISK_SEQ_STAT_SEQ] +=
+				!!(req->syno_seq & (1 << SYNO_DISK_SEQ_STAT_SEQ));
+		}
+#endif /* MY_ABC_HERE */
+#endif /* MY_ABC_HERE */
+
 	}
 }
 
@@ -1760,6 +1876,9 @@ void blk_flush_plug_list(struct blk_plug *plug, bool from_schedule)
 	if (!list_empty(&plug->mq_list))
 		blk_mq_flush_plug_list(plug, from_schedule);
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL(blk_flush_plug_list);
+#endif /* MY_ABC_HERE */
 
 /**
  * blk_finish_plug - mark the end of a batch of submitted I/O

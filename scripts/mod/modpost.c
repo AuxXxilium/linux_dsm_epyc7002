@@ -20,6 +20,7 @@
 #include <stdbool.h>
 #include <errno.h>
 #include "modpost.h"
+#include "../../include/generated/autoconf.h"
 #include "../../include/linux/license.h"
 
 /* Are we using CONFIG_MODVERSIONS? */

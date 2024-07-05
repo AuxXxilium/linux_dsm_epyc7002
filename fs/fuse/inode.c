@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
   FUSE: Filesystem in Userspace
   Copyright (C) 2001-2008  Miklos Szeredi <miklos@szeredi.hu>
@@ -706,6 +709,9 @@ void fuse_conn_init(struct fuse_conn *fc, struct fuse_mount *fm,
 	list_add(&fm->fc_entry, &fc->mounts);
 	fm->fc = fc;
 	refcount_set(&fm->count, 1);
+#ifdef MY_ABC_HERE
+	fm->syno_state = 0;
+#endif /* MY_ABC_HERE */
 }
 EXPORT_SYMBOL_GPL(fuse_conn_init);
 
@@ -900,6 +906,61 @@ static struct dentry *fuse_get_parent(struct dentry *child)
 	return parent;
 }
 
+#ifdef MY_ABC_HERE
+static int __fuse_syno_get_sb_archive_version(
+		struct super_block *sb, u32 *archive_version)
+{
+	return -EOPNOTSUPP;
+}
+
+static int fuse_syno_get_sb_archive_version(
+		struct super_block *sb, u32 *archive_version)
+{
+	int ret;
+	u32 tmp_archive_version;
+	struct fuse_mount *fm = get_fuse_mount_super(sb);
+
+	if (test_bit(FUSE_S_SYNO_ARCHIVE_VERSION_CACHED, &fm->syno_state)) {
+		*archive_version = sb->s_archive_version;
+
+		return 0;
+	}
+
+	ret = __fuse_syno_get_sb_archive_version(sb, &tmp_archive_version);
+	if (ret)
+		return ret;
+
+	sb->s_archive_version = tmp_archive_version;
+	set_bit(FUSE_S_SYNO_ARCHIVE_VERSION_CACHED, &fm->syno_state);
+
+	*archive_version = tmp_archive_version;
+
+	return 0;
+}
+
+static int __fuse_syno_set_sb_archive_version(
+		struct super_block *sb, u32 archive_version)
+{
+	return -EOPNOTSUPP;
+}
+
+static int fuse_syno_set_sb_archive_version(
+		struct super_block *sb, u32 archive_version)
+{
+	int ret;
+	struct fuse_mount *fm = get_fuse_mount_super(sb);
+
+	ret = __fuse_syno_set_sb_archive_version(sb, archive_version);
+	if (ret)
+		return ret;
+
+	sb->s_archive_version = archive_version;
+	set_bit(FUSE_S_SYNO_ARCHIVE_VERSION_CACHED, &fm->syno_state);
+
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
 static const struct export_operations fuse_export_operations = {
 	.fh_to_dentry	= fuse_fh_to_dentry,
 	.fh_to_parent	= fuse_fh_to_parent,
@@ -917,6 +978,10 @@ static const struct super_operations fuse_super_operations = {
 	.umount_begin	= fuse_umount_begin,
 	.statfs		= fuse_statfs,
 	.show_options	= fuse_show_options,
+#ifdef MY_ABC_HERE
+	.syno_get_sb_archive_version = fuse_syno_get_sb_archive_version,
+	.syno_set_sb_archive_version = fuse_syno_set_sb_archive_version,
+#endif /* MY_ABC_HERE */
 };
 
 static void sanitize_global_limit(unsigned *limit)

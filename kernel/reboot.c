@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/kernel/reboot.c
@@ -17,6 +20,9 @@
 #include <linux/syscalls.h>
 #include <linux/syscore_ops.h>
 #include <linux/uaccess.h>
+#ifdef MY_ABC_HERE
+#include <linux/tty.h>
+#endif /* MY_ABC_HERE */
 
 /*
  * this indicates whether you can reboot with ctrl-alt-del: the default is yes
@@ -299,6 +305,13 @@ EXPORT_SYMBOL_GPL(kernel_power_off);
 
 DEFINE_MUTEX(system_transition_mutex);
 
+#ifdef MY_ABC_HERE
+#define UART_TTYS_INDEX 1
+
+#define UART_CMD_REBOOT 67 // "C"
+#define UART_CMD_POWEROFF 49 // "1"
+#endif /* MY_ABC_HERE */
+
 /*
  * Reboot system call: for obvious reasons only root may call it,
  * and even root needs to set up some magic numbers in the registers
@@ -313,6 +326,9 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 	struct pid_namespace *pid_ns = task_active_pid_ns(current);
 	char buffer[256];
 	int ret = 0;
+#ifdef MY_ABC_HERE
+	char szBuf[2];
+#endif /* MY_ABC_HERE */
 
 	/* We only trust the superuser with rebooting the system. */
 	if (!ns_capable(pid_ns->user_ns, CAP_SYS_BOOT))
@@ -344,6 +360,11 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 	mutex_lock(&system_transition_mutex);
 	switch (cmd) {
 	case LINUX_REBOOT_CMD_RESTART:
+#ifdef MY_ABC_HERE
+		szBuf[0] = UART_CMD_REBOOT;
+		szBuf[1] = '\0';
+		syno_ttys_write(UART_TTYS_INDEX, szBuf);
+#endif /* MY_ABC_HERE */
 		kernel_restart(NULL);
 		break;
 
@@ -361,6 +382,11 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 		panic("cannot halt");
 
 	case LINUX_REBOOT_CMD_POWER_OFF:
+#ifdef MY_ABC_HERE
+		szBuf[0] = UART_CMD_POWEROFF;
+		szBuf[1] = '\0';
+		syno_ttys_write(UART_TTYS_INDEX, szBuf);
+#endif /*MY_ABC_HERE */
 		kernel_power_off();
 		do_exit(0);
 		break;

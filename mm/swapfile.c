@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/mm/swapfile.c
@@ -2573,6 +2576,9 @@ SYSCALL_DEFINE1(swapoff, const char __user *, specialfile)
 	struct filename *pathname;
 	int err, found = 0;
 	unsigned int old_block_size;
+#ifdef MY_ABC_HERE
+	extern int gSynoSwapFlag;
+#endif /* MY_ABC_HERE */
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -2582,6 +2588,15 @@ SYSCALL_DEFINE1(swapoff, const char __user *, specialfile)
 	pathname = getname(specialfile);
 	if (IS_ERR(pathname))
 		return PTR_ERR(pathname);
+
+#ifdef MY_ABC_HERE
+	if (0 == gSynoSwapFlag) {
+		printk(KERN_ERR
+			"*ERROR*, ppid:%d(%s), pid:%d(%s), use swapoff without syno framework!\n",
+			task_pid_nr(current->parent), current->parent->comm,
+			task_pid_nr(current), current->comm);
+	}
+#endif /* MY_ABC_HERE */
 
 	victim = file_open_name(pathname, O_RDWR|O_LARGEFILE, 0);
 	err = PTR_ERR(victim);
@@ -3179,6 +3194,9 @@ SYSCALL_DEFINE2(swapon, const char __user *, specialfile, int, swap_flags)
 	struct page *page = NULL;
 	struct inode *inode = NULL;
 	bool inced_nr_rotate_swap = false;
+#ifdef MY_ABC_HERE
+	extern int gSynoSwapFlag;
+#endif /* MY_ABC_HERE */
 
 	if (swap_flags & ~SWAP_FLAGS_VALID)
 		return -EINVAL;
@@ -3188,6 +3206,15 @@ SYSCALL_DEFINE2(swapon, const char __user *, specialfile, int, swap_flags)
 
 	if (!swap_avail_heads)
 		return -ENOMEM;
+
+#ifdef MY_ABC_HERE
+	if (0 == gSynoSwapFlag) {
+		printk(KERN_ERR
+			"*ERROR*, ppid:%d(%s), pid:%d(%s), use swapon without syno framework!\n",
+			task_pid_nr(current->parent), current->parent->comm,
+			task_pid_nr(current), current->comm);
+	}
+#endif /* MY_ABC_HERE */
 
 	p = alloc_swap_info();
 	if (IS_ERR(p))

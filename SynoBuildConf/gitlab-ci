@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+# Copyright (c) 2000-2020 Synology Inc. All rights reserved.
+
+# shellcheck source=/dev/null
+source "SynoBuildConf/_env"
+source "SynoBuildConf/_kconfig"
+
+unset ARCH CROSS_COMPILE
+
+ci_help()
+{
+    cat <<-EOF
+Usage:
+    $(basename "$0") <command>
+
+Commands:
+    config
+    prepare
+    check-patch
+    check-sparse
+    check-smatch
+    check-syno-macro
+    check-syno-script
+    check-clang-format-diff
+    build-tools
+    build-ci-image
+    build-btf-image
+EOF
+}
+
+ci_config()
+{
+    cp -f "synology/synoconfigs/fst-ci-config" .config
+    make olddefconfig
+}
+
+ci_prepare()
+{
+    [ -f ".config" ] || return 1
+
+    make prepare
+}
+
+ci_check_sparse()
+{
+    env_check_command "sparse" || return
+
+    make C=2 CHECK="$(command -v 'sparse')" -j "$(nproc)"
+}
+
+ci_check_patch()
+{
+    if git remote show origin &>/dev/null; then
+        ./scripts/checkpatch.pl -g origin/HEAD..HEAD
+    else
+        ./scripts/checkpatch.pl -g HEAD~1..HEAD
+    fi
+}
+
+ci_check_smatch()
+{
+    env_check_command "smatch" || return
+
+    make C=2 CHECK="$(command -v 'smatch') -p=kernel" -j "$(nproc)"
+}
+
+ci_check_coccinelle()
+{
+    env_check_command "spatch" || return
+
+    make coccicheck MODE=report
+}
+
+ci_check_syno_script()
+{
+    local _f
+
+    env_check_command "shellcheck" || return
+
+    while IFS= read -r _f; do
+        if ! shellcheck "$_f"; then
+            ERROR "'$_f' doesn't honor shellcheck"
+            return 1
+        fi
+    done < <(find SynoBuildConf/ -regex '.*/\(gitlab-ci\|build.*\|install.*\|_.*\)';
+             find synology/systemd/ -regex '.*/.*\.sh';)
+}
+
+ci_check_syno_macro()
+{
+    kconfig_check_syno_macro
+}
+
+ci_check_clang_format_diff()
+{
+    env_check_command "clang-format-diff" || return
+
+    local _diff
+
+    if git remote show origin &>/dev/null; then
+        _diff="$(git diff -U0 --no-color origin/HEAD..HEAD | clang-format-diff -p1)"
+    else
+        _diff="$(git diff -U0 --no-color HEAD~1..HEAD | clang-format-diff -p1)"
+    fi
+
+
+    if [ -n "$_diff" ]; then
+        echo "$_diff"
+        return 1
+    fi
+}
+
+ci_build_tools()
+{
+    local _tools _tool _failed
+
+    # you need to install lots of dependency ...
+    _tools="
+        acpi
+        bpf
+        cgroup
+        cpupower
+        debugging
+        firewire
+        firmware
+        freefall
+        gpio
+        hv
+        iio
+        intel-speed-select
+        leds
+        #liblockdep
+        objtool
+        pci
+        perf
+        #selftests
+        spi
+        tmon
+        turbostat
+        usb
+        #virtio
+        libapi
+        vm
+        wmi
+        x86_energy_perf_policy
+    "
+
+    if env_detect_clang && env_detect_llvm; then
+        env_enable_clang
+        env_enable_llvm
+        INFO "Build with LLVM/Clang"
+    fi
+
+    # FIXME: workaround for tools/bpf/runqslower bad detection
+    export VMLINUX_BTF="../../../vmlinux"
+
+    while read -r _tool; do
+        [[ "$_tool" =~ ^[[:blank:]]*(#.*)?$ ]] && continue
+
+        INFO "Build tools/$_tool"
+        if ! make "tools/$_tool"; then
+            _failed="$_failed $_tool"
+        fi
+    done <<< "$_tools"
+
+    if [ -n "$_failed" ]; then
+        ERROR "failed to build tools: $_failed"
+        return 1
+    fi
+}
+
+ci_build_ci_image()
+{
+    make olddefconfig
+    make vmlinux modules -j "$(nproc)"
+}
+
+ci_build_btf_image()
+{
+    if env_detect_clang && env_detect_llvm; then
+        env_enable_clang
+        env_enable_llvm
+        INFO "Build with LLVM/Clang"
+    fi
+
+    # vmlinux with BTF is required for tools/bpf
+    ./scripts/config --enable CONFIG_DEBUG_INFO_BTF
+
+    make olddefconfig
+    make vmlinux modules -j "$(nproc)"
+}
+
+if [ -z "$1" ]; then
+    ci_help
+elif type -p "ci_${1//-/_}"; then
+    cmd="${1//-/_}"; shift
+    ci_"$cmd" "$@"
+else
+    ERROR "Command $1 not found"
+fi
+

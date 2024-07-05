@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2013-2017 ARM Limited, All Rights Reserved.
@@ -31,6 +34,10 @@
 
 #include "irq-gic-common.h"
 
+#if defined(MY_DEF_HERE)
+#define GICD_CTLR_E1NWF	(1 << 7)
+
+#endif /* MY_DEF_HERE */
 #define GICD_INT_NMI_PRI	(GICD_INT_DEF_PRI & ~0x80)
 
 #define FLAGS_WORKAROUND_GICR_WAKER_MSM8996	(1ULL << 0)
@@ -38,6 +45,14 @@
 
 #define GIC_IRQ_TYPE_PARTITION	(GIC_IRQ_TYPE_LPI + 1)
 
+#if defined(MY_DEF_HERE)
+static unsigned int GICR_ISENABLER0_REG;
+static unsigned int GIC_ISENABLER0_REG;
+static unsigned int GIC_ISENABLER1_REG;
+static unsigned int GIC_ISENABLER2_REG;
+static unsigned int GIC_ISENABLER3_REG;
+
+#endif /* MY_DEF_HERE */
 struct redist_region {
 	void __iomem		*redist_base;
 	phys_addr_t		phys_base;
@@ -235,10 +250,27 @@ static void gic_enable_redist(bool enable)
 	rbase = gic_data_rdist_rd_base();
 
 	val = readl_relaxed(rbase + GICR_WAKER);
+#if defined(MY_DEF_HERE)
+	if (enable) {
+
+#if defined(MY_DEF_HERE)
+		if (readl_relaxed(rbase) & 0x02000000)
+			writel_relaxed(readl_relaxed(rbase) & 0xfdffffff, rbase);
+#else /* MY_DEF_HERE */
+	if (readl_relaxed(rbase) & 0x02000000)
+		writel_relaxed(readl_relaxed(rbase) & 0xfdffffff, rbase);
+#endif /* MY_DEF_HERE */
+
+#else /* MY_DEF_HERE */
 	if (enable)
+#endif /* MY_DEF_HERE */
 		/* Wake up this CPU redistributor */
 		val &= ~GICR_WAKER_ProcessorSleep;
+#if defined(MY_DEF_HERE)
+	} else
+#else /* MY_DEF_HERE */
 	else
+#endif /* MY_DEF_HERE */
 		val |= GICR_WAKER_ProcessorSleep;
 	writel_relaxed(val, rbase + GICR_WAKER);
 
@@ -784,7 +816,11 @@ static void __init gic_dist_init(void)
 	/* Now do the common stuff, and wait for the distributor to drain */
 	gic_dist_config(base, GIC_LINE_NR, gic_dist_wait_for_rwp);
 
+#if defined(MY_DEF_HERE)
+	val = GICD_CTLR_ARE_NS | GICD_CTLR_ENABLE_G1A | GICD_CTLR_ENABLE_G1 | GICD_CTLR_E1NWF;
+#else /* MY_DEF_HERE */
 	val = GICD_CTLR_ARE_NS | GICD_CTLR_ENABLE_G1A | GICD_CTLR_ENABLE_G1;
+#endif /* MY_DEF_HERE */
 	if (gic_data.rdists.gicd_typer2 & GICD_TYPER2_nASSGIcap) {
 		pr_info("Enabling SGIs without active state\n");
 		val |= GICD_CTLR_nASSGIreq;
@@ -798,6 +834,15 @@ static void __init gic_dist_init(void)
 	 * enabled.
 	 */
 	affinity = gic_mpidr_to_affinity(cpu_logical_map(smp_processor_id()));
+#if defined(MY_DEF_HERE)
+
+	/*
+	* The GIC selects the appropriate core for a SPI.
+	* GICD_IROUTER<n>.Interrupt_Routing_Mode = 1
+	*/
+	affinity |= 0x80000000;
+
+#endif /* MY_DEF_HERE */
 	for (i = 32; i < GIC_LINE_NR; i++)
 		gic_write_irouter(affinity, base + GICD_IROUTER + i * 8);
 
@@ -1112,6 +1157,19 @@ static int gic_starting_cpu(unsigned int cpu)
 	return 0;
 }
 
+#if defined(MY_DEF_HERE)
+static int gic_off_cpu(unsigned int cpu)
+{
+
+	void __iomem *rbase;
+
+	rbase = gic_data_rdist_rd_base();
+	writel_relaxed(readl_relaxed(rbase) | 0x2000000, rbase);
+
+	return 0;
+}
+
+#endif /* MY_DEF_HERE */
 static u16 gic_compute_target_list(int *base_cpu, const struct cpumask *mask,
 				   unsigned long cluster_id)
 {
@@ -1193,7 +1251,11 @@ static void __init gic_smp_init(void)
 
 	cpuhp_setup_state_nocalls(CPUHP_AP_IRQ_GIC_STARTING,
 				  "irqchip/arm/gicv3:starting",
+#if defined(MY_DEF_HERE)
+				  gic_starting_cpu, gic_off_cpu);
+#else /* MY_DEF_HERE */
 				  gic_starting_cpu, NULL);
+#endif /* MY_DEF_HERE */
 
 	/* Register all 8 non-secure SGIs */
 	base_sgi = __irq_domain_alloc_irqs(gic_data.domain, -1, 8,
@@ -1234,6 +1296,11 @@ static int gic_set_affinity(struct irq_data *d, const struct cpumask *mask_val,
 	reg = gic_dist_base(d) + offset + (index * 8);
 	val = gic_mpidr_to_affinity(cpu_logical_map(cpu));
 
+#if defined(MY_DEF_HERE)
+	if (cpumask_subset(cpu_online_mask, mask_val))
+		val |= 0x80000000;
+
+#endif /* MY_DEF_HERE */
 	gic_write_irouter(val, reg);
 
 	/*
@@ -1264,6 +1331,36 @@ static int gic_retrigger(struct irq_data *data)
 static int gic_cpu_pm_notifier(struct notifier_block *self,
 			       unsigned long cmd, void *v)
 {
+#if defined(MY_DEF_HERE)
+	void __iomem *rbase;
+
+	rbase = gic_data_rdist_sgi_base();
+	if (cmd == CPU_PM_EXIT) {
+		pr_err("GICR_ISENABLER0 = %x\n", GICR_ISENABLER0_REG);
+		pr_err("GIC_ISENABLER0 = %x\n", GIC_ISENABLER0_REG);
+		pr_err("GIC_ISENABLER1 = %x\n", GIC_ISENABLER1_REG);
+		pr_err("GIC_ISENABLER2 = %x\n", GIC_ISENABLER2_REG);
+		pr_err("GIC_ISENABLER3 = %x\n", GIC_ISENABLER3_REG);
+		writel_relaxed(GICR_ISENABLER0_REG, rbase + GICR_ISENABLER0);
+		writel_relaxed(GIC_ISENABLER0_REG, gic_data.dist_base + 0x100);
+		writel_relaxed(GIC_ISENABLER1_REG, gic_data.dist_base + 0x104);
+		writel_relaxed(GIC_ISENABLER2_REG, gic_data.dist_base + 0x108);
+		writel_relaxed(GIC_ISENABLER3_REG, gic_data.dist_base + 0x10C);
+
+	} else if (cmd == CPU_PM_ENTER) {
+		GICR_ISENABLER0_REG = readl_relaxed(rbase + GICR_ISENABLER0);
+		GIC_ISENABLER0_REG = readl_relaxed(gic_data.dist_base + 0x100);
+		GIC_ISENABLER1_REG = readl_relaxed(gic_data.dist_base + 0x104);
+		GIC_ISENABLER2_REG = readl_relaxed(gic_data.dist_base + 0x108);
+		GIC_ISENABLER3_REG = readl_relaxed(gic_data.dist_base + 0x10C);
+		pr_err("GICR_ISENABLER0 = %x\n", GICR_ISENABLER0_REG);
+		pr_err("GIC_ISENABLER0 = %x\n", GIC_ISENABLER0_REG);
+		pr_err("GIC_ISENABLER1 = %x\n", GIC_ISENABLER1_REG);
+		pr_err("GIC_ISENABLER2 = %x\n", GIC_ISENABLER2_REG);
+		pr_err("GIC_ISENABLER3 = %x\n", GIC_ISENABLER3_REG);
+	}
+
+#endif /* MY_DEF_HERE */
 	if (cmd == CPU_PM_EXIT) {
 		if (gic_dist_security_disabled())
 			gic_enable_redist(true);

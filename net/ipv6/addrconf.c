@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *	IPv6 Address [auto]configuration
@@ -219,7 +222,11 @@ static struct ipv6_devconf ipv6_devconf __read_mostly = {
 	.proxy_ndp		= 0,
 	.accept_source_route	= 0,	/* we do not accept RH0 by default. */
 	.disable_ipv6		= 0,
+#if defined(MY_ABC_HERE)
+	.accept_dad		= 2,
+#else /* MY_ABC_HERE */
 	.accept_dad		= 0,
+#endif /* MY_ABC_HERE */
 	.suppress_frag_ndisc	= 1,
 	.accept_ra_mtu		= 1,
 	.stable_secret		= {
@@ -274,7 +281,11 @@ static struct ipv6_devconf ipv6_devconf_dflt __read_mostly = {
 	.proxy_ndp		= 0,
 	.accept_source_route	= 0,	/* we do not accept RH0 by default. */
 	.disable_ipv6		= 0,
+#if defined(MY_ABC_HERE)
+	.accept_dad		= 2,
+#else /* MY_ABC_HERE */
 	.accept_dad		= 1,
+#endif /* MY_ABC_HERE */
 	.suppress_frag_ndisc	= 1,
 	.accept_ra_mtu		= 1,
 	.stable_secret		= {

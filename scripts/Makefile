@@ -3,6 +3,10 @@
 # scripts contains sources for various helper programs used throughout
 # the kernel for the build process.
 
+ifdef CONFIG_SYNO_KEXEC_TEST
+HOST_EXTRACFLAGS += -DCONFIG_SYNO_KEXEC_TEST
+endif # CONFIG_SYNO_KEXEC_TEST
+
 CRYPTO_LIBS = $(shell pkg-config --libs libcrypto 2> /dev/null || echo -lcrypto)
 CRYPTO_CFLAGS = $(shell pkg-config --cflags libcrypto 2> /dev/null)
 

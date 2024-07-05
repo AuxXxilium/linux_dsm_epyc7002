@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/fs/exec.c
@@ -113,6 +116,9 @@ bool path_noexec(const struct path *path)
 	return (path->mnt->mnt_flags & MNT_NOEXEC) ||
 	       (path->mnt->mnt_sb->s_iflags & SB_I_NOEXEC);
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL_GPL(path_noexec);
+#endif /* MY_ABC_HERE */
 
 #ifdef CONFIG_USELIB
 /*
@@ -1346,10 +1352,6 @@ int begin_new_exec(struct linux_binprm * bprm)
 	   group */
 	WRITE_ONCE(me->self_exec_id, me->self_exec_id + 1);
 	flush_signal_handlers(me, 0);
-
-	retval = set_cred_ucounts(bprm->cred);
-	if (retval < 0)
-		goto out_unlock;
 
 	/*
 	 * install the new credentials for this executable

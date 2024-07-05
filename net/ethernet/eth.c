@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * INET		An implementation of the TCP/IP protocol suite for the LINUX
@@ -292,8 +295,19 @@ int eth_prepare_mac_addr_change(struct net_device *dev, void *p)
 {
 	struct sockaddr *addr = p;
 
+#ifdef MY_ABC_HERE
+	/**
+	 * In linux-2.6.24, kernel call dev->set_mac_address() directly to
+	 * set mac address. But in linux-2.6.32, kernel call a middle layer
+	 * function ops->ndo_set_mac_address() to set mac address. However,
+	 * this function will call eth_mac_addr() and will check if network
+	 * interface is on or not. If network interface is running, it returns
+	 * -EBUSY and set mac address action failed.
+	 */
+#else /* MY_ABC_HERE */
 	if (!(dev->priv_flags & IFF_LIVE_ADDR_CHANGE) && netif_running(dev))
 		return -EBUSY;
+#endif /* MY_ABC_HERE */
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EADDRNOTAVAIL;
 	return 0;

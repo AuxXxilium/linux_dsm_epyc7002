@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Generic pidhash and scalable, time-bounded PID allocator
@@ -238,6 +241,11 @@ struct pid *alloc_pid(struct pid_namespace *ns, pid_t *set_tid,
 
 		if (nr < 0) {
 			retval = (nr == -ENOSPC) ? -EAGAIN : nr;
+#ifdef MY_ABC_HERE
+			if (nr == -ENOSPC) {
+				pr_err_ratelimited("run out of pids, pid_max = %d", pid_max);
+			}
+#endif /* MY_ABC_HERE */
 			goto out_free;
 		}
 

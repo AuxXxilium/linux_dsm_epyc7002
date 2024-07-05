@@ -1,0 +1,247 @@
+// Copyright (c) 2000-2015 Synology Inc. All rights reserved.
+
+#include <linux/cpumask.h>
+#include "rtd1296_common.h"
+#include "syno_ttyS.h"
+
+
+int GetModel(void)
+{
+	return MODEL_DS218;
+}
+
+void GetCPUInfo(SYNO_CPU_INFO *cpu, const unsigned int maxLength)
+{
+#if defined(CONFIG_SMP)
+	int i;
+
+	cpu->core = 0;
+	for_each_online_cpu(i) {
+		cpu->core++;
+	}
+#else /* CONFIG_SMP */
+	cpu->core = 1;
+
+#endif
+	snprintf(cpu->clock, sizeof(char) * maxLength, "%d", 1400);
+}
+
+int InitModuleType(struct synobios_ops *ops)
+{
+	PRODUCT_MODEL model = GetModel();
+	module_t type_218 = MODULE_T_DS218;
+	module_t *pType = NULL;
+
+	switch (model) {
+	case MODEL_DS218:
+		pType = &type_218;
+		break;
+	default:
+		break;
+	}
+
+	module_type_set(pType);
+	return 0;
+}
+
+int SetDiskLedStatus(int disknum, SYNO_DISK_LED status)
+{
+	int iRet = -1;
+	static int diskLedEnabled = 0;
+
+	if (0 == diskLedEnabled && DISK_LED_OFF != status) {
+		/* enable disk LED */
+		SYNO_ENABLE_HDD_LED(1);
+		diskLedEnabled = 1;
+	}
+
+	if(status == DISK_LED_ORANGE_SOLID || status == DISK_LED_ORANGE_BLINK || status == DISK_LED_OFF) {
+		syno_ahci_disk_green_led(disknum - 1, 0);
+	}
+	else {
+		syno_ahci_disk_green_led(disknum - 1, 1);
+	}
+	iRet = SYNO_HDD_LED_SET(disknum, status);
+	if (0 != iRet) {
+		goto END;
+	}
+END:
+	return iRet;
+}
+
+int SetPowerLedStatus(SYNO_LED status)
+{
+	char szCommand[5] = {0};
+	int err = -1;
+
+	switch(status){
+		case SYNO_LED_ON:
+			snprintf(szCommand, sizeof(szCommand), "%s", SZ_UART_PWR_LED_ON);
+			break;
+		case SYNO_LED_OFF:
+			snprintf(szCommand, sizeof(szCommand), "%s", SZ_UART_PWR_LED_OFF);
+			break;
+		default:
+			goto ERR;
+	}
+
+	if (0 > synobios_lock_ttyS_write(szCommand)) {
+		goto ERR;
+	}
+
+	err = 0;
+ERR:
+	return err;
+}
+
+static int SetHddLed(SYNO_LED status)
+{
+	int err = -1;
+
+        switch(status){
+		case SYNO_LED_ON:
+			SYNO_ENABLE_HDD_LED(1);
+			break;
+		case SYNO_LED_OFF:
+			SYNO_ENABLE_HDD_LED(0);
+			break;
+		default:
+			goto ERR;
+	}
+
+	err = 0;
+ERR:
+	return err;
+}
+
+static int getCopyButtonStatus(void)
+{
+    // for matching userspace usage, button pressed = 0, else = 1
+    return SYNO_COPY_BUTTON_GPIO_GET();
+}
+
+/*
+ *  DS218 GPIO config table
+ *
+ *  Pin     In/Out    Function
+ *
+ *  13       In       USB Copy
+ *   4      Out       HDD 1 present
+ *   5      Out       HDD 2 present
+ *  11      Out       Control front panel LED
+ *  17      Out       Control front panel USB2.0 power
+ *  18      Out       HDD 1 green LED
+ *  19      Out       HDD 2 green LED
+ *  22      Out       USB3.0 port1 power
+ *  23      Out       USB3.0 port0 power
+ *  85      Out       HDD 1 power enable
+ *  86      Out       HDD 2 power enable
+ *  87      Out       Control HDD LED
+ *  88      Out       Control LAN LED
+ *  97      Out       HDD 2 orange LED
+ *  98      Out       HDD 1 orange LED
+ * 128      Out       LAN LED
+ *
+ */
+
+/*
+ *  DS218 other control
+ *
+ *  Fan fail		MicroP
+ *  HDD green LED	Realtek driver (ahci.c, rtd-1296-synology-ds218.dts)
+ *  Lan LED			Realtek driver (r8169.c, rtd-1296-synology-ds218.dts)
+ *
+ */
+
+static SYNO_GPIO_INFO hdd_fail_led = {
+	.nr_gpio		= 2,
+	.gpio_port		= {98, 97},
+	.gpio_polarity	= ACTIVE_HIGH,
+};
+static SYNO_GPIO_INFO hdd_detect = {
+	.nr_gpio		= 2,
+	.gpio_port		= {4, 5},
+	.gpio_polarity	= ACTIVE_LOW,
+};
+static SYNO_GPIO_INFO hdd_enable = {
+	.nr_gpio		= 2,
+	.gpio_port		= {85, 86},
+	.gpio_polarity	= ACTIVE_HIGH,
+};
+static SYNO_GPIO_INFO disk_led_ctrl = {
+	.nr_gpio		= 1,
+	.gpio_port		= {87},
+	.gpio_polarity	= ACTIVE_HIGH,
+};
+static SYNO_GPIO_INFO phy_led_ctrl = {
+	.nr_gpio		= 1,
+	.gpio_port		= {88},
+	.gpio_polarity	= ACTIVE_HIGH,
+};
+static SYNO_GPIO_INFO copy_button_detect = {
+	.nr_gpio		= 1,
+	.gpio_port		= {13},
+	.gpio_polarity	= ACTIVE_LOW,
+};
+
+
+void syno_gpio_init(void)
+{
+	if (!syno_gpio.hdd_detect) {
+		syno_gpio.hdd_detect = &hdd_detect;
+	} else {
+		check_gpio_consistency(syno_gpio.hdd_detect, &hdd_detect);
+	}
+
+	if (!syno_gpio.hdd_enable) {
+		syno_gpio.hdd_enable = &hdd_enable;
+	} else {
+		check_gpio_consistency(syno_gpio.hdd_enable, &hdd_enable);
+	}
+
+	syno_gpio.hdd_fail_led			= &hdd_fail_led;
+	syno_gpio.disk_led_ctrl			= &disk_led_ctrl;
+	syno_gpio.phy_led_ctrl			= &phy_led_ctrl;
+	syno_gpio.copy_button_detect	= &copy_button_detect;
+
+	syno_gpio_direction_input(copy_button_detect.gpio_port[0]);
+}
+
+void syno_gpio_cleanup(void)
+{
+	if (&hdd_detect == syno_gpio.hdd_detect) {
+		syno_gpio.hdd_detect = NULL;
+	}
+
+	if (&hdd_enable == syno_gpio.hdd_enable) {
+		syno_gpio.hdd_enable = NULL;
+	}
+
+	syno_gpio.hdd_fail_led			= NULL;
+	syno_gpio.disk_led_ctrl			= NULL;
+	syno_gpio.phy_led_ctrl			= NULL;
+	syno_gpio.copy_button_detect	= NULL;
+}
+
+int model_addon_init(struct synobios_ops *ops)
+{
+	/* enable to control PWR_LED */
+	ops->set_power_led = SetPowerLedStatus;
+
+	/* enable to control HDD_LED */
+	ops->set_hdd_led = SetHddLed;
+
+	/* enable to control PHY_LED */
+	ops->set_phy_led = SetPhyLed;
+
+	/* enable to read USBCOPY GPIO status. */
+	/* for matching userspace usage, button pressed = 0, else = 1 */
+	ops->get_copy_button_status = getCopyButtonStatus;
+
+	return 0;
+}
+
+int model_addon_cleanup(struct synobios_ops *ops)
+{
+	return 0;
+}

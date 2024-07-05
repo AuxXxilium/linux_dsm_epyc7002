@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  *  linux/boot/head.S
@@ -545,6 +548,20 @@ SYM_FUNC_START_LOCAL_NOALIGN(.Lrelocated)
 	shrq	$3, %rcx
 	rep	stosq
 
+#ifdef CONFIG_SYNO_KEXEC_TEST
+/*
+ * Insert setup_data for testing whether decompression is skipped
+ */
+	leaq	decompression_setup_data(%rip), %r8
+	movw	0x206(%rsi), %r9w
+	cmpw	$0x0209, %r9w
+	jl		3f
+	movq	0x250(%rsi), %r9
+	movq	%r9, 0x0(%r8)
+	movq	%r8, 0x250(%rsi)
+3:
+#endif /* CONFIG_SYNO_KEXEC_TEST */
+
 /*
  * If running as an SEV guest, the encryption mask is required in the
  * page-table setup code below. When the guest also has SEV-ES enabled
@@ -798,6 +815,18 @@ SYM_DATA_START_LOCAL(loaded_image_proto)
 	.byte	0x8e, 0x3f, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b
 SYM_DATA_END(loaded_image_proto)
 #endif
+
+#ifdef CONFIG_SYNO_KEXEC_TEST
+/*
+ * setup_data for testing whether decompression is skipped
+ */
+	.data
+	.balign	4
+decompression_setup_data:
+	.quad	0x0000000000000000		/* next */
+	.long	__DECOMPRESSION_TYPE__	/* type */
+	.long	0x00000000				/* len, no data */
+#endif /* CONFIG_SYNO_KEXEC_TEST */
 
 /*
  * Check for the correct C-bit position when the startup_32 boot-path is used.

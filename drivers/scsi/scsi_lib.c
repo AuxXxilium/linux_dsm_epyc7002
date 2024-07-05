@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 1999 Eric Youngdale
@@ -39,6 +42,33 @@
 #include "scsi_debugfs.h"
 #include "scsi_priv.h"
 #include "scsi_logging.h"
+
+#ifdef MY_ABC_HERE
+#include "libsyno_report.h"
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#include <scsi/scsi_transport.h>
+#include "scsi_transport_api.h"
+#endif /* MY_ABC_HERE */
+
+#if defined(MY_ABC_HERE)
+#include <linux/ata.h>
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#include <linux/synolib.h>
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#ifdef KERN_INFO
+#undef KERN_INFO
+#define KERN_INFO KERN_NOTICE
+#endif
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#define SYNO_SMART_CMD_TIMEOUT 30 * HZ
+#endif /* MY_ABC_HERE */
 
 /*
  * Size of integrity metadata is usually small, 1 inline sg should
@@ -262,7 +292,17 @@ int __scsi_execute(struct scsi_device *sdev, const unsigned char *cmd,
 	rq->cmd_len = COMMAND_SIZE(cmd[0]);
 	memcpy(rq->cmd, cmd, rq->cmd_len);
 	rq->retries = retries;
+#ifdef MY_ABC_HERE
+	req->timeout = ((sdev->scmd_timeout_sec*HZ) > timeout ? (sdev->scmd_timeout_sec*HZ) : timeout);
+	// Set smart command timeout at least 30s
+	if ((ATA_CMD_SMART == rq->cmd[0] ||
+				(ATA_16 == rq->cmd[0] && ATA_CMD_SMART == rq->cmd[14])) &&
+			SYNO_SMART_CMD_TIMEOUT > req->timeout) {
+		req->timeout = SYNO_SMART_CMD_TIMEOUT;
+	}
+#else /* MY_ABC_HERE */
 	req->timeout = timeout;
+#endif /* MY_ABC_HERE */
 	req->cmd_flags |= flags;
 	req->rq_flags |= rq_flags | RQF_QUIET;
 
@@ -559,6 +599,66 @@ static void scsi_run_queue_async(struct scsi_device *sdev)
 	}
 }
 
+#ifdef MY_DEF_HERE
+static void SynoSpinupDone(struct request *req, blk_status_t status)
+{
+	struct scsi_device *sdev = req->q->queuedata;
+
+	blk_put_request(req);
+
+	SynoSpinupEnd(sdev);
+}
+
+extern struct workqueue_struct *spinup_workqueue;
+void SynoQueueSpinupReq (struct scsi_device *sdev)
+{
+	if (spinup_workqueue) {
+		queue_work(spinup_workqueue, &sdev->spinup_work);
+	} else {
+		schedule_work(&sdev->spinup_work);
+	}
+}
+
+void SynoSubmitSpinupReq(struct work_struct *work)
+{
+	struct request *req;
+	struct scsi_request *rq;
+	struct scsi_device *sdev;
+
+	sdev = container_of(work, struct scsi_device, spinup_work);
+
+	req = blk_get_request(sdev->request_queue, REQ_OP_SCSI_IN, BLK_MQ_REQ_PM);
+	if (IS_ERR(req)) {
+		SynoQueueSpinupReq(sdev);
+		printk(KERN_ERR "%s: Can't get request, retry it", __FUNCTION__);
+		return;
+	}
+
+	rq = scsi_req(req);
+
+	rq->cmd[0] = START_STOP;
+	rq->cmd[1] = 0;
+	rq->cmd[2] = 0;
+	rq->cmd[3] = 0;
+	rq->cmd[4] = 1; /* START */
+	rq->cmd[5] = 0;
+
+	rq->cmd_len = COMMAND_SIZE(rq->cmd[0]);
+
+	req->rq_flags |= RQF_PM | RQF_QUIET;
+	req->timeout = 60 * HZ;
+	rq->retries = 5;
+
+	blk_execute_rq_nowait(req->q, NULL, req, 1, SynoSpinupDone);
+}
+static void SynoSpinupDisk(struct scsi_device *device)
+{
+	if (SynoSpinupBegin(device)) {
+		SynoQueueSpinupReq(device);
+	}
+}
+#endif /* MY_DEF_HERE */
+
 /* Returns false when no more bytes to process, true if there are more */
 static bool scsi_end_request(struct request *req, blk_status_t error,
 		unsigned int bytes)
@@ -673,6 +773,270 @@ static bool scsi_cmd_runtime_exceeced(struct scsi_cmnd *cmd)
 	return false;
 }
 
+#ifdef MY_ABC_HERE
+static inline bool
+SynoCmdNeedReport(unsigned char op)
+{
+	return op == READ_6  || op == WRITE_6 ||
+	       op == READ_10 || op == WRITE_10 ||
+	       op == READ_12 || op == WRITE_12 ||
+	       op == READ_16 || op == WRITE_16;
+}
+
+static void
+SynoScsiErrorCheck(struct scsi_cmnd *scsi_cmd,
+		struct scsi_sense_hdr *psshdr)
+{
+	sector_t badLba = 0;
+	if (NULL == scsi_cmd || NULL == scsi_cmd->device
+		|| NULL == scsi_cmd->sense_buffer || NULL == scsi_cmd->cmnd
+		|| NULL == psshdr) {
+		printk("%s:%s(%d) Ivalid scsi_cmd format",
+				__FILE__, __FUNCTION__,  __LINE__);
+		goto END;
+	}
+	if (!SynoCmdNeedReport(scsi_cmd->cmnd[0])) {
+		goto END;
+	}
+	switch (psshdr->sense_key) {
+		case MEDIUM_ERROR:
+			/* FALLTHROUGH */
+		case HARDWARE_ERROR:
+			if (0 == scsi_get_sense_info_fld(scsi_cmd->sense_buffer,
+					SCSI_SENSE_BUFFERSIZE, (u64*) &badLba)) {
+				printk("%s:%s(%d) sense info in sense data invalid\n",
+						__FILE__, __FUNCTION__,  __LINE__);
+				goto END;
+			}
+			SynoScsiErrorWithSenseReport(scsi_cmd->device,
+				psshdr->sense_key, psshdr->asc, psshdr->ascq, badLba);
+			break;
+		default:
+			// We only report MEDIUM_ERROR and HARDWARE_ERROR
+			goto END;
+	}
+
+END:
+	return;
+}
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+extern unsigned char
+syno_is_sector_need_auto_remap(struct gendisk *disk, sector_t lba);
+#ifdef MY_ABC_HERE
+extern void syno_req_set_bio_auto_remap_flag(struct request *req, sector_t lba);
+#endif /* MY_ABC_HERE */
+
+static void
+syno_scsi_do_remap_done(struct request *req, blk_status_t status)
+{
+	blk_put_request(req);
+}
+
+static unsigned int
+syno_scsi_do_remap(struct scsi_cmnd *scsi_cmd, sector_t badLba)
+{
+	unsigned int iRet = -1, iCheck = 0, i = 0;
+	unsigned int uSectors = 0;
+	struct request_queue *q = NULL;
+	struct scsi_request *rq;
+
+	u8 lbal = 0;
+	size_t size = 0;
+	struct scsi_device *device = NULL;
+	struct request *req = NULL;
+	char *buf = NULL, *p = NULL;
+
+	if (scsi_cmd == NULL) {
+		pr_warn("%s:%s(%d) Failed to get scsi_cmd", __FILE__, __func__,  __LINE__);
+		goto OUT;
+	}
+
+	device = scsi_cmd->device;
+	if (device == NULL) {
+		pr_warn("%s:%s(%d) Failed to get device", __FILE__, __func__,  __LINE__);
+		goto OUT;
+	}
+
+	q = device->request_queue;
+	if (q == NULL) {
+		pr_warn("%s:%s(%d) Failed to get request_queue\n", __FILE__, __func__,  __LINE__);
+		goto OUT;
+	}
+
+	uSectors = queue_physical_block_size(q) / queue_logical_block_size(q);
+	lbal = (u8)(badLba & 0xff);
+	lbal = (lbal & (~(uSectors - 1))); // move lbal to first logical block of physical block
+	size = SYNO_SCSI_SECT_SIZE * uSectors;
+
+	req = blk_get_request(q, WRITE, BLK_MQ_REQ_NOWAIT);
+	if (IS_ERR(req)) {
+		pr_warn("%s:%s(%d) Failed to get request\n", __FILE__, __func__,  __LINE__);
+		goto ERR;
+	}
+	buf = kmalloc(size, GFP_ATOMIC);
+	if (!buf) {
+		pr_warn("%s:%s(%d) Failed to allocate remap page memory, so use zero page instead.\n",
+			__FILE__, __func__,  __LINE__);
+		p = page_address(ZERO_PAGE(0));
+	} else {
+		syno_draw_auto_remap_buffer(buf, size);
+		p = buf;
+	}
+
+	rq = scsi_req(req);
+	//16 types write
+	rq->cmd[0] = WRITE_16;
+	rq->cmd[1] = 0;
+	// lba
+	rq->cmd[2] = (u8)((badLba & 0xff00000000000000) >> 56);
+	rq->cmd[3] = (u8)((badLba & 0xff000000000000) >> 48);
+	rq->cmd[4] = (u8)((badLba & 0xff0000000000) >> 40);
+	rq->cmd[5] = (u8)((badLba & 0xff00000000) >> 32);
+	rq->cmd[6] = (u8)((badLba & 0xff000000) >> 24);
+	rq->cmd[7] = (u8)((badLba & 0xff0000) >> 16);
+	rq->cmd[8] = (u8)((badLba & 0xff00) >> 8);
+	rq->cmd[9] = lbal;
+	// sector counts
+	rq->cmd[10] = (u8)((uSectors & 0xff000000) >> 24);
+	rq->cmd[11] = (u8)((uSectors & 0xff0000) >> 16);
+	rq->cmd[12] = (u8)((uSectors & 0xff00) >> 8);
+	rq->cmd[13] = (u8)(uSectors & 0xff);
+
+	rq->cmd_len = COMMAND_SIZE(rq->cmd[0]);
+	req->cmd_flags = REQ_OP_SCSI_OUT;
+	req->rq_flags |= RQF_QUIET;
+	req->timeout = 60 * HZ;
+	rq->retries = 0;
+
+	iCheck = blk_rq_map_kern(q, req, p, size, GFP_DMA | GFP_KERNEL);
+	if (iCheck) {
+		pr_warn("%s:%s(%d) blk_rq_map_kern return != 0\n",
+		       __FILE__, __func__,  __LINE__);
+		goto ERR;
+	}
+
+	sdev_printk(KERN_WARNING, device, "Insert write command :");
+	for (i = 0; i < rq->cmd_len; ++i)
+		pr_warn("%02x ", rq->cmd[i]);
+	pr_info("\n");
+
+	blk_execute_rq_nowait(q, NULL, req, 1, syno_scsi_do_remap_done);
+
+	iRet = 0;
+	goto OUT;
+ERR:
+	if (!IS_ERR(req))
+		blk_put_request(req);
+	kfree(buf);
+	buf = NULL;
+OUT:
+	return iRet;
+}
+
+static int
+syno_scsi_check_ncq_fake_unc(const u8 *sense_buffer, int iSbLen)
+{
+	int iRet = 0;
+	const u8 *desc = NULL;
+	u8 format = 0;
+
+	if (iSbLen < 7)
+		goto OUT;
+
+	format = 0x7f & sense_buffer[0];
+	if (format == 0x72 || format == 0x73) {
+		desc = scsi_sense_desc_find(sense_buffer, iSbLen, 0 /* info desc */);
+		if (desc && (desc[1] == 0xa))
+			iRet = SYNO_NCQ_FAKE_UNC & desc[SYNO_DESCRIPTOR_RESERVED_INDEX];
+	}
+OUT:
+	return iRet;
+}
+
+static unsigned int
+syno_scsi_writes_sector(struct scsi_cmnd *scsi_cmd)
+{
+	unsigned int iRet = -1, iCheck = 0;
+	sector_t badLba = 0;
+	u8 blIsWrite = 0;
+	struct gendisk *gd = NULL;
+
+	if (scsi_cmd == NULL) {
+		pr_warn("%s:%s(%d) Failed to get scsi_cmd", __FILE__, __func__,  __LINE__);
+		goto ERR;
+	}
+
+	if (scsi_cmd->request == NULL) {
+		pr_warn("%s:%s(%d) Failed to get scsi_cmd request\n",
+			__FILE__, __func__,  __LINE__);
+		goto ERR;
+	}
+
+	if (scsi_cmd->sense_buffer == NULL) {
+		pr_warn("%s:%s(%d) Failed to get scsi_cmd sense_buffer\n",
+		       __FILE__, __func__,  __LINE__);
+		goto ERR;
+	}
+
+	if (scsi_cmd->cmnd == NULL) {
+		pr_warn("%s:%s(%d) Failed to get scsi_cmd cmnd\n", __FILE__, __func__,  __LINE__);
+		goto ERR;
+	}
+
+	gd = scsi_cmd->request->rq_disk;
+	if (!gd) {
+		pr_warn("%s:%s(%d) Failed to get general disk\n", __FILE__, __func__,  __LINE__);
+		goto ERR;
+	}
+
+	iCheck = scsi_get_sense_info_fld(scsi_cmd->sense_buffer,
+			SCSI_SENSE_BUFFERSIZE,
+			(u64 *) &badLba);
+	if (!iCheck) {
+		pr_warn("%s:%s(%d) sense info in sense data invalid\n",
+			__FILE__, __func__,  __LINE__);
+		goto ERR;
+	}
+
+	if (syno_scsi_check_ncq_fake_unc(scsi_cmd->sense_buffer, SCSI_SENSE_BUFFERSIZE)) {
+		scmd_printk(KERN_INFO, scsi_cmd, "UNC ERROR code but NCQ abort, do NOT remap");
+		goto ERR;
+	}
+
+	switch (scsi_cmd->cmnd[0]) {
+	case WRITE_6:
+	case WRITE_10:
+	case WRITE_12:
+	case WRITE_16:
+	case WRITE_32:
+		blIsWrite = 1;
+		break;
+	default:
+		if (scsi_cmd->sc_data_direction == DMA_TO_DEVICE)
+			blIsWrite = 1;
+	}
+
+	scmd_printk(KERN_INFO, scsi_cmd, "%s unc at %llu\n",
+			(blIsWrite) ? "write" : "read",
+			(unsigned long long)badLba);
+
+	if (!blIsWrite && !syno_is_sector_need_auto_remap(gd, badLba))
+		goto ERR;
+
+#ifdef MY_ABC_HERE
+	// only report auto-remap in read
+	if (!blIsWrite)
+		syno_req_set_bio_auto_remap_flag(scsi_cmd->request, badLba);
+#endif /* MY_ABC_HERE */
+
+	syno_scsi_do_remap(scsi_cmd, badLba);
+	iRet = 0;
+ERR:
+	return iRet;
+}
+#endif /* MY_ABC_HERE */
+
 /* Helper for scsi_io_completion() when special action required. */
 static void scsi_io_completion_action(struct scsi_cmnd *cmd, int result)
 {
@@ -691,6 +1055,16 @@ static void scsi_io_completion_action(struct scsi_cmnd *cmd, int result)
 		sense_current = !scsi_sense_is_deferred(&sshdr);
 
 	blk_stat = scsi_result_to_blk_status(cmd, result);
+
+#ifdef CONFIG_SYNO_SAS_SPINUP_DELAY_DEBUG
+	if (0x1b == cmd->cmnd[0]) {
+		sdev_printk(KERN_ERR, cmd->device,
+				"START_STOP done - tag %02x %s - %02x %02x %02x %02x %02x %02x\n",
+				cmd->tag, (cmd->cmnd[4]&0x01)?"START":"STOP ",
+				cmd->cmnd[0], cmd->cmnd[1], cmd->cmnd[2],
+				cmd->cmnd[3], cmd->cmnd[4], cmd->cmnd[5]);
+	}
+#endif /* CONFIG_SYNO_SAS_SPINUP_DELAY_DEBUG */
 
 	if (host_byte(result) == DID_RESET) {
 		/* Third party bus reset or reset for error recovery
@@ -753,6 +1127,21 @@ static void scsi_io_completion_action(struct scsi_cmnd *cmd, int result)
 			 */
 			if (sshdr.asc == 0x04) {
 				switch (sshdr.ascq) {
+#ifdef MY_DEF_HERE
+				case 0x02: /* INITIALIZING COMMAND REQUIRED */
+					action = ACTION_FAIL;
+					if ((cmd->cmnd[0] != TEST_UNIT_READY) && (cmd->cmnd[0] != REQUEST_SENSE)) {
+						/*
+						 * Leave TUR & REQUEST_SENSE results untouched for upper layers
+						 * Only spin up on read/write commands
+						 */
+						if (cmd->device->spinup_queue) {
+							SynoSpinupDisk(cmd->device);
+							action = ACTION_DELAYED_RETRY;
+						}
+					}
+					break;
+#endif /* MY_DEF_HERE */
 				case 0x01: /* becoming ready */
 				case 0x04: /* format in progress */
 				case 0x05: /* rebuild in progress */
@@ -779,6 +1168,28 @@ static void scsi_io_completion_action(struct scsi_cmnd *cmd, int result)
 			/* See SSC3rXX or current. */
 			action = ACTION_FAIL;
 			break;
+#ifdef MY_ABC_HERE
+		case MEDIUM_ERROR:
+			switch (sshdr.asc) {
+			case 0x11:
+				switch (sshdr.ascq) {
+				case 0x00:
+				case 0x04:
+				case 0x14:
+					syno_scsi_writes_sector(cmd);
+					action = ACTION_FAIL;
+					break;
+				default:
+					action = ACTION_FAIL;
+					break;
+				}
+				break;
+			default:
+				action = ACTION_FAIL;
+				break;
+			}
+			break;
+#endif /* MY_ABC_HERE */
 		case DATA_PROTECT:
 			action = ACTION_FAIL;
 			if ((sshdr.asc == 0x0C && sshdr.ascq == 0x12) ||
@@ -792,6 +1203,9 @@ static void scsi_io_completion_action(struct scsi_cmnd *cmd, int result)
 			action = ACTION_FAIL;
 			break;
 		}
+#ifdef MY_ABC_HERE
+		SynoScsiErrorCheck(cmd, &sshdr);
+#endif /* MY_ABC_HERE */
 	} else
 		action = ACTION_FAIL;
 
@@ -875,6 +1289,7 @@ static int scsi_io_completion_nz_result(struct scsi_cmnd *cmd, int result,
 		 */
 		*blk_statp = scsi_result_to_blk_status(cmd, result);
 	}
+
 	/*
 	 * Recovered errors need reporting, but they're always treated as
 	 * success, so fiddle the result code here.  For passthrough requests
@@ -958,6 +1373,7 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 	SCSI_LOG_HLCOMPLETE(1, scmd_printk(KERN_INFO, cmd,
 		"%u sectors total, %d bytes done.\n",
 		blk_rq_sectors(req), good_bytes));
+
 
 	/*
 	 * Failed, zero length commands always need to drop down
@@ -1458,6 +1874,103 @@ static void scsi_softirq_done(struct request *rq)
 	}
 }
 
+#ifdef MY_DEF_HERE
+extern int g_is_sas_model;
+static int scsi_white_list_cmd_in_hibernation(struct scsi_cmnd *cmd)
+{
+	int ret = 0;
+
+	switch (cmd->cmnd[0]) {
+		/* Only spin up on read/write commands */
+		case TEST_UNIT_READY:
+		case REQUEST_SENSE:
+		case START_STOP:
+			/*sas standby cmd*/
+			ret = 1;
+			break;
+		case ATA_16:
+			/*ata passthrough standby immediate*/
+			if (g_is_sas_model && (0xe0 == cmd->cmnd[14])) {
+				ret = 1;
+			}
+			break;
+		default:
+			break;
+	}
+
+	return ret;
+}
+#endif /* MY_DEF_HERE */
+
+#ifdef MY_ABC_HERE
+static int cmd_in_ignore_list(struct scsi_cmnd *cmd)
+{
+#ifdef MY_ABC_HERE
+	/* Ignore EUnit control command */
+	if (cmd->device->spindown && ATA_16 == cmd->cmnd[0] &&
+		(ATA_CMD_PMP_WRITE == cmd->cmnd[14] || ATA_CMD_PMP_READ == cmd->cmnd[14])) {
+		return 1;
+	}
+#endif /* MY_ABC_HERE */
+
+	/* this is for SATA disk only, in SATA disk, we don't know which command to wake up disk
+	 * so we need spindown to help us to remember whichever disk is sleeping
+	 * So if disk is sleeping, then we assume any command will wake up this disk, and update the idle time */
+	if (cmd->device->spindown && TEST_UNIT_READY != cmd->cmnd[0]) {
+		cmd->device->spindown = 0;
+		if (0 == cmd->device->do_standby_syncing) {
+			return 0;
+		}
+	}
+
+	/* generally, we should assume all commands should wake up disk and idle time should be reset,
+	 * but we need to check smart(0x0C & ATA_16) in scemd loop and sync cache before call disk to sleep
+	 * so we must skip these commands here, and we also skip TEST_UNIT_READY, LOG_SENSE, and START_STOP for SAS disks */
+	/* mvSata */
+	if (0x0C == cmd->cmnd[0]) {
+		struct scatterlist *sg;
+		unsigned char* pBuffer;
+
+		if (cmd->sdb.table.nents) {
+			sg = (struct scatterlist *)cmd->sdb.table.sgl;
+			pBuffer = kmap_atomic(sg_page(sg)) + sg->offset;
+		} else {
+			pBuffer = (char *)cmd->sdb.table.sgl;
+		}
+
+		/* set disk to standby command */
+		if (0xE0 == pBuffer[0]) {
+			cmd->device->spindown = 1;
+		}
+
+		if (cmd->sdb.table.nents) {
+			kunmap_atomic(pBuffer - sg->offset);
+		}
+	} else if (ATA_16 == cmd->cmnd[0]) {
+		/* set disk to standby command */
+		if (0xE0 == cmd->cmnd[14]) {
+			cmd->device->spindown = 1;
+		}
+	} else if (START_STOP == cmd->cmnd[0]) {
+		if (0x01 == cmd->cmnd[4]) {
+			// start disks
+			if (0 == cmd->device->do_standby_syncing) {
+				return 0;
+			}
+		}
+	} else if (LOG_SENSE != cmd->cmnd[0] &&
+			TEST_UNIT_READY != cmd->cmnd[0] &&
+			SYNCHRONIZE_CACHE != cmd->cmnd[0]) {
+
+		if (0 == cmd->device->do_standby_syncing) {
+			return 0;
+		}
+	}
+
+	return 1;
+}
+#endif /* MY_ABC_HERE */
+
 /**
  * scsi_dispatch_command - Dispatch a command to the low-level driver.
  * @cmd: command block we are dispatching.
@@ -1469,6 +1982,10 @@ static int scsi_dispatch_cmd(struct scsi_cmnd *cmd)
 {
 	struct Scsi_Host *host = cmd->device->host;
 	int rtn = 0;
+#ifdef MY_ABC_HERE
+	unsigned long ulflags;
+	struct Scsi_Host *pMaster_host = NULL;
+#endif /* MY_ABC_HERE */
 
 	atomic_inc(&cmd->device->iorequest_cnt);
 
@@ -1494,6 +2011,20 @@ static int scsi_dispatch_cmd(struct scsi_cmnd *cmd)
 			"queuecommand : device blocked\n"));
 		return SCSI_MLQUEUE_DEVICE_BUSY;
 	}
+
+#ifdef MY_DEF_HERE
+	if (g_is_sas_model && (SYNO_PORT_TYPE_SAS == cmd->device->host->hostt->syno_port_type)) {
+		if ((START_STOP == cmd->cmnd[0] && (0 == (cmd->cmnd[4] & 0x01)))/*sas standby cmd*/ ||
+		   ((ATA_16 == cmd->cmnd[0]) && (0xe0 == cmd->cmnd[14]))/*ata passthrough standby immediate*/) {
+			set_bit(0, &cmd->device->sas_sata_standby_flag);
+		}
+
+		if (test_bit(0, &cmd->device->sas_sata_standby_flag) && !scsi_white_list_cmd_in_hibernation(cmd)) {
+			SynoSpinupDisk(cmd->device);
+			return SCSI_MLQUEUE_DEVICE_BUSY;
+		}
+	}
+#endif /* MY_DEF_HERE */
 
 	/* Store the LUN value in cmnd, if needed. */
 	if (cmd->device->lun_in_cdb)
@@ -1521,6 +2052,51 @@ static int scsi_dispatch_cmd(struct scsi_cmnd *cmd)
 
 	}
 
+#ifdef MY_ABC_HERE
+	/*
+	 * Power on eunit from deep sleep will fail after another ata command is dispatched,
+	 * so NO ata commands sent to the same eunit can be further dispatched until error handler is done.
+	 */
+	if (host->transportt->is_eunit_deepsleep && host->is_eunit_deepsleep && host->eunit_lock_configured){
+		spin_lock_irqsave(host->peunit_poweron_lock, ulflags);
+		if (*(host->puiata_eh_flag)) {
+			spin_unlock_irqrestore(host->peunit_poweron_lock, ulflags);
+			return SCSI_MLQUEUE_HOST_BUSY;
+		}
+		(*(host->puiata_eh_flag)) ++;
+		spin_unlock_irqrestore(host->peunit_poweron_lock, ulflags);
+		if ((pMaster_host = host->transportt->is_eunit_deepsleep(host))) {
+			/* Need to power on and reset the port by EH. */
+			scsi_schedule_eh(host);
+		}
+		(*(host->puiata_eh_flag)) --;
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef CONFIG_SYNO_SAS_SPINUP_DELAY_DEBUG
+	/* print out START_STOP commands */
+	if (0x1b == cmd->cmnd[0]) {
+		sdev_printk(KERN_ERR, cmd->device,
+				"START_STOP run  - tag %02x %s - %02x %02x %02x %02x %02x %02x\n",
+				cmd->tag, (cmd->cmnd[4]&0x01)?"START":"STOP ",
+				cmd->cmnd[0], cmd->cmnd[1], cmd->cmnd[2],
+				cmd->cmnd[3], cmd->cmnd[4], cmd->cmnd[5]);
+	}
+#endif /* CONFIG_SYNO_SAS_SPINUP_DELAY_DEBUG */
+
+#ifdef MY_ABC_HERE
+	if(cmd_in_ignore_list(cmd)){
+		goto IGNORE;
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	cmd->device->last_accessed = jiffies;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+IGNORE:
+#endif /* MY_ABC_HERE */
 	trace_scsi_dispatch_cmd_start(cmd);
 	rtn = host->hostt->queuecommand(host, cmd);
 	if (rtn) {

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Functions related to sysfs handling
@@ -204,7 +207,11 @@ static ssize_t queue_discard_max_store(struct request_queue *q,
 
 static ssize_t queue_discard_zeroes_data_show(struct request_queue *q, char *page)
 {
+#ifdef MY_ABC_HERE
+	return queue_var_show(1, page);
+#else
 	return queue_var_show(0, page);
+#endif
 }
 
 static ssize_t queue_write_same_max_show(struct request_queue *q, char *page)
@@ -548,6 +555,13 @@ static ssize_t queue_dax_show(struct request_queue *q, char *page)
 	return queue_var_show(blk_queue_dax(q), page);
 }
 
+#ifdef MY_ABC_HERE
+static ssize_t queue_unused_hint_show(struct request_queue *q, char *page)
+{
+	return sprintf(page, "%u\n", test_bit(QUEUE_FLAG_UNUSED_HINT, &q->queue_flags));
+}
+#endif /* MY_ABC_HERE */
+
 #define QUEUE_RO_ENTRY(_prefix, _name)			\
 static struct queue_sysfs_entry _prefix##_entry = {	\
 	.attr	= { .name = _name, .mode = 0444 },	\
@@ -604,6 +618,9 @@ QUEUE_RW_ENTRY(queue_wb_lat, "wbt_lat_usec");
 #ifdef CONFIG_BLK_DEV_THROTTLING_LOW
 QUEUE_RW_ENTRY(blk_throtl_sample_time, "throttle_sample_time");
 #endif
+#ifdef MY_ABC_HERE
+QUEUE_RO_ENTRY(queue_unused_hint, "syno_unused_hint");
+#endif /* MY_ABC_HERE */
 
 /* legacy alias for logical_block_size: */
 static struct queue_sysfs_entry queue_hw_sector_size_entry = {
@@ -659,6 +676,9 @@ static struct attribute *queue_attrs[] = {
 #ifdef CONFIG_BLK_DEV_THROTTLING_LOW
 	&blk_throtl_sample_time_entry.attr,
 #endif
+#ifdef MY_ABC_HERE
+	&queue_unused_hint_entry.attr,
+#endif /* MY_ABC_HERE */
 	NULL,
 };
 

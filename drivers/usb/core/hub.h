@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * usb hub driver head file
@@ -15,6 +18,11 @@
 #include <linux/usb/ch11.h>
 #include <linux/usb/hcd.h>
 #include "usb.h"
+
+#ifdef MY_ABC_HERE
+/* SYNO USB Error Code */
+#define SYNO_CONNECT_BOUNCE 0x400
+#endif /* MY_ABC_HERE */
 
 struct usb_hub {
 	struct device		*intfdev;	/* the "interface" device */
@@ -73,6 +81,16 @@ struct usb_hub {
 	spinlock_t		irq_urb_lock;
 	struct timer_list	irq_urb_retry;
 	struct usb_port		**ports;
+
+#ifdef MY_ABC_HERE
+	struct timer_list       ups_discon_flt_timer;
+	int                     ups_discon_flt_port;
+	unsigned long           ups_discon_flt_last; /* last filtered time */
+#define SYNO_UPS_DISCON_FLT_STATUS_NONE                 0
+#define SYNO_UPS_DISCON_FLT_STATUS_DEFERRED             1
+#define SYNO_UPS_DISCON_FLT_STATUS_TIMEOUT              2
+	unsigned int            ups_discon_flt_status;
+#endif /* MY_ABC_HERE */
 };
 
 /**
@@ -103,9 +121,24 @@ struct usb_port {
 	u8 portnum;
 	u32 quirks;
 	unsigned int is_superspeed:1;
+#ifdef MY_ABC_HERE
+	unsigned int power_cycle_counter;
+#endif /* MY_ABC_HERE */
+#ifdef MY_DEF_HERE
+#define SYNO_USB_PORT_CASTRATED_XHC 0x01
+	unsigned int flag;
+#endif /* MY_DEF_HERE */
 	unsigned int usb3_lpm_u1_permit:1;
 	unsigned int usb3_lpm_u2_permit:1;
+#ifdef MY_ABC_HERE
+	int syno_vbus_gpp;
+	int syno_vbus_gpp_pol;
+#endif /* MY_ABC_HERE */
 };
+
+#ifdef MY_ABC_HERE
+#define SYNO_POWER_CYCLE_TRIES  (3)
+#endif /* MY_ABC_HERE */
 
 #define to_usb_port(_dev) \
 	container_of(_dev, struct usb_port, dev)

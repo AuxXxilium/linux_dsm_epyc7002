@@ -1,0 +1,57 @@
+menu "Network"
+
+config SYNO_SFP_UNSUPPORTED_NOTIFY
+	bool "SFP+ module unsupported notify"
+	default y
+
+config SYNO_SKIP_RXDROP_BY_CORE
+	bool "Skip RX packets drop is increasing"
+	default y
+
+config SYNO_IPV6_RFC_4862
+	bool "IPv6 Stateless Address Autoconfiguration"
+	default y
+
+config SYNO_BONDING_INIT_STATUS
+	bool "Initial the bonding status"
+	default y
+
+config SYNO_BONDING_FIX_ACTIVE
+	bool "Fix a bug in active backup bonding mode"
+	default y
+
+config SYNO_FIX_8023AD_LINK_STATUS
+	bool "Fix 802.3ad link status bug"
+	default y
+
+config SYNO_IPV6_LINKLOCAL
+	bool "Assign an interface to IPV6 link local address automatically."
+	default y
+
+config SYNO_OVS_MODE_REFINEMENT
+	bool "Refine Synology Open vSwitch Mode"
+	default y
+
+config SYNO_NF_NAT_WORKAROUND
+	bool "Fix BUG_ON on nf_nat_setup_info"
+	default y
+
+config SYNO_NET_ALB_FIX_OVERFLOW
+	bool "Fix the overflow bug in alb tx balance mechanism"
+	default y
+
+config SYNO_NET_ALB_USE_64BIT_LOAD
+	bool "use 64 bit varialbe to store load of each tx slave/client"
+	default y
+
+config SYNO_NET_EMULEX_HIDE_VF
+	bool "Not to probe emulex vf by real host"
+	default y
+	depends on BE2NET
+
+config SYNO_AMD_XGBE_PORTING
+	bool "AMD Xgbe driver porting"
+	default n
+	depends on AMD_XGBE
+
+endmenu #Network

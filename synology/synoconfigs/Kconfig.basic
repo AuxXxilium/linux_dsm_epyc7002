@@ -1,0 +1,206 @@
+menu "System Features"
+
+config SYNO_SYSTEM_CALL
+	bool
+	default y
+
+config SYNO_LIBS
+	bool "Build syno lib in lib/synolib/"
+	default y
+
+config SYNO_KWORK_STAT
+	bool "Enable work function stat accounting for kworkers"
+	default y
+	depends on TASK_IO_ACCOUNTING
+
+config SYNO_EXPORT_SYMBOL
+	bool "Export symbols to provide external modules"
+	default y
+
+config SYNO_X86_CORETEMP
+	bool "X86 Core Temperature Detection"
+	default y
+	depends on X86
+
+config SYNO_PORT_MAPPING_V2
+	bool "Refactor Disk Name"
+	depends on SYNO_LIBS
+	select SYNO_OF
+	default y
+
+config SYNO_SWAP_FLAG
+	bool "Avoid misuse Swapon / Swapoff"
+	default y
+
+config SYNO_DATA_CORRECTION
+	bool "Framework of data correction"
+	default n
+
+config SYNO_ISCSI_DEVICE
+	bool "Refactor iSCSI Device Name"
+	default y
+
+config SYNO_ISCSI_DEVICE_PREFIX
+	string "The prefix of iSCSI device"
+	default "iscsi"
+	depends on SYNO_ISCSI_DEVICE
+
+config SYNO_ISCSI_LOOPBACK_DEVICE
+	bool "Loopback Iscsi device name"
+	default y
+	depends on SYNO_ISCSI_DEVICE
+
+config SYNO_DISPLAY_CPUINFO
+	bool "Support display CPU Infomation"
+	default y
+
+config SYNO_MULTI_CPU_NUM
+	int "Support display CPU Number Information"
+	default 2
+	depends on SYNO_PURLEY && SYNO_DISPLAY_CPUINFO
+
+config SYNO_INTERNAL_HD_NUM
+	bool "Internal HDDs"
+	depends on SYNO_OF
+	default n
+
+config SYNO_VIRTIO_SCSI_DEVICE
+	bool "Refactor virtio-scsi Device Name"
+	default y
+	depends on SCSI_VIRTIO && SYNO_PORT_MAPPING_V2
+
+config SYNO_KVMX64_PCI_SLOT_BOOT
+	int "Reserve virtio pci slot for synoboot"
+	default 10
+	depends on SYNO_VIRTIO_SCSI_DEVICE
+
+config SYNO_ECC_NOTIFICATION
+	bool "Add ECC notification support"
+	default y
+	depends on X86_64
+
+config SYNO_LOAD_AVERAGE
+	bool "Split load average into cpu and io part"
+	default y
+
+config SYNO_IOSCHED_DEFAULT_BFQ
+	bool "Set BFQ as default ioscheduler"
+	default y
+	depends on IOSCHED_BFQ
+
+config SYNO_I2C_OF_PROBE
+	bool "driver probe by device tree"
+	default n
+	depends on SYNO_PORT_MAPPING_V2
+
+config SYNO_MULTI_KSWAPD
+	bool "support multiple kswapd"
+	default y
+
+config SYNO_ADJUST_KSWAPD_NICE
+	bool "increase kswapd priority"
+	default y
+
+endmenu #System Features
+
+menu "Boot Arguments"
+
+config SYNO_BOOT_ARGUMENTS
+	bool "Build syno_bootargs which reads kernel args from grub"
+	default y
+
+config SYNO_HW_VERSION
+	bool "Hardware Model String"
+	depends on SYNO_BOOT_ARGUMENTS
+	default y
+
+config SYNO_HW_REVISION
+	bool "Hardware Revision String"
+	depends on SYNO_BOOT_ARGUMENTS
+	default y
+
+config SYNO_INTERNAL_NETIF_NUM
+	bool "Number Of Network Interfaces"
+	depends on SYNO_BOOT_ARGUMENTS
+	default y
+
+config SYNO_MAC_ADDRESS
+	bool "Read MAC Address from bootloader or flash"
+	default y
+	depends on SYNO_INTERNAL_NETIF_NUM
+
+config SYNO_SERIAL
+	bool "Serial Number"
+	depends on SYNO_BOOT_ARGUMENTS
+	default y
+
+endmenu #Boot Arguments
+
+menu "Kernel Core Enhancements"
+
+config SYNO_KERNEL_UTC_TIME
+	bool "Keep UTC Time In Kernel And RTC"
+	default y
+
+config SYNO_SOFTLOCKUP_COUNTER
+	bool "Trigger soft lockup detector in limited times"
+	default y
+	depends on LOCKUP_DETECTOR
+
+config SYNO_SOFTLOCKUP_COUNTER_MAX
+	int "The max number to trigger soft lockup detector."
+	default 10
+	depends on SYNO_SOFTLOCKUP_COUNTER
+
+config SYNO_HARDLOCKUP_PANIC_ENHANCE
+	bool "enhance hardlockup_panic mechanism"
+	default y
+	depends on (SYNO_PURLEY || SYNO_GEMINILAKE) && HARDLOCKUP_DETECTOR
+
+config SYNO_HARDLOCKUP_THRESH_EXTENSION
+	bool "Extend hard lockup threshold."
+	default n
+	depends on HARDLOCKUP_DETECTOR
+
+config SYNO_KVMX64_MQ_TIMEOUT
+	int "The default seconds before a multi-queue block request timeout"
+	default 1024
+	depends on (SYNO_KVMX64 || SYNO_KVMX64SOFS || SYNO_KVMX64V2)
+
+config SYNO_PRINT_BACKTRACE_ON_LOCKUP
+	bool "Print backtrace on soft and hard lockup"
+	default y
+
+config SYNO_DUMPSTACK_SHOW_FUNC_ADDR
+	bool "Print function address on call trace"
+	default y
+	depends on !RANDOMIZE_BASE
+
+config SYNO_HUNG_TASK_ADJUSTMENT
+	bool "Record hung task count"
+	depends on DETECT_HUNG_TASK
+	default Y
+
+config SYNO_DEFAULT_HUNG_TASK_WARNINGS
+	int "Default warnning call stack count for hung task detection"
+	depends on SYNO_HUNG_TASK_ADJUSTMENT
+	default 300
+
+config SYNO_DEFAULT_HUNG_TASK_RESET_PERIOD
+	int "Default reset period of warning call stack count for hung task detection"
+	depends on SYNO_HUNG_TASK_ADJUSTMENT
+	default 360
+
+config SYNO_ISCSI_DEAD_LOCK_BH_ISSUE
+	bool "Replace spin_lock_bh with spin_lock_irqsave in libiscsi"
+	default y
+
+config SYNO_CFS_CPU_LOAD_IMBALANCE
+	bool "fix imbalance caused by redundant wakeup migration"
+	default y
+
+config SYNO_BLOCK_SOFTIRQ_ON_STACK
+	bool "fix imbalance caused by redundant wakeup migration"
+	default y
+
+endmenu #Kernel Core Enhancements

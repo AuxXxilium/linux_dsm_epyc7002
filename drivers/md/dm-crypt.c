@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  * Copyright (C) 2003 Jana Saout <jana@saout.de>
  * Copyright (C) 2004 Clemens Fruhwirth <clemens@endorphin.org>
@@ -216,6 +219,11 @@ struct crypt_config {
 	struct bio_set bs;
 	struct mutex bio_alloc_lock;
 
+#ifdef MY_ABC_HERE
+	atomic_t syno_io_count;
+	wait_queue_head_t	syno_wait_for_io_limit;
+#endif /* MY_ABC_HERE */
+
 	u8 *authenc_key; /* space for keys in authenc() format (if used) */
 	u8 key[];
 };
@@ -223,6 +231,11 @@ struct crypt_config {
 #define MIN_IOS		64
 #define MAX_TAG_SIZE	480
 #define POOL_ENTRY_SIZE	512
+
+#ifdef MY_ABC_HERE
+#define SYNO_IO_LIMIT_MAX	8192
+#define SYNO_IO_LIMIT_THRESHOLD	128
+#endif /* MY_ABC_HERE */
 
 static DEFINE_SPINLOCK(dm_crypt_clients_lock);
 static unsigned dm_crypt_clients_n = 0;
@@ -1758,6 +1771,10 @@ static void crypt_dec_pending(struct dm_crypt_io *io)
 		kfree(io->integrity_metadata);
 
 	base_bio->bi_status = error;
+#ifdef MY_ABC_HERE
+	if (atomic_dec_return(&cc->syno_io_count) <= (SYNO_IO_LIMIT_MAX - SYNO_IO_LIMIT_THRESHOLD))
+		wake_up(&cc->syno_wait_for_io_limit);
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * If we are running this function from our tasklet,
@@ -3323,6 +3340,14 @@ static int crypt_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	}
 	wake_up_process(cc->write_thread);
 
+#ifdef MY_ABC_HERE
+	atomic_set(&cc->syno_io_count, 0);
+	init_waitqueue_head(&cc->syno_wait_for_io_limit);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	ti->num_unused_hint_bios = 1;
+#endif /* MY_ABC_HERE */
 	ti->num_flush_bios = 1;
 	ti->limit_swap_bios = true;
 
@@ -3344,6 +3369,9 @@ static int crypt_map(struct dm_target *ti, struct bio *bio)
 	 * - for REQ_OP_DISCARD caller must use flush if IO ordering matters
 	 */
 	if (unlikely(bio->bi_opf & REQ_PREFLUSH ||
+#ifdef MY_ABC_HERE
+	    bio_op(bio) == REQ_OP_UNUSED_HINT ||
+#endif /* MY_ABC_HERE */
 	    bio_op(bio) == REQ_OP_DISCARD)) {
 		bio_set_dev(bio, cc->dev->bdev);
 		if (bio_sectors(bio))
@@ -3368,6 +3396,11 @@ static int crypt_map(struct dm_target *ti, struct bio *bio)
 
 	if (unlikely(bio->bi_iter.bi_size & (cc->sector_size - 1)))
 		return DM_MAPIO_KILL;
+
+#ifdef MY_ABC_HERE
+	wait_event(cc->syno_wait_for_io_limit, atomic_read(&cc->syno_io_count) <= SYNO_IO_LIMIT_MAX);
+	atomic_inc(&cc->syno_io_count);
+#endif /* MY_ABC_HERE */
 
 	io = dm_per_bio_data(bio, cc->per_bio_data_size);
 	crypt_io_init(io, cc, bio, dm_target_offset(ti, bio->bi_iter.bi_sector));

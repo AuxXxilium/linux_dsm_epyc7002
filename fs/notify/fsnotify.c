@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Copyright (C) 2008 Red Hat, Inc., Eric Paris <eparis@redhat.com>
@@ -13,6 +16,11 @@
 
 #include <linux/fsnotify_backend.h>
 #include "fsnotify.h"
+
+#ifdef MY_ABC_HERE
+#include <linux/nsproxy.h>
+extern struct rw_semaphore namespace_sem;
+#endif /* MY_ABC_HERE */
 
 /*
  * Clear all of the marks on an inode when it is being evicted from core
@@ -197,6 +205,9 @@ int __fsnotify_parent(struct dentry *dentry, __u32 mask, const void *data,
 	 * Do they care about any event at all?
 	 */
 	if (!inode->i_fsnotify_marks && !inode->i_sb->s_fsnotify_marks &&
+#ifdef MY_ABC_HERE
+	    (!mnt || !mnt->mnt_fsnotify_syno_marks) &&
+#endif /* MY_ABC_HERE */
 	    (!mnt || !mnt->mnt_fsnotify_marks) && !parent_watched)
 		return 0;
 
@@ -494,6 +505,9 @@ int fsnotify(__u32 mask, const void *data, int data_type, struct inode *dir,
 	 */
 	if (!sb->s_fsnotify_marks &&
 	    (!mnt || !mnt->mnt_fsnotify_marks) &&
+#ifdef MY_ABC_HERE
+	    (!mnt || !mnt->mnt_fsnotify_syno_marks) &&
+#endif /* MY_ABC_HERE */
 	    (!inode || !inode->i_fsnotify_marks) &&
 	    (!parent || !parent->i_fsnotify_marks))
 		return 0;
@@ -501,6 +515,10 @@ int fsnotify(__u32 mask, const void *data, int data_type, struct inode *dir,
 	marks_mask = sb->s_fsnotify_mask;
 	if (mnt)
 		marks_mask |= mnt->mnt_fsnotify_mask;
+#ifdef MY_ABC_HERE
+	if (mnt)
+		marks_mask |= mnt->mnt_fsnotify_syno_mask;
+#endif /* MY_ABC_HERE */
 	if (inode)
 		marks_mask |= inode->i_fsnotify_mask;
 	if (parent)
@@ -522,6 +540,10 @@ int fsnotify(__u32 mask, const void *data, int data_type, struct inode *dir,
 	if (mnt) {
 		iter_info.marks[FSNOTIFY_OBJ_TYPE_VFSMOUNT] =
 			fsnotify_first_mark(&mnt->mnt_fsnotify_marks);
+#ifdef MY_ABC_HERE
+		iter_info.marks[FSNOTIFY_OBJ_TYPE_SYNO_VFSMOUNT] =
+			fsnotify_first_mark(&mnt->mnt_fsnotify_syno_marks);
+#endif /* MY_ABC_HERE */
 	}
 	if (inode) {
 		iter_info.marks[FSNOTIFY_OBJ_TYPE_INODE] =
@@ -553,6 +575,131 @@ out:
 	return ret;
 }
 EXPORT_SYMBOL_GPL(fsnotify);
+
+#ifdef MY_ABC_HERE
+/*
+ * notify_event
+ *
+ * get notify event path by given vfsmnt and dentry.
+ * notify event according to procedded dentry path.
+ *
+ * */
+static void notify_event(struct vfsmount *vfsmnt, struct dentry *dentry, __u32 mask)
+{
+	struct path path;
+
+	memset(&path, 0, sizeof(struct path));
+
+	path.mnt = vfsmnt;
+	path.dentry = dentry;
+
+	__SYNONotify(mask, &path, FSNOTIFY_EVENT_PATH, NULL, 0);
+}
+
+/*
+ * Like fsnotify(), but in most cases you use SYNONotify().
+ * For now the only direct caller is fsnotify_move().
+ */
+void __SYNONotify(__u32 mask, void *data, int data_type, const char *file_path, u32 cookie)
+{
+	struct fsnotify_iter_info iter_info = {};
+	struct qstr qstr_path = {};
+	struct mount *mnt = NULL;
+	__u32 test_mask = (mask & ALL_FSNOTIFY_EVENTS);
+
+	if (unlikely(!data))
+		return;
+
+	if (!((struct path *)data)->mnt)
+		return;
+
+	mnt = real_mount(((struct path *)data)->mnt);
+	if (!(test_mask & mnt->mnt_fsnotify_syno_mask))
+		return;
+
+	iter_info.srcu_idx = srcu_read_lock(&fsnotify_mark_srcu);
+
+	iter_info.marks[FSNOTIFY_OBJ_TYPE_SYNO_VFSMOUNT] =
+		fsnotify_first_mark(&mnt->mnt_fsnotify_syno_marks);
+
+	while (fsnotify_iter_select_report_types(&iter_info)) {
+		/*
+		 * Use qstr to carry path, not name.
+		 * The path itself is not stored in qstr, so keep qstr_path.len = 0,
+		 * we are not using len in synotify_handle_event().
+		 */
+		qstr_path.name = file_path;
+
+		/*
+		 * In upstream's fsnotify(), they only report error in permission events.
+		 * Since we have no permission events in synotify, so ignore all errors here.
+		 */
+		send_to_group(mask, data, data_type, NULL, &qstr_path,
+			cookie, &iter_info);
+
+		fsnotify_iter_next(&iter_info);
+	}
+
+	srcu_read_unlock(&fsnotify_mark_srcu, iter_info.srcu_idx);
+	return;
+}
+EXPORT_SYMBOL(__SYNONotify);
+
+/*
+ * Like fsnotify(), but find "struct mount" and "struct path",
+ * then call __SYNONotify() with type "FSNOTIFY_EVENT_PATH" to do the real work.
+ */
+int SYNONotify(struct dentry *dentry, __u32 mask)
+{
+	struct list_head *head = NULL;
+	struct nsproxy *nsproxy = NULL;
+	int ret = 0;
+
+	if (!dentry) {
+		ret = -EINVAL;
+		goto ERR;
+	}
+
+	if (!dentry->d_sb) {
+		ret = -EINVAL;
+		goto ERR;
+	}
+
+	nsproxy = current->nsproxy;
+	if (nsproxy) {
+		struct mnt_namespace *mnt_space = nsproxy->mnt_ns;
+		if (mnt_space) {
+			__u32 test_mask = (mask & ~FS_EVENT_ON_CHILD);
+			struct mount *mnt;
+			struct vfsmount *vfsmnt;
+
+			down_read(&namespace_sem);
+			spin_lock(&mnt_space->ns_lock);
+			list_for_each(head, &mnt_space->list) {
+				mnt = list_entry(head, struct mount, mnt_list);
+				if (mnt && mnt->mnt.mnt_sb == dentry->d_sb) {
+					// A quick filter to minimize spinlock/unlock.
+					if (!(test_mask & mnt->mnt_fsnotify_syno_mask))
+						continue;
+
+					vfsmnt = &mnt->mnt;
+					mntget(vfsmnt);
+					spin_unlock(&mnt_space->ns_lock);
+					notify_event(vfsmnt, dentry, mask); // NOTE: ignore error
+					spin_lock(&mnt_space->ns_lock);
+					mntput(vfsmnt);
+				}
+			}
+			spin_unlock(&mnt_space->ns_lock);
+			up_read(&namespace_sem);
+		}
+	}
+
+ERR:
+	return ret;
+}
+EXPORT_SYMBOL(SYNONotify);
+#endif /* MY_ABC_HERE */
 
 static __init int fsnotify_init(void)
 {

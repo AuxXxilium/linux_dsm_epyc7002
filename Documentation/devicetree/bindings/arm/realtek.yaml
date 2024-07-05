@@ -55,6 +55,20 @@ properties:
               - realtek,mjolnir # Realtek Mjolnir EVB
           - const: realtek,rtd1619
 
+#if defined(CONFIG_SYNO_LSP_RTD1619B)
+      # RTD1319 SoC based boards
+      - items:
+          - enum:
+              - realtek,pym-particles # Realtek Pym Particles EVB
+          - const: realtek,rtd1319
+
+      # RTD1619B SoC based boards
+      - items:
+          - enum:
+              - realtek,bleeding-edge # Realtek Bleeding Edge EVB
+          - const: realtek,rtd1619b
+
+#endif /* CONFIG_SYNO_LSP_RTD1619B */
 additionalProperties: true
 
 ...

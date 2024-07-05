@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Copyright (c) 2000-2020 Synology Inc. All rights reserved.
+
+# shellcheck source=/dev/null
+source "SynoBuildConf/_env"
+source "SynoBuildConf/_modules"
+source "SynoBuildConf/_platform"
+
+DebDevBuild="${DebDevBuild:-/deb/build}"
+
+install_dev_image()
+{
+    local _image
+
+    # FIXME: moved to build ?
+    platform_customize_image
+
+    _image="$(platform_image_name)"
+    if [ -z "$_image" ]; then
+        ERROR "image '$_image' not found"
+        return 1
+    fi
+
+    install -Dm644 "$_image"        "$DebDevBuild/image/zImage"
+    install -Dm644 "vmlinux"        "$DebDevBuild/image/synodebug/vmlinux"
+    install -Dm644 "System.map"     "$DebDevBuild/image/synodebug/System.map"
+    install -Dm644 "Module.symvers" "$DebDevBuild/image/synodebug/Module.symvers"
+}
+
+install_dev_modules()
+{
+    if [ ! -f "modules.order" ]; then
+        ERROR "'modules.order' not found"
+        return 1
+    fi
+
+    local _mod _mod_name
+    declare -A _built_modules
+
+    while read -r _mod; do
+        _built_modules["$_mod"]=
+    done < "modules.order"
+
+    for _mod in $(module_list); do
+        if [ ! -f "$_mod" ]; then
+            WARNING "Not found: $_mod"
+            continue
+        fi
+
+        unset "_built_modules[$_mod]"
+        _mod_name="$(basename "$_mod")"
+
+        install -Dm644 "$_mod" "$DebDevBuild/image/modules/$_mod_name"
+        install -Dm644 "$_mod" "$DebDevBuild/image/modulesdebug/$_mod_name"
+        $STRIP -d "$DebDevBuild/image/modules/$_mod_name"
+    done
+
+    for _mod in "${!_built_modules[@]}"; do
+        WARNING "Not installed: $_mod"
+    done
+}
+
+install_dev_kernel_devel()
+{
+    # shellcheck source=/dev/null
+    source "${ScriptsDir:-}/include/kernel-devel"
+
+    # FIXME: get rid of "${ScriptsDir:-}/include/kernel-devel"
+
+    # for kmsynoacl
+    install -Dm644 "fs/syno_acl.h" "$WRKDIR/fs/synoacl_int.h"
+
+    install -Dm644 "include/linux/syno_fs.h" "$WRKDIR/include/linux/syno_fs.h"
+
+    install -Dm644 "include/linux/syno_gpio.h" "$WRKDIR/include/linux/syno_gpio.h"
+    install -Dm644 "include/linux/syno_fdt.h" "$WRKDIR/include/linux/syno_fdt.h"
+    install -Dm755 "scripts/sign-file" "${DebDevBuild}/usr/syno/bin/sign-file"
+}
+
+
+INFO "Install kernel image for packing and debugging"
+install_dev_image
+
+INFO "Install kernel modules for packing and debugging"
+install_dev_modules
+
+INFO "Install stuff for kernel module development"
+install_dev_kernel_devel
+

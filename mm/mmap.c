@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * mm/mmap.c
@@ -49,6 +52,7 @@
 #include <linux/sched/mm.h>
 
 #include <linux/uaccess.h>
+
 #include <asm/cacheflush.h>
 #include <asm/tlb.h>
 #include <asm/mmu_context.h>
@@ -179,7 +183,11 @@ static struct vm_area_struct *remove_vma(struct vm_area_struct *vma)
 	if (vma->vm_ops && vma->vm_ops->close)
 		vma->vm_ops->close(vma);
 	if (vma->vm_file)
+#ifdef MY_ABC_HERE
+		vma_fput(vma);
+#else
 		fput(vma->vm_file);
+#endif /* MY_ABC_HERE */
 	mpol_put(vma_policy(vma));
 	vm_area_free(vma);
 	return next;
@@ -951,7 +959,11 @@ again:
 	if (remove_next) {
 		if (file) {
 			uprobe_munmap(next, next->vm_start, next->vm_end);
+#ifdef MY_ABC_HERE
+			vma_fput(vma);
+#else
 			fput(file);
+#endif /* MY_ABC_HERE */
 		}
 		if (next->anon_vma)
 			anon_vma_merge(vma, next);
@@ -1897,8 +1909,13 @@ out:
 	return addr;
 
 unmap_and_free_vma:
+#ifdef MY_ABC_HERE
+	vma_fput(vma);
+	vma->vm_file = NULL;
+#else
 	vma->vm_file = NULL;
 	fput(file);
+#endif /* MY_ABC_HERE */
 
 	/* Undo any partial mapping done by a device driver. */
 	unmap_region(mm, vma, prev, vma->vm_start, vma->vm_end);
@@ -2756,8 +2773,13 @@ int __split_vma(struct mm_struct *mm, struct vm_area_struct *vma,
 	if (err)
 		goto out_free_mpol;
 
+#ifdef MY_ABC_HERE
+	if (new->vm_file)
+		vma_get_file(new);
+#else
 	if (new->vm_file)
 		get_file(new->vm_file);
+#endif /* MY_ABC_HERE */
 
 	if (new->vm_ops && new->vm_ops->open)
 		new->vm_ops->open(new);
@@ -2775,8 +2797,13 @@ int __split_vma(struct mm_struct *mm, struct vm_area_struct *vma,
 	/* Clean everything up if vma_adjust failed. */
 	if (new->vm_ops && new->vm_ops->close)
 		new->vm_ops->close(new);
+#ifdef MY_ABC_HERE
+	if (new->vm_file)
+		vma_fput(new);
+#else
 	if (new->vm_file)
 		fput(new->vm_file);
+#endif /* MY_ABC_HERE */
 	unlink_anon_vmas(new);
  out_free_mpol:
 	mpol_put(vma_policy(new));
@@ -2970,6 +2997,9 @@ SYSCALL_DEFINE5(remap_file_pages, unsigned long, start, unsigned long, size,
 	unsigned long populate = 0;
 	unsigned long ret = -EINVAL;
 	struct file *file;
+#ifdef MY_ABC_HERE
+	struct file *prfile;
+#endif /* MY_ABC_HERE */
 
 	pr_warn_once("%s (%d) uses deprecated remap_file_pages() syscall. See Documentation/vm/remap_file_pages.rst.\n",
 		     current->comm, current->pid);
@@ -3044,10 +3074,35 @@ SYSCALL_DEFINE5(remap_file_pages, unsigned long, start, unsigned long, size,
 		}
 	}
 
+#ifdef MY_ABC_HERE
+	vma_get_file(vma);
+	file = vma->vm_file;
+	prfile = vma->vm_prfile;
+	ret = do_mmap(vma->vm_file, start, size,
+			prot, flags, pgoff, &populate, NULL);
+	if (!IS_ERR_VALUE(ret) && file && prfile) {
+		struct vm_area_struct *new_vma;
+
+		new_vma = find_vma(mm, ret);
+		if (!new_vma->vm_prfile)
+			new_vma->vm_prfile = prfile;
+		if (new_vma != vma)
+			get_file(prfile);
+	}
+	/*
+	 * two fput()s instead of vma_fput(vma),
+	 * coz vma may not be available anymore.
+	 */
+	fput(file);
+	if (prfile)
+		fput(prfile);
+#else
 	file = get_file(vma->vm_file);
 	ret = do_mmap(vma->vm_file, start, size,
 			prot, flags, pgoff, &populate, NULL);
 	fput(file);
+#endif /* MY_ABC_HERE */
+
 out:
 	mmap_write_unlock(mm);
 	if (populate)
@@ -3333,8 +3388,13 @@ struct vm_area_struct *copy_vma(struct vm_area_struct **vmap,
 			goto out_free_vma;
 		if (anon_vma_clone(new_vma, vma))
 			goto out_free_mempol;
+#ifdef MY_ABC_HERE
+		if (new_vma->vm_file)
+			vma_get_file(new_vma);
+#else
 		if (new_vma->vm_file)
 			get_file(new_vma->vm_file);
+#endif /* MY_ABC_HERE */
 		if (new_vma->vm_ops && new_vma->vm_ops->open)
 			new_vma->vm_ops->open(new_vma);
 		vma_link(mm, new_vma, prev, rb_link, rb_parent);

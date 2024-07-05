@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _SCSI_SCSI_HOST_H
 #define _SCSI_SCSI_HOST_H
@@ -28,6 +31,24 @@ struct scsi_transport_template;
 #define MODE_UNKNOWN 0x00
 #define MODE_INITIATOR 0x01
 #define MODE_TARGET 0x02
+
+#ifdef MY_ABC_HERE
+enum {
+	SYNO_PWR_OP_POWER_OFF 	= 0,
+	SYNO_PWR_OP_POWER_ON 	= (1 << 0),
+	SYNO_PWR_OP_DEEPSLEEP 	= (1 << 1),
+	SYNO_PWR_OP_WAKE	 	= (1 << 2),
+};
+#endif /* MY_ABC_HERE */
+
+#if defined(MY_ABC_HERE)
+enum {
+	SYNO_PORT_TYPE_SATA = 1,
+	SYNO_PORT_TYPE_USB = 2,
+	SYNO_PORT_TYPE_SAS = 3,
+};
+#endif /* defined(MY_ABC_HERE) */
+
 
 struct scsi_host_template {
 	struct module *module;
@@ -486,6 +507,20 @@ struct scsi_host_template {
 
 	/* Delay for runtime autosuspend */
 	int rpm_autosuspend_delay;
+
+#ifdef MY_ABC_HERE
+	int  syno_port_type;
+	void (*syno_sdev_info_enum)(struct scsi_device *);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_DEF_HERE
+	int (*syno_set_sashost_disk_led)(struct scsi_device *, int);
+#endif
+
+#ifdef MY_DEF_HERE
+	void (*syno_device_list_set)(struct scsi_device *, int, const char*);
+#endif /* MY_DEF_HERE */
+
 };
 
 /*
@@ -691,6 +726,15 @@ struct Scsi_Host {
 	 * Needed just in case we have virtual hosts.
 	 */
 	struct device *dma_dev;
+
+#ifdef MY_ABC_HERE
+	spinlock_t	eunit_poweron_lock;
+	spinlock_t	*peunit_poweron_lock;
+	int		eunit_lock_configured;
+	unsigned int	uiata_eh_flag;
+	unsigned int	*puiata_eh_flag;
+	int		is_eunit_deepsleep;
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * We should ensure that this is aligned, both for better performance

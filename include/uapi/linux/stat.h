@@ -1,7 +1,13 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _UAPI_LINUX_STAT_H
 #define _UAPI_LINUX_STAT_H
 
+#ifndef __KERNEL__
+#include <linux/syno_autoconf.h>
+#endif
 #include <linux/types.h>
 
 #if defined(__KERNEL__) || !defined(__GLIBC__) || (__GLIBC__ < 2)
@@ -42,6 +48,63 @@
 #define S_IXOTH 00001
 
 #endif
+
+#ifdef MY_ABC_HERE
+/* Ext4 has only 16 bits for archive bit. */
+#define S2_IARCHIVE                     (1 << 0)    // synology backup archive bit
+#define S2_SMB_ARCHIVE                  (1 << 1)    // samba backup archive bit (some other windows ap)
+#define S2_SMB_HIDDEN                   (1 << 2)    // hidden attribute in samba
+#define S2_SMB_SYSTEM                   (1 << 3)    // system attribute in samba
+#define S3_IARCHIVE                     (1 << 4)    // synology S3 backup archive bit (amazon ap)
+
+#ifdef MY_ABC_HERE
+#define S2_SMB_READONLY                 (1 << 5)    // read-only attribute of samba
+#define S2_SYNO_ACL_INHERIT             (1 << 6)    // inherited from parent
+#define S2_SYNO_ACL_IS_OWNER_GROUP      (1 << 7)    // owner tag of SYNO ACL
+#define S2_SYNO_ACL_EXIST               (1 << 8)    // is there SYNO ACL
+#define S2_SYNO_ACL_SUPPORT             (1 << 9)    // is support ACL
+#define ALL_SYNO_ACL_ARCHIVE            (S2_SMB_READONLY|S2_SYNO_ACL_INHERIT|S2_SYNO_ACL_IS_OWNER_GROUP|S2_SYNO_ACL_EXIST|S2_SYNO_ACL_SUPPORT)
+#endif /* MY_ABC_HERE */
+
+#define S2_SMB_SPARSE                   (1<<10)     // sparse file support bit used by samba 4.4
+
+#define ALL_IARCHIVE                    (S2_IARCHIVE|S3_IARCHIVE)                   // All synology archive bit.
+#define ALL_SYNO_ARCHIVE                (S2_IARCHIVE|S2_SMB_ARCHIVE|S3_IARCHIVE)    // All backup archive bit, if there is new one, it should be added here.
+
+#ifdef MY_ABC_HERE
+#define ALL_ARCHIVE_BIT                 (S2_IARCHIVE|S2_SMB_ARCHIVE|S2_SMB_HIDDEN|S2_SMB_SYSTEM|S3_IARCHIVE|ALL_SYNO_ACL_ARCHIVE|S2_SMB_SPARSE)
+#define ALL_SMB                         (S2_SMB_ARCHIVE|S2_SMB_HIDDEN|S2_SMB_SYSTEM|S2_SMB_READONLY|S2_SMB_SPARSE)
+#else /* MY_ABC_HERE */
+#define ALL_ARCHIVE_BIT                 (S2_IARCHIVE|S2_SMB_ARCHIVE|S2_SMB_HIDDEN|S2_SMB_SYSTEM|S3_IARCHIVE|S2_SMB_SPARSE)
+#define ALL_SMB                         (S2_SMB_ARCHIVE|S2_SMB_HIDDEN|S2_SMB_SYSTEM|S2_SMB_SPARSE)
+#endif /* MY_ABC_HERE */
+
+#define ARCHIVE_BIT_MASK		GENMASK(14, 0)
+
+#ifdef MY_ABC_HERE
+#define EXT4_INODE_SWAPFILE_FLAG	(1<<15)
+#endif /* MY_ABC_HERE */
+
+#endif /* MY_ABC_HERE */
+
+
+#ifdef MY_ABC_HERE
+/*
+ * flags: decide which information to get.
+ */
+#define SYNOST_STAT                     0x00000001  /* stat */
+#define SYNOST_ARCHIVE_BIT              0x00000002  /* Archive Bit */
+#define SYNOST_ARCHIVE_VER              0x00000004  /* Archive Version (aka Backup Version) */
+#define SYNOST_CREATE_TIME              0x00000008  /* Create Time */
+#define SYNOST_COMPRESSION              0x00000010  /* Compression Type */
+#define SYNOST_IS_INLINE                0x00000020  /* Is inline file? */
+#define SYNOST_OFFLINE                  0x00000040  /* currently, only c2fs support offline */
+
+#define SYNOST_ALL                      (SYNOST_STAT|SYNOST_ARCHIVE_BIT|SYNOST_ARCHIVE_VER|SYNOST_CREATE_TIME|SYNOST_COMPRESSION|SYNOST_OFFLINE)
+#define SYNOST_IS_CASELESS              0x10000000  /* Is Caseless */
+
+#define SYNOST_FLAG_OFFLINE             0x00000001  /* Flags indicating inode offline status. Only used by c2fs */
+#endif /* MY_ABC_HERE */
 
 /*
  * Timestamp structure for the timestamps in struct statx.

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * k10temp.c - AMD Family 10h/11h/12h/14h/15h/16h/17h
@@ -392,6 +395,44 @@ static void k10temp_get_ccd_support(struct pci_dev *pdev,
 			data->show_temp |= BIT(TCCD_BIT(i));
 	}
 }
+
+#ifdef MY_ABC_HERE
+#include <linux/synobios.h>
+int syno_k10cpu_temperature(struct _SynoCpuTemp *pCpuTemp)
+{
+	struct pci_dev *pdev = NULL;
+	u32 regval;
+	int temp;
+
+	if (NULL == pCpuTemp) {
+		printk("coretemp: parameter error.\n");
+		return -1;
+	}
+
+#if defined(MY_DEF_HERE) || defined(MY_DEF_HERE)
+	pdev = pci_get_device(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_17H_M10H_DF_F3, NULL);
+#elif defined(MY_ABC_HERE) || defined(MY_DEF_HERE)
+	pdev = pci_get_device(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_17H_M30H_DF_F3, NULL);
+#elif defined(MY_DEF_HERE)
+	pdev = pci_get_device(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_19H_DF_F3, NULL);
+#endif /* MY_DEF_HERE || MY_DEF_HERE || MY_ABC_HERE || MY_DEF_HERE */
+
+	if (!pdev)
+		return -ENODEV;
+
+	read_tempreg_nb_zen(pdev, &regval);
+
+	temp = (regval >> 21) * 125;
+	if (regval & 0x80000)
+		temp -= 49000;
+
+	pCpuTemp->cpu_temp[0] = temp / 1000;
+	pCpuTemp->cpu_num = 1;
+
+	return 0;
+}
+EXPORT_SYMBOL(syno_k10cpu_temperature);
+#endif /* MY_ABC_HERE */
 
 static int k10temp_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {

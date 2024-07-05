@@ -62,3 +62,13 @@ config SPI_INTEL_SPI_PLATFORM
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called intel-spi-platform.
+
+if SYNO_LSP_RTD1619B
+config SPI_RTK_SFC
+        tristate "Realtek SPI-NOR Flash Controller(SFC)"
+        depends on ARCH_REALTEK
+        depends on HAS_IOMEM && HAS_DMA
+        help
+          This enables support for Realtek SPI-NOR flash controller.
+endif # SYNO_LSP_RTD1619B
+

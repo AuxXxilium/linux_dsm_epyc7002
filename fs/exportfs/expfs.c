@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) Neil Brown 2002
@@ -17,6 +20,10 @@
 #include <linux/namei.h>
 #include <linux/sched.h>
 #include <linux/cred.h>
+
+#ifdef MY_ABC_HERE
+#include <linux/magic.h>
+#endif /* MY_ABC_HERE */
 
 #define dprintk(fmt, args...) do{}while(0)
 
@@ -47,7 +54,12 @@ find_acceptable_alias(struct dentry *result,
 	struct dentry *dentry, *toput = NULL;
 	struct inode *inode;
 
+#ifdef MY_ABC_HERE
+	// a disconnected dentry isn't accepatable for ACL inheritance.
+	if (!(IS_SYNOACL(result) && (result->d_flags & DCACHE_DISCONNECTED)) && acceptable(context, result))
+#else /* MY_ABC_HERE */
 	if (acceptable(context, result))
+#endif /* MY_ABC_HERE */
 		return result;
 
 	inode = result->d_inode;
@@ -57,7 +69,12 @@ find_acceptable_alias(struct dentry *result,
 		spin_unlock(&inode->i_lock);
 		if (toput)
 			dput(toput);
+#ifdef MY_ABC_HERE
+		// a disconnected dentry isn't accepatable for ACL inheritance.
+		if (dentry != result && !(IS_SYNOACL(result) && (result->d_flags & DCACHE_DISCONNECTED)) && acceptable(context, dentry)) {
+#else /* MY_ABC_HERE */
 		if (dentry != result && acceptable(context, dentry)) {
+#endif /* MY_ABC_HERE */
 			dput(result);
 			return dentry;
 		}
@@ -443,6 +460,33 @@ struct dentry *exportfs_decode_fh(struct vfsmount *mnt, struct fid *fid,
 	 * file handle is stale or to get a reference to an inode without
 	 * risking the high overhead caused by directory reconnect.
 	 */
+#ifdef MY_ABC_HERE
+	/*
+	 * a disconnected dentry isn't acceptable for locker to determine it in
+	 * whitelist or not. we can not return it.
+	 */
+	if (!acceptable) {
+		struct inode *inode = d_inode(result);
+
+		if (inode->i_op->syno_locker_state_get && (result->d_flags & DCACHE_DISCONNECTED)) {
+			err = -EACCES;
+			goto err_result;
+		}
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	/*
+	 * a disconnected dentry isn't accepatable for ACL inheritance. we can not return it.
+	 */
+	if (!acceptable) {
+		if (IS_SYNOACL(result) && (result->d_flags & DCACHE_DISCONNECTED)) {
+			err = -EACCES;
+			goto err_result;
+		}
+	}
+#endif /* MY_ABC_HERE */
+
 	if (!acceptable)
 		return result;
 
@@ -491,6 +535,19 @@ struct dentry *exportfs_decode_fh(struct vfsmount *mnt, struct fid *fid,
 		 * file handle.  If this fails we'll have to give up.
 		 */
 		err = -ESTALE;
+
+#ifdef MY_ABC_HERE
+		/* Let btrfs use get_parent to get the real parent of file.
+		 * ext4 cannot use get_parent for file, it's only work on dir.
+		 * and non-btrfs is protect by subtreecheck which can get parent from fh_to_parent.
+		 */
+		if (result->d_sb->s_magic == BTRFS_SUPER_MAGIC) {
+			target_dir = nop->get_parent(result);
+			if (target_dir && !IS_ERR(target_dir))
+				goto reconnect_target_dir;
+		}
+#endif /* MY_ABC_HERE */
+
 		if (!nop->fh_to_parent)
 			goto err_result;
 
@@ -502,6 +559,9 @@ struct dentry *exportfs_decode_fh(struct vfsmount *mnt, struct fid *fid,
 		if (IS_ERR(target_dir))
 			goto err_result;
 
+#ifdef MY_ABC_HERE
+reconnect_target_dir:
+#endif /* MY_ABC_HERE */
 		/*
 		 * And as usual we need to make sure the parent directory is
 		 * connected to the filesystem root.  The VFS really doesn't

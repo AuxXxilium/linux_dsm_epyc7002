@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2007 Oracle.  All rights reserved.
@@ -231,6 +234,9 @@ static int __btrfs_add_ordered_extent(struct btrfs_inode *inode, u64 file_offset
 	spin_lock(&root->ordered_extent_lock);
 	list_add_tail(&entry->root_extent_list,
 		      &root->ordered_extents);
+#ifdef MY_ABC_HERE
+	atomic64_inc(&fs_info->syno_ordered_extent_nr);
+#endif /* MY_ABC_HERE */
 	root->nr_ordered_extents++;
 	if (root->nr_ordered_extents == 1) {
 		spin_lock(&fs_info->ordered_root_lock);
@@ -348,6 +354,10 @@ int btrfs_dec_test_first_ordered_pending(struct btrfs_inode *inode,
 		btrfs_crit(fs_info,
 			   "bad ordered accounting left %llu size %llu",
 			   entry->bytes_left, to_dec);
+#ifdef MY_ABC_HERE
+		/* avoid underflow */
+		to_dec = entry->bytes_left;
+#endif /* MY_ABC_HERE */
 	}
 	entry->bytes_left -= to_dec;
 	if (!uptodate)
@@ -411,6 +421,10 @@ have_entry:
 		btrfs_crit(inode->root->fs_info,
 			   "bad ordered accounting left %llu size %llu",
 		       entry->bytes_left, io_size);
+#ifdef MY_ABC_HERE
+		/* avoid underflow */
+		io_size = entry->bytes_left;
+#endif /* MY_ABC_HERE */
 	}
 	entry->bytes_left -= io_size;
 	if (!uptodate)
@@ -524,6 +538,10 @@ void btrfs_remove_ordered_extent(struct btrfs_inode *btrfs_inode,
 
 	spin_lock(&root->ordered_extent_lock);
 	list_del_init(&entry->root_extent_list);
+#ifdef MY_ABC_HERE
+	atomic64_dec(&fs_info->syno_ordered_extent_nr);
+	atomic64_inc(&fs_info->syno_ordered_extent_processed_nr);
+#endif /* MY_ABC_HERE */
 	root->nr_ordered_extents--;
 
 	trace_btrfs_ordered_extent_remove(btrfs_inode, entry);
@@ -536,6 +554,10 @@ void btrfs_remove_ordered_extent(struct btrfs_inode *btrfs_inode,
 	}
 	spin_unlock(&root->ordered_extent_lock);
 	wake_up(&entry->wait);
+#ifdef MY_ABC_HERE
+	if (waitqueue_active(&fs_info->syno_ordered_queue_wait))
+		wake_up(&fs_info->syno_ordered_queue_wait);
+#endif /* MY_ABC_HERE */
 }
 
 static void btrfs_run_ordered_extent_work(struct btrfs_work *work)
@@ -569,8 +591,13 @@ u64 btrfs_wait_ordered_extents(struct btrfs_root *root, u64 nr,
 		ordered = list_first_entry(&splice, struct btrfs_ordered_extent,
 					   root_extent_list);
 
+#ifdef MY_ABC_HERE
+		if (ordered->disk_bytenr && (range_end <= ordered->disk_bytenr ||
+		    ordered->disk_bytenr + ordered->disk_num_bytes <= range_start)) {
+#else
 		if (range_end <= ordered->disk_bytenr ||
 		    ordered->disk_bytenr + ordered->disk_num_bytes <= range_start) {
+#endif /* MY_ABC_HERE */
 			list_move_tail(&ordered->root_extent_list, &skipped);
 			cond_resched_lock(&root->ordered_extent_lock);
 			continue;
@@ -656,6 +683,20 @@ void btrfs_start_ordered_extent(struct btrfs_ordered_extent *entry, int wait)
 	struct btrfs_inode *inode = BTRFS_I(entry->inode);
 
 	trace_btrfs_ordered_extent_start(inode, entry);
+
+#ifdef MY_ABC_HERE
+	if (wait) {
+		entry->high_priority = true;
+		if (test_bit(BTRFS_ORDERED_WORK_INITIALIZED, &entry->flags) &&
+			work_pending(&entry->work.normal_work) &&
+			!test_and_set_bit(BTRFS_ORDERED_HIGH_PRIORITY, &entry->flags)) {
+			if (cancel_work_sync(&entry->work.normal_work)) {
+				btrfs_set_work_high_priority(&entry->work);
+				btrfs_queue_work(inode->root->fs_info->syno_high_priority_endio_workers, &entry->work);
+			}
+		}
+	}
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * pages in the range can be dirty, clean or writeback.  We

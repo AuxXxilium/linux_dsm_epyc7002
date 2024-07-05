@@ -48,6 +48,7 @@ obj-$(CONFIG_LEDS_LM3642)		+= leds-lm3642.o
 obj-$(CONFIG_LEDS_LM3692X)		+= leds-lm3692x.o
 obj-$(CONFIG_LEDS_LM3697)		+= leds-lm3697.o
 obj-$(CONFIG_LEDS_LOCOMO)		+= leds-locomo.o
+obj-$(CONFIG_LEDS_LP3943)		+= leds-lp3943.o
 obj-$(CONFIG_LEDS_LP3944)		+= leds-lp3944.o
 obj-$(CONFIG_LEDS_LP3952)		+= leds-lp3952.o
 obj-$(CONFIG_LEDS_LP50XX)		+= leds-lp50xx.o
@@ -93,6 +94,8 @@ obj-$(CONFIG_LEDS_TURRIS_OMNIA)		+= leds-turris-omnia.o
 obj-$(CONFIG_LEDS_WM831X_STATUS)	+= leds-wm831x-status.o
 obj-$(CONFIG_LEDS_WM8350)		+= leds-wm8350.o
 obj-$(CONFIG_LEDS_WRAP)			+= leds-wrap.o
+obj-$(CONFIG_SYNO_LED_ATMEGA1608)	+= leds-atmega1608.o
+obj-$(CONFIG_SYNO_LED_ATMEGA1608_SEG7)  += leds-atmega1608-seg7.o
 
 # LED SPI Drivers
 obj-$(CONFIG_LEDS_CR0014114)		+= leds-cr0014114.o

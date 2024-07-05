@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_MMZONE_H
 #define _LINUX_MMZONE_H
@@ -38,6 +41,10 @@
  */
 #define PAGE_ALLOC_COSTLY_ORDER 3
 
+#ifdef MY_ABC_HERE
+#define MAX_KSWAPD_THREADS 16
+
+#endif /* MY_ABC_HERE */
 enum migratetype {
 	MIGRATE_UNMOVABLE,
 	MIGRATE_MOVABLE,
@@ -584,6 +591,11 @@ enum pgdat_flags {
 					 * many pages under writeback
 					 */
 	PGDAT_RECLAIM_LOCKED,		/* prevents concurrent reclaim */
+#ifdef MY_ABC_HERE
+	PGDAT_SYNO_UPDATING_KSWAPDS,	/* prevents race of updating and
+					 * checking kswapds[hid]
+					 */
+#endif /* MY_ABC_HERE */
 };
 
 enum zone_flags {
@@ -747,8 +759,15 @@ typedef struct pglist_data {
 	int node_id;
 	wait_queue_head_t kswapd_wait;
 	wait_queue_head_t pfmemalloc_wait;
+#ifdef MY_ABC_HERE
+	/**
+	 * Protected by mem_hotplug_begin/end()
+	 */
+	struct task_struct *kswapd[MAX_KSWAPD_THREADS];
+#else /* MY_ABC_HERE */
 	struct task_struct *kswapd;	/* Protected by
 					   mem_hotplug_begin/end() */
+#endif /* MY_ABC_HERE */
 	int kswapd_order;
 	enum zone_type kswapd_highest_zoneidx;
 
@@ -956,6 +975,10 @@ static inline int is_highmem(struct zone *zone)
 /* These two functions are used to setup the per zone pages min values */
 struct ctl_table;
 
+#ifdef MY_ABC_HERE
+int kswapd_threads_sysctl_handler(struct ctl_table *, int,
+					void __user *, size_t *, loff_t *);
+#endif /* MY_ABC_HERE */
 int min_free_kbytes_sysctl_handler(struct ctl_table *, int, void *, size_t *,
 		loff_t *);
 int watermark_scale_factor_sysctl_handler(struct ctl_table *, int, void *,

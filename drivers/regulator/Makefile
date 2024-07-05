@@ -9,6 +9,9 @@ obj-$(CONFIG_OF) += of_regulator.o
 obj-$(CONFIG_REGULATOR_FIXED_VOLTAGE) += fixed.o
 obj-$(CONFIG_REGULATOR_VIRTUAL_CONSUMER) += virtual.o
 obj-$(CONFIG_REGULATOR_USERSPACE_CONSUMER) += userspace-consumer.o
+ifeq ($(CONFIG_SYNO_LSP_RTD1619B), y)
+obj-$(CONFIG_REGULATOR_VIRTUAL_CONSUMER_HELPER) += virtual-helper.o
+endif # CONFIG_SYNO_LSP_RTD1619B
 
 obj-$(CONFIG_REGULATOR_88PG86X) += 88pg86x.o
 obj-$(CONFIG_REGULATOR_88PM800) += 88pm800-regulator.o
@@ -157,5 +160,10 @@ obj-$(CONFIG_REGULATOR_WM831X) += wm831x-ldo.o
 obj-$(CONFIG_REGULATOR_WM8350) += wm8350-regulator.o
 obj-$(CONFIG_REGULATOR_WM8400) += wm8400-regulator.o
 obj-$(CONFIG_REGULATOR_WM8994) += wm8994-regulator.o
+ifeq ($(CONFIG_SYNO_LSP_RTD1619B), y)
+obj-$(CONFIG_REGULATOR_APW888X_CORE) += apw888x-regulator-core.o
+obj-$(CONFIG_REGULATOR_APW8889) += apw8889-regulator.o
+obj-$(CONFIG_REGULATOR_APW8886) += apw8886-regulator.o
+endif # CONFIG_SYNO_LSP_RTD1619B
 
 ccflags-$(CONFIG_REGULATOR_DEBUG) += -DDEBUG

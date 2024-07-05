@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM btrfs
@@ -30,6 +33,9 @@ struct btrfs_qgroup;
 struct extent_io_tree;
 struct prelim_ref;
 struct btrfs_space_info;
+#ifdef MY_ABC_HERE
+struct btrfs_key;
+#endif /* MY_ABC_HERE */
 
 #define show_ref_type(type)						\
 	__print_symbolic(type,						\
@@ -2147,6 +2153,83 @@ DEFINE_EVENT(btrfs__space_info_update, update_bytes_pinned,
 
 	TP_ARGS(fs_info, sinfo, old, diff)
 );
+
+#ifdef MY_ABC_HERE
+DECLARE_EVENT_CLASS(btrfs__syno_meta_statistics,
+
+	TP_PROTO(struct btrfs_fs_info *fs_info, struct btrfs_root *root, const struct btrfs_key *key),
+
+	TP_ARGS(fs_info, root, key),
+
+	TP_STRUCT__entry_btrfs(
+		__field(u64, root_objectid)
+		__field(u64, objectid)
+		__field(u8, type)
+		__field(u64, offset)
+	),
+
+	TP_fast_assign_btrfs(fs_info,
+		__entry->root_objectid = root->root_key.objectid;
+		__entry->objectid = key->objectid;
+		__entry->type = key->type;
+		__entry->offset = key->offset;
+	),
+
+	TP_printk_btrfs("root=%llu(%s), key[%llu %u %llu]",
+		  show_root_type(__entry->root_objectid),
+		  __entry->objectid, __entry->type, __entry->offset)
+);
+
+DEFINE_EVENT(btrfs__syno_meta_statistics, btrfs_syno_meta_statistics_search_key,
+
+	TP_PROTO(struct btrfs_fs_info *fs_info, struct btrfs_root *root, const struct btrfs_key *key),
+
+	TP_ARGS(fs_info, root, key)
+);
+
+DEFINE_EVENT(btrfs__syno_meta_statistics, btrfs_syno_meta_statistics_search_forward,
+
+	TP_PROTO(struct btrfs_fs_info *fs_info, struct btrfs_root *root, const struct btrfs_key *key),
+
+	TP_ARGS(fs_info, root, key)
+);
+
+DEFINE_EVENT(btrfs__syno_meta_statistics, btrfs_syno_meta_statistics_next_leaf,
+
+	TP_PROTO(struct btrfs_fs_info *fs_info, struct btrfs_root *root, const struct btrfs_key *key),
+
+	TP_ARGS(fs_info, root, key)
+);
+
+TRACE_EVENT(btrfs_syno_meta_statistics_eb_disk_read,
+
+	TP_PROTO(struct btrfs_fs_info *fs_info, u64 bytenr,
+		 u64 owner, u64 level, const struct btrfs_key *key),
+
+	TP_ARGS(fs_info, bytenr, owner, level, key),
+
+	TP_STRUCT__entry_btrfs(
+		__field(u64, bytenr)
+		__field(u64, owner)
+		__field(u64, objectid)
+		__field(u8, type)
+		__field(u64, offset)
+	),
+
+	TP_fast_assign_btrfs(fs_info,
+		__entry->bytenr = bytenr;
+		__entry->owner = owner;
+		__entry->objectid = key->objectid;
+		__entry->type = key->type;
+		__entry->offset = key->offset;
+	),
+
+	TP_printk_btrfs("bytenr:%llu root=%llu(%s), first key[%llu %u %llu]",
+		  __entry->bytenr,
+		  show_root_type(__entry->owner),
+		  __entry->objectid, __entry->type, __entry->offset)
+);
+#endif /* MY_ABC_HERE */
 
 #endif /* _TRACE_BTRFS_H */
 

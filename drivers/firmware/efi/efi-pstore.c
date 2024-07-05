@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0+
 
 #include <linux/efi.h>
@@ -19,6 +22,11 @@ module_param_named(pstore_disable, efivars_pstore_disable, bool, 0644);
 	(EFI_VARIABLE_NON_VOLATILE | \
 	 EFI_VARIABLE_BOOTSERVICE_ACCESS | \
 	 EFI_VARIABLE_RUNTIME_ACCESS)
+
+#ifdef MY_ABC_HERE
+#define EFI_DUMMY_GUID \
+        EFI_GUID(0x4424ac57, 0xbe4b, 0x47dd, 0x9e, 0x97, 0xed, 0x50, 0xf0, 0x9f, 0x92, 0xa9)
+#endif /* MY_ABC_HERE */
 
 static LIST_HEAD(efi_pstore_list);
 static DECLARE_WORK(efivar_work, NULL);
@@ -250,6 +258,11 @@ static int efi_pstore_write(struct pstore_record *record)
 	efi_char16_t efi_name[DUMP_NAME_LEN];
 	efi_guid_t vendor = LINUX_EFI_CRASH_GUID;
 	int i, ret = 0;
+#ifdef MY_ABC_HERE
+	unsigned long dummy_size = 0;
+	void *dummy = NULL;
+	u64 storage_size, remaining_size, max_size;
+#endif /* MY_ABC_HERE */
 
 	record->id = generic_id(record->time.tv_sec, record->part,
 				record->count);
@@ -267,6 +280,46 @@ static int efi_pstore_write(struct pstore_record *record)
 
 	ret = efivar_entry_set_safe(efi_name, vendor, PSTORE_EFI_ATTRIBUTES,
 			      preemptible(), record->size, record->psi->buf);
+
+#ifdef MY_ABC_HERE
+	/* If no space for pstore, set dummy variable to force BIOS doing garbage collection */
+	if (-ENOSPC == ret) {
+		ret = efi.query_variable_info_nonblocking(PSTORE_EFI_ATTRIBUTES, &storage_size,
+				&remaining_size,
+				&max_size);
+
+		if (ret != EFI_SUCCESS) {
+			return -ENOSPC;
+		}
+
+		dummy_size = remaining_size + 1024;
+		dummy = kzalloc(dummy_size, GFP_KERNEL);
+		if (!dummy) {
+			return -ENOSPC;
+		}
+
+		ret = efi.set_variable_nonblocking(L"DUMMY",
+				&EFI_DUMMY_GUID,
+				EFI_VARIABLE_NON_VOLATILE |
+				EFI_VARIABLE_BOOTSERVICE_ACCESS |
+				EFI_VARIABLE_RUNTIME_ACCESS,
+				dummy_size, dummy);
+
+		if (ret == EFI_SUCCESS) {
+			efi.set_variable_nonblocking(L"DUMMY",
+					&EFI_DUMMY_GUID,
+					EFI_VARIABLE_NON_VOLATILE |
+					EFI_VARIABLE_BOOTSERVICE_ACCESS |
+					EFI_VARIABLE_RUNTIME_ACCESS, 0, NULL);
+		}
+
+		kfree(dummy);
+
+		/* After BIOS garbage collection, set pstore variable again */
+		ret = efivar_entry_set_safe(efi_name, vendor, PSTORE_EFI_ATTRIBUTES,
+				preemptible(), record->size, record->psi->buf);
+	}
+#endif /* MY_ABC_HERE */
 
 	if (record->reason == KMSG_DUMP_OOPS && try_module_get(THIS_MODULE))
 		if (!schedule_work(&efivar_work))
@@ -459,7 +512,11 @@ static __exit void efivars_pstore_exit(void)
 	efi_pstore_info.bufsize = 0;
 }
 
+#ifdef MY_ABC_HERE
+subsys_initcall(efivars_pstore_init);
+#else /* MY_ABC_HERE */
 module_init(efivars_pstore_init);
+#endif /* MY_ABC_HERE */
 module_exit(efivars_pstore_exit);
 
 MODULE_DESCRIPTION("EFI variable backend for pstore");

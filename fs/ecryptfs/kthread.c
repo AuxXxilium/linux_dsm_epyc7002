@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * eCryptfs: Linux filesystem encryption layer
@@ -131,6 +134,9 @@ int ecryptfs_privileged_open(struct file **lower_file,
 	 * lower file is fput() when all eCryptfs files for the inode are
 	 * released. */
 	flags |= IS_RDONLY(d_inode(lower_dentry)) ? O_RDONLY : O_RDWR;
+#ifdef MY_ABC_HERE
+	d_inode(lower_dentry)->i_opflags |= IOP_ECRYPTFS_LOWER_INIT;
+#endif /* MY_ABC_HERE */
 	(*lower_file) = dentry_open(&req.path, flags, cred);
 	if (!IS_ERR(*lower_file))
 		goto out;

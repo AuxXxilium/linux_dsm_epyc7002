@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Changes:
@@ -25,6 +28,13 @@
 #include <scsi/scsi_dbg.h>
 
 #include "scsi_logging.h"
+
+#ifdef MY_ABC_HERE
+#ifdef KERN_INFO
+#undef KERN_INFO
+#define KERN_INFO KERN_NOTICE
+#endif
+#endif /* MY_ABC_HERE */
 
 #define NORMAL_RETRIES			5
 #define IOCTL_NORMAL_TIMEOUT			(10 * HZ)
@@ -103,6 +113,15 @@ static int ioctl_internal_command(struct scsi_device *sdev, char *cmd,
 
 	if (driver_byte(result) == DRIVER_SENSE &&
 	    scsi_sense_valid(&sshdr)) {
+#ifdef MY_ABC_HERE
+		if (START_STOP == cmd[0]) {
+			if (0 == sdev->nospindown) {
+				sdev->nospindown = 1;
+				printk(KERN_WARNING"host %d, id %d, lun %lld, does not support spindown\n",
+					   sdev->host->host_no, sdev->id, sdev->lun);
+			}
+		}
+#endif /* MY_ABC_HERE */
 		switch (sshdr.sense_key) {
 		case ILLEGAL_REQUEST:
 			if (cmd[0] == ALLOW_MEDIUM_REMOVAL)

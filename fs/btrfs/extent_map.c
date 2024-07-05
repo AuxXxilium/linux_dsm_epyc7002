@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 
 #include <linux/err.h>
@@ -7,6 +10,9 @@
 #include "volumes.h"
 #include "extent_map.h"
 #include "compression.h"
+#ifdef MY_ABC_HERE
+#include "btrfs_inode.h"
+#endif /* MY_ABC_HERE */
 
 
 static struct kmem_cache *extent_map_cache;
@@ -38,6 +44,11 @@ void extent_map_tree_init(struct extent_map_tree *tree)
 	tree->map = RB_ROOT_CACHED;
 	INIT_LIST_HEAD(&tree->modified_extents);
 	rwlock_init(&tree->lock);
+#ifdef MY_ABC_HERE
+	atomic_set(&tree->nr_extent_maps, 0);
+	INIT_LIST_HEAD(&tree->not_modified_extents);
+	INIT_LIST_HEAD(&tree->syno_modified_extents);
+#endif /* MY_ABC_HERE */
 }
 
 /**
@@ -59,6 +70,10 @@ struct extent_map *alloc_extent_map(void)
 	em->generation = 0;
 	refcount_set(&em->refs, 1);
 	INIT_LIST_HEAD(&em->list);
+#ifdef MY_ABC_HERE
+	INIT_LIST_HEAD(&em->free_list);
+	em->bl_increase = false;
+#endif /* MY_ABC_HERE */
 	return em;
 }
 
@@ -77,6 +92,9 @@ void free_extent_map(struct extent_map *em)
 	if (refcount_dec_and_test(&em->refs)) {
 		WARN_ON(extent_map_in_tree(em));
 		WARN_ON(!list_empty(&em->list));
+#ifdef MY_ABC_HERE
+		WARN_ON(!list_empty(&em->free_list));
+#endif /* MY_ABC_HERE */
 		if (test_bit(EXTENT_FLAG_FS_MAPPING, &em->flags))
 			kfree(em->map_lookup);
 		kmem_cache_free(extent_map_cache, em);
@@ -232,6 +250,85 @@ static int mergable_maps(struct extent_map *prev, struct extent_map *next)
 	return 0;
 }
 
+#ifdef MY_ABC_HERE
+static void check_and_insert_extent_map_to_global_extent(
+		struct extent_map_tree *tree,
+		struct extent_map *em, int modified)
+{
+	struct btrfs_inode *inode = tree->inode;
+	struct btrfs_fs_info *fs_info = NULL;
+
+	if (!inode || !inode->root ||
+	    btrfs_is_free_space_inode(inode))
+		return;
+
+	if (!is_fstree(inode->root->root_key.objectid))
+		return;
+
+	fs_info = inode->root->fs_info;
+	atomic_inc(&tree->nr_extent_maps);
+
+	if (!test_bit(EXTENT_FLAG_PINNED, &em->flags)) {
+		if (!em->bl_increase) {
+			atomic_inc(&fs_info->nr_extent_maps);
+			em->bl_increase = true;
+		}
+	}
+
+	if (!modified)
+		list_move_tail(&em->free_list, &tree->not_modified_extents);
+	else if (test_bit(EXTENT_FLAG_PINNED, &em->flags))
+		list_del_init(&em->free_list);
+	else
+		list_move_tail(&em->free_list, &tree->syno_modified_extents);
+
+	if (list_empty(&inode->free_extent_map_inode)) {
+		spin_lock(&fs_info->extent_map_inode_list_lock);
+		list_move_tail(&inode->free_extent_map_inode,
+			       &fs_info->extent_map_inode_list);
+		spin_unlock(&fs_info->extent_map_inode_list_lock);
+	}
+}
+
+static void check_and_decrease_global_extent(struct extent_map_tree *tree,
+					     struct extent_map *em)
+{
+	struct btrfs_inode *inode = tree->inode;
+	struct btrfs_fs_info *fs_info = NULL;
+
+	// decreace nr_extent_maps when extent_map dettached from extent_tree
+	if (!list_empty(&em->free_list)) {
+		list_del_init(&em->free_list);
+	}
+
+	if (!inode || !inode->root ||
+	    btrfs_is_free_space_inode(inode))
+		return;
+
+	if (!is_fstree(inode->root->root_key.objectid))
+		return;
+
+	fs_info = inode->root->fs_info;
+	WARN_ON(atomic_read(&tree->nr_extent_maps) == 0);
+	atomic_dec(&tree->nr_extent_maps);
+
+	if (em->bl_increase) {
+		if (unlikely(atomic_read(&(fs_info->nr_extent_maps)) == 0))
+			WARN_ON(1);
+		else
+			atomic_dec(&fs_info->nr_extent_maps);
+		em->bl_increase = false;
+	}
+	if (atomic_read(&tree->nr_extent_maps) == 0 &&
+	    !list_empty(&inode->free_extent_map_inode)) {
+		spin_lock(&fs_info->extent_map_inode_list_lock);
+		if (atomic_read(&inode->free_extent_map_counts) == 0)
+			list_del_init(&inode->free_extent_map_inode);
+		spin_unlock(&fs_info->extent_map_inode_list_lock);
+	}
+}
+#endif /* MY_ABC_HERE */
+
 static void try_merge_map(struct extent_map_tree *tree, struct extent_map *em)
 {
 	struct extent_map *merge = NULL;
@@ -264,6 +361,9 @@ static void try_merge_map(struct extent_map_tree *tree, struct extent_map *em)
 
 			rb_erase_cached(&merge->rb_node, &tree->map);
 			RB_CLEAR_NODE(&merge->rb_node);
+#ifdef MY_ABC_HERE
+			check_and_decrease_global_extent(tree, merge);
+#endif /* MY_ABC_HERE */
 			free_extent_map(merge);
 		}
 	}
@@ -278,6 +378,9 @@ static void try_merge_map(struct extent_map_tree *tree, struct extent_map *em)
 		RB_CLEAR_NODE(&merge->rb_node);
 		em->mod_len = (merge->mod_start + merge->mod_len) - em->mod_start;
 		em->generation = max(em->generation, merge->generation);
+#ifdef MY_ABC_HERE
+		check_and_decrease_global_extent(tree, merge);
+#endif /* MY_ABC_HERE */
 		free_extent_map(merge);
 	}
 }
@@ -310,6 +413,13 @@ int unpin_extent_cache(struct extent_map_tree *tree, u64 start, u64 len,
 
 	em->generation = gen;
 	clear_bit(EXTENT_FLAG_PINNED, &em->flags);
+#ifdef MY_ABC_HERE
+	list_move_tail(&em->free_list, &tree->syno_modified_extents);
+	if (!em->bl_increase) {
+		atomic_inc(&tree->inode->root->fs_info->nr_extent_maps);
+		em->bl_increase = true;
+	}
+#endif /* MY_ABC_HERE */
 	em->mod_start = em->start;
 	em->mod_len = em->len;
 
@@ -405,6 +515,9 @@ int add_extent_mapping(struct extent_map_tree *tree,
 	if (ret)
 		goto out;
 
+#ifdef MY_ABC_HERE
+	check_and_insert_extent_map_to_global_extent(tree, em, modified);
+#endif /* MY_ABC_HERE */
 	setup_extent_mapping(tree, em, modified);
 	if (test_bit(EXTENT_FLAG_FS_MAPPING, &em->flags)) {
 		extent_map_device_set_bits(em, CHUNK_ALLOCATED);
@@ -494,6 +607,9 @@ void remove_extent_mapping(struct extent_map_tree *tree, struct extent_map *em)
 	if (test_bit(EXTENT_FLAG_FS_MAPPING, &em->flags))
 		extent_map_device_clear_bits(em, CHUNK_ALLOCATED);
 	RB_CLEAR_NODE(&em->rb_node);
+#ifdef MY_ABC_HERE
+	check_and_decrease_global_extent(tree, em);
+#endif /* MY_ABC_HERE */
 }
 
 void replace_extent_mapping(struct extent_map_tree *tree,
@@ -508,6 +624,10 @@ void replace_extent_mapping(struct extent_map_tree *tree,
 	rb_replace_node_cached(&cur->rb_node, &new->rb_node, &tree->map);
 	RB_CLEAR_NODE(&cur->rb_node);
 
+#ifdef MY_ABC_HERE
+	check_and_decrease_global_extent(tree, cur);
+	check_and_insert_extent_map_to_global_extent(tree, new, modified);
+#endif /* MY_ABC_HERE */
 	setup_extent_mapping(tree, new, modified);
 }
 

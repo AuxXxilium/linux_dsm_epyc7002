@@ -1,0 +1,386 @@
+#!/usr/bin/env bash
+# Copyright (c) 2000-2020 Synology Inc. All rights reserved.
+
+# shellcheck source=/dev/null
+source "SynoBuildConf/_env"
+
+TmpInstDir="${TmpInstDir:-/tmp/_install}"
+
+# Auto generate bootup insert module list config into /lib/modules-load.d/
+SYNOAutoGenerateModulesConfig () {
+	local _install_list=${1}
+	local _insert_list=${2}
+	local _config_name=${3}
+	local _mod=""
+	local _mod_path=""
+
+	if [ -f ".synotmp-${_config_name}" ];then
+		rm -f ".synotmp-${_config_name}"
+	fi
+
+	for _mod in ${_insert_list};
+	do
+		_mod_path="/${_mod}.ko"
+		# Check the insert modules is really in install list
+		if [[ ${_install_list} == *${_mod_path}* ]]; then
+			echo "${_mod}" >> ".synotmp-${_config_name}"
+		else
+			echo "Error: insert module [${_mod}] not in install list"
+		fi
+	done
+
+	if [ -f ".synotmp-${_config_name}" ];then
+		install -Dm644 ".synotmp-${_config_name}" "${KERNEL_MODULES_CONFIG_PATH}/${_config_name}"
+	fi
+}
+
+install_systemd_units()
+{
+	KERNEL_MODULES_CONFIG_PATH=${TmpInstDir}/lib/modules-load.d
+	IPV6_COMMON_LIST="ipv6 ip_tunnel tunnel4 sit"
+	CRYPTO_MODULES_X86_64_COMMON_LIST="cbc md5 cts ansi_cprng des_generic authenc ecb sha256_generic cryptd libarc4 aesni-intel lzo lzo-rle zstd"
+	CPUFREQ_MODULES_X86_64_COMMON_LIST="acpi-cpufreq cpufreq_performance cpufreq_powersave"
+	MISC_MODULES_X86_64_COMMON_LIST="hmac md4 hfsplus llc p8022 psnap crc-ccitt crc-itu-t dm-bufio dm-snapshot sg loop essiv dm-crypt"
+	MISC_MODULES_ARM_64_COMMON_LIST="hmac md4 hfsplus llc p8022 psnap crc-ccitt crc-itu-t dm-bufio dm-snapshot sg loop"
+	USB_MODULES_COMMON_LIST="usb-common usbcore xhci-hcd"
+
+	# shellcheck disable=SC2154
+	if [ ! -f "$ConfDir/_modules" ]; then
+		echo "Error: Cannot find ${KERNEL_MODULES_TABLE} for generate insert modules list."
+		return
+	fi
+	# get platform $ModuleList
+	source "$ConfDir/_modules"
+	ModuleList=$(module_list)
+	[ -d "${KERNEL_MODULES_CONFIG_PATH}" ] || install -d "${KERNEL_MODULES_CONFIG_PATH}"
+
+	# Set the white list on each platform, please not use global white list
+	case ${BUILD_TARGET} in
+		KVMX64)
+			IPV6_LIST=${IPV6_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${IPV6_LIST}" "70-ipv6-kernel.conf"
+
+			CRYPTO_MODULES_LIST=${CRYPTO_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CRYPTO_MODULES_LIST}" "70-crypto-kernel.conf"
+
+			MISC_MODULES_LIST=${MISC_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${MISC_MODULES_LIST}" "70-misc-kernel.conf"
+
+			USB_MODULES_LIST="${USB_MODULES_COMMON_LIST} ehci-hcd ehci-pci uhci-hcd"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${USB_MODULES_LIST}" "70-usb-kernel.conf"
+
+			VXLAN_MODULES="ip_tunnel udp_tunnel ip6_udp_tunnel vxlan"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${VXLAN_MODULES}" "69-docker-vxlan.conf"
+
+			NETWORK_MODULES="be2net igbvf"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${NETWORK_MODULES}" "70-network-kernel.conf"
+			;;
+		KVMX64SOFS)
+			IPV6_LIST=${IPV6_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${IPV6_LIST}" "70-ipv6-kernel.conf"
+
+			CRYPTO_MODULES_LIST=${CRYPTO_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CRYPTO_MODULES_LIST}" "70-crypto-kernel.conf"
+
+			MISC_MODULES_LIST=${MISC_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${MISC_MODULES_LIST}" "70-misc-kernel.conf"
+
+			USB_MODULES_LIST="${USB_MODULES_COMMON_LIST} ehci-hcd ehci-pci uhci-hcd"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${USB_MODULES_LIST}" "70-usb-kernel.conf"
+
+			VXLAN_MODULES="ip_tunnel udp_tunnel ip6_udp_tunnel vxlan"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${VXLAN_MODULES}" "69-docker-vxlan.conf"
+
+			NETWORK_MODULES="be2net igbvf"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${NETWORK_MODULES}" "70-network-kernel.conf"
+			;;
+		KVMX64V2)
+			IPV6_LIST=${IPV6_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${IPV6_LIST}" "70-ipv6-kernel.conf"
+
+			CRYPTO_MODULES_LIST=${CRYPTO_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CRYPTO_MODULES_LIST}" "70-crypto-kernel.conf"
+
+			MISC_MODULES_LIST=${MISC_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${MISC_MODULES_LIST}" "70-misc-kernel.conf"
+
+			USB_MODULES_LIST="${USB_MODULES_COMMON_LIST} ehci-hcd ehci-pci uhci-hcd"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${USB_MODULES_LIST}" "70-usb-kernel.conf"
+
+			VXLAN_MODULES="ip_tunnel udp_tunnel ip6_udp_tunnel vxlan"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${VXLAN_MODULES}" "69-docker-vxlan.conf"
+
+			NETWORK_MODULES="be2net igbvf"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${NETWORK_MODULES}" "70-network-kernel.conf"
+			;;
+		BROADWELL)
+			IPV6_LIST=${IPV6_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${IPV6_LIST}" "70-ipv6-kernel.conf"
+
+			CRYPTO_MODULES_LIST=${CRYPTO_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CRYPTO_MODULES_LIST}" "70-crypto-kernel.conf"
+
+			CPUFREQ_MODULES_LIST=${CPUFREQ_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CPUFREQ_MODULES_LIST}" "70-cpufreq-kernel.conf"
+
+			MISC_MODULES_LIST=${MISC_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${MISC_MODULES_LIST}" "70-misc-kernel.conf"
+
+			USB_MODULES_LIST="${USB_MODULES_COMMON_LIST} uhci-hcd"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${USB_MODULES_LIST}" "70-usb-kernel.conf"
+
+			VXLAN_MODULES="ip_tunnel udp_tunnel ip6_udp_tunnel vxlan"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${VXLAN_MODULES}" "69-docker-vxlan.conf"
+
+			NETWORK_MODULES="be2net"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${NETWORK_MODULES}" "70-network-kernel.conf"
+			;;
+		PURLEY)
+			IPV6_LIST=${IPV6_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${IPV6_LIST}" "70-ipv6-kernel.conf"
+
+			CRYPTO_MODULES_LIST=${CRYPTO_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CRYPTO_MODULES_LIST}" "70-crypto-kernel.conf"
+
+			CPUFREQ_MODULES_LIST=${CPUFREQ_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CPUFREQ_MODULES_LIST}" "70-cpufreq-kernel.conf"
+
+			MISC_MODULES_LIST="${MISC_MODULES_X86_64_COMMON_LIST}"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${MISC_MODULES_LIST}" "70-misc-kernel.conf"
+
+			USB_MODULES_LIST="${USB_MODULES_COMMON_LIST} ehci-hcd ehci-pci uhci-hcd"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${USB_MODULES_LIST}" "70-usb-kernel.conf"
+
+			VXLAN_MODULES="ip_tunnel udp_tunnel ip6_udp_tunnel vxlan"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${VXLAN_MODULES}" "69-docker-vxlan.conf"
+
+			NETWORK_MODULES="be2net"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${NETWORK_MODULES}" "70-network-kernel.conf"
+			;;
+		GEMINILAKE)
+			# Auto generate video driver conf into /lib/modules-load.d/video.conf
+			VIDEO_DRIVER_LIST="i2c-algo-bit button backlight video fbdev fb iosf_mbi drm_panel_orientation_quirks drm cfbimgblt cfbcopyarea cfbfillrect fb_sys_fops sysimgblt sysfillrect syscopyarea drm_kms_helper i915"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${VIDEO_DRIVER_LIST}" "70-video-kernel.conf"
+
+			IPV6_LIST=${IPV6_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${IPV6_LIST}" "70-ipv6-kernel.conf"
+
+			CRYPTO_MODULES_LIST=${CRYPTO_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CRYPTO_MODULES_LIST}" "70-crypto-kernel.conf"
+
+			CPUFREQ_MODULES_LIST=${CPUFREQ_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CPUFREQ_MODULES_LIST}" "70-cpufreq-kernel.conf"
+
+			MISC_MODULES_LIST=${MISC_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${MISC_MODULES_LIST}" "70-misc-kernel.conf"
+
+			USB_MODULES_LIST="${USB_MODULES_COMMON_LIST} ehci-hcd ehci-pci uhci-hcd"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${USB_MODULES_LIST}" "70-usb-kernel.conf"
+
+			VXLAN_MODULES="ip_tunnel udp_tunnel ip6_udp_tunnel vxlan"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${VXLAN_MODULES}" "69-docker-vxlan.conf"
+			;;
+		V1000)
+			IPV6_LIST=${IPV6_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${IPV6_LIST}" "70-ipv6-kernel.conf"
+
+			CRYPTO_MODULES_LIST=${CRYPTO_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CRYPTO_MODULES_LIST}" "70-crypto-kernel.conf"
+
+			CPUFREQ_MODULES_LIST=${CPUFREQ_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CPUFREQ_MODULES_LIST}" "70-cpufreq-kernel.conf"
+
+			MISC_MODULES_LIST=${MISC_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${MISC_MODULES_LIST}" "70-misc-kernel.conf"
+
+			USB_MODULES_LIST="${USB_MODULES_COMMON_LIST} ehci-hcd ehci-pci uhci-hcd"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${USB_MODULES_LIST}" "70-usb-kernel.conf"
+
+			VXLAN_MODULES="ip_tunnel udp_tunnel ip6_udp_tunnel vxlan"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${VXLAN_MODULES}" "69-docker-vxlan.conf"
+
+			NET_DRIVER_MODULES_LIST="marvell10g amd-xgbe"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${NET_DRIVER_MODULES_LIST}" "70-net-kernel.conf"
+			;;
+		V1000SOFS)
+			IPV6_LIST=${IPV6_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${IPV6_LIST}" "70-ipv6-kernel.conf"
+
+			CRYPTO_MODULES_LIST=${CRYPTO_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CRYPTO_MODULES_LIST}" "70-crypto-kernel.conf"
+
+			CPUFREQ_MODULES_LIST=${CPUFREQ_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CPUFREQ_MODULES_LIST}" "70-cpufreq-kernel.conf"
+
+			MISC_MODULES_LIST=${MISC_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${MISC_MODULES_LIST}" "70-misc-kernel.conf"
+
+			USB_MODULES_LIST="${USB_MODULES_COMMON_LIST} ehci-hcd ehci-pci uhci-hcd"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${USB_MODULES_LIST}" "70-usb-kernel.conf"
+
+			VXLAN_MODULES="ip_tunnel udp_tunnel ip6_udp_tunnel vxlan"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${VXLAN_MODULES}" "69-docker-vxlan.conf"
+
+			NET_DRIVER_MODULES_LIST="marvell10g amd-xgbe"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${NET_DRIVER_MODULES_LIST}" "70-net-kernel.conf"
+			;;
+		REALTEK_RTD1619B)
+
+			IPV6_LIST=${IPV6_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${IPV6_LIST}" "70-ipv6-kernel.conf"
+
+			CRYPTO_MODULES_LIST="lrw md4 ansi_cprng hmac des_generic cts md5 ghash-generic cbc ecb sha256_generic echainiv cmac ccm seqiv ctr libarc4"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CRYPTO_MODULES_LIST}" "70-crypto-kernel.conf"
+
+			CPUFREQ_MODULES_LIST="cpufreq_performance cpufreq_powersave"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CPUFREQ_MODULES_LIST}" "70-cpufreq-kernel.conf"
+
+			MISC_MODULES_LIST=${MISC_MODULES_ARM_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${MISC_MODULES_LIST}" "70-misc-kernel.conf"
+
+			USB_MODULES_LIST="${USB_MODULES_COMMON_LIST} dwc3 xhci-pci xhci-plat-hcd phy-rtk-usb2 phy-rtk-usb3 dwc3_rtk rtk-usb-manager cdc-acm"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${USB_MODULES_LIST}" "70-usb-kernel.conf"
+
+			VXLAN_MODULES="ip_tunnel udp_tunnel ip6_udp_tunnel vxlan"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${VXLAN_MODULES}" "69-docker-vxlan.conf"
+			;;
+		ICELAKED)
+			IPV6_LIST=${IPV6_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${IPV6_LIST}" "70-ipv6-kernel.conf"
+
+			CRYPTO_MODULES_LIST=${CRYPTO_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CRYPTO_MODULES_LIST}" "70-crypto-kernel.conf"
+
+			CPUFREQ_MODULES_LIST=${CPUFREQ_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CPUFREQ_MODULES_LIST}" "70-cpufreq-kernel.conf"
+
+			MISC_MODULES_LIST="${MISC_MODULES_X86_64_COMMON_LIST}"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${MISC_MODULES_LIST}" "70-misc-kernel.conf"
+
+			USB_MODULES_LIST="${USB_MODULES_COMMON_LIST} ehci-hcd ehci-pci uhci-hcd"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${USB_MODULES_LIST}" "70-usb-kernel.conf"
+
+			VXLAN_MODULES="ip_tunnel udp_tunnel ip6_udp_tunnel vxlan"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${VXLAN_MODULES}" "69-docker-vxlan.conf"
+
+			NETWORK_MODULES="be2net"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${NETWORK_MODULES}" "70-network-kernel.conf"
+			;;
+		EPYC7002)
+			IPV6_LIST=${IPV6_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${IPV6_LIST}" "70-ipv6-kernel.conf"
+
+			CRYPTO_MODULES_LIST=${CRYPTO_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CRYPTO_MODULES_LIST}" "70-crypto-kernel.conf"
+
+			CPUFREQ_MODULES_LIST=${CPUFREQ_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CPUFREQ_MODULES_LIST}" "70-cpufreq-kernel.conf"
+
+			MISC_MODULES_LIST="${MISC_MODULES_X86_64_COMMON_LIST}"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${MISC_MODULES_LIST}" "70-misc-kernel.conf"
+
+			USB_MODULES_LIST="${USB_MODULES_COMMON_LIST} ehci-hcd ehci-pci uhci-hcd"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${USB_MODULES_LIST}" "70-usb-kernel.conf"
+
+			VXLAN_MODULES="ip_tunnel udp_tunnel ip6_udp_tunnel vxlan"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${VXLAN_MODULES}" "69-docker-vxlan.conf"
+
+			NETWORK_MODULES="be2net"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${NETWORK_MODULES}" "70-network-kernel.conf"
+			;;
+		EPYC7002SOFS)
+			IPV6_LIST=${IPV6_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${IPV6_LIST}" "70-ipv6-kernel.conf"
+
+			CRYPTO_MODULES_LIST=${CRYPTO_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CRYPTO_MODULES_LIST}" "70-crypto-kernel.conf"
+
+			CPUFREQ_MODULES_LIST=${CPUFREQ_MODULES_X86_64_COMMON_LIST}
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${CPUFREQ_MODULES_LIST}" "70-cpufreq-kernel.conf"
+
+			MISC_MODULES_LIST="${MISC_MODULES_X86_64_COMMON_LIST}"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${MISC_MODULES_LIST}" "70-misc-kernel.conf"
+
+			USB_MODULES_LIST="${USB_MODULES_COMMON_LIST} ehci-hcd ehci-pci uhci-hcd"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${USB_MODULES_LIST}" "70-usb-kernel.conf"
+
+			VXLAN_MODULES="ip_tunnel udp_tunnel ip6_udp_tunnel vxlan"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${VXLAN_MODULES}" "69-docker-vxlan.conf"
+
+			NETWORK_MODULES="be2net"
+			SYNOAutoGenerateModulesConfig "${ModuleList}" "${NETWORK_MODULES}" "70-network-kernel.conf"
+			;;
+               RYZEN5K)
+                       IPV6_LIST=${IPV6_COMMON_LIST}
+                       SYNOAutoGenerateModulesConfig "${ModuleList}" "${IPV6_LIST}" "70-ipv6-kernel.conf"
+
+                       CRYPTO_MODULES_LIST=${CRYPTO_MODULES_X86_64_COMMON_LIST}
+                       SYNOAutoGenerateModulesConfig "${ModuleList}" "${CRYPTO_MODULES_LIST}" "70-crypto-kernel.conf"
+
+                       CPUFREQ_MODULES_LIST=${CPUFREQ_MODULES_X86_64_COMMON_LIST}
+                       SYNOAutoGenerateModulesConfig "${ModuleList}" "${CPUFREQ_MODULES_LIST}" "70-cpufreq-kernel.conf"
+
+                       MISC_MODULES_LIST="${MISC_MODULES_COMMON_LIST}"
+                       SYNOAutoGenerateModulesConfig "${ModuleList}" "${MISC_MODULES_LIST}" "70-misc-kernel.conf"
+
+                       USB_MODULES_LIST="${USB_MODULES_COMMON_LIST} ehci-hcd ehci-pci uhci-hcd"
+                       SYNOAutoGenerateModulesConfig "${ModuleList}" "${USB_MODULES_LIST}" "70-usb-kernel.conf"
+
+                       VXLAN_MODULES="ip_tunnel udp_tunnel ip6_udp_tunnel vxlan"
+                       SYNOAutoGenerateModulesConfig "${ModuleList}" "${VXLAN_MODULES}" "69-docker-vxlan.conf"
+
+                       NETWORK_MODULES="be2net"
+                       SYNOAutoGenerateModulesConfig "${ModuleList}" "${NETWORK_MODULES}" "70-network-kernel.conf"
+                       ;;
+
+	       EPYC7003NTB)
+		       IPV6_LIST=${IPV6_COMMON_LIST}
+		       SYNOAutoGenerateModulesConfig "${ModuleList}" "${IPV6_LIST}" "70-ipv6-kernel.conf"
+
+		       CRYPTO_MODULES_LIST=${CRYPTO_MODULES_X86_64_COMMON_LIST}
+		       SYNOAutoGenerateModulesConfig "${ModuleList}" "${CRYPTO_MODULES_LIST}" "70-crypto-kernel.conf"
+
+		       CPUFREQ_MODULES_LIST=${CPUFREQ_MODULES_X86_64_COMMON_LIST}
+		       SYNOAutoGenerateModulesConfig "${ModuleList}" "${CPUFREQ_MODULES_LIST}" "70-cpufreq-kernel.conf"
+
+		       MISC_MODULES_LIST="${MISC_MODULES_X86_64_COMMON_LIST}"
+		       SYNOAutoGenerateModulesConfig "${ModuleList}" "${MISC_MODULES_LIST}" "70-misc-kernel.conf"
+
+		       USB_MODULES_LIST="${USB_MODULES_COMMON_LIST} ehci-hcd ehci-pci uhci-hcd"
+		       SYNOAutoGenerateModulesConfig "${ModuleList}" "${USB_MODULES_LIST}" "70-usb-kernel.conf"
+
+		       VXLAN_MODULES="ip_tunnel udp_tunnel ip6_udp_tunnel vxlan"
+		       SYNOAutoGenerateModulesConfig "${ModuleList}" "${VXLAN_MODULES}" "69-docker-vxlan.conf"
+
+		       NETWORK_MODULES="be2net"
+		       SYNOAutoGenerateModulesConfig "${ModuleList}" "${NETWORK_MODULES}" "70-network-kernel.conf"
+		       ;;
+		*)
+			;;
+	esac
+}
+
+# module configs in /lib/modules-load.d
+install_module_configs()
+{
+	SYSTEMD_UNIT_DIR="${TmpInstDir}/lib/systemd/system"
+	SYSTEMD_UNIT_SCRIPT_DIR="${TmpInstDir}/usr/syno/lib/systemd/scripts"
+	# install services unit of kernel module to systemd
+	[ -d "${SYSTEMD_UNIT_DIR}" ] || install -d "${SYSTEMD_UNIT_DIR}"
+	[ -d "${SYSTEMD_UNIT_DIR}"/sysinit.target.wants ] || install -d "${SYSTEMD_UNIT_DIR}"/sysinit.target.wants
+	[ -d "${SYSTEMD_UNIT_SCRIPT_DIR}" ] || install -d "${SYSTEMD_UNIT_SCRIPT_DIR}"
+	install -m644 synology/systemd/syno-kernel-modules-load.service "${SYSTEMD_UNIT_DIR}"
+	install -m755 synology/systemd/syno-kernel-modules-load.sh "${SYSTEMD_UNIT_SCRIPT_DIR}"
+	ln -s ../syno-kernel-modules-load.service "${SYSTEMD_UNIT_DIR}"/sysinit.target.wants/syno-kernel-modules-load.service
+
+	install -m644 synology/systemd/syno-fan-modules-load.service "${SYSTEMD_UNIT_DIR}"
+	install -m755 synology/systemd/syno-fan-modules-load.sh "${SYSTEMD_UNIT_SCRIPT_DIR}"
+	ln -s ../syno-fan-modules-load.service "${SYSTEMD_UNIT_DIR}"/sysinit.target.wants/syno-fan-modules-load.service
+}
+
+INFO "Install systemd units"
+install_systemd_units
+
+INFO "Install kernel module configs"
+install_module_configs
+

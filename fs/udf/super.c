@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  * super.c
  *
@@ -56,6 +59,9 @@
 #include <linux/bitmap.h>
 #include <linux/crc-itu-t.h>
 #include <linux/log2.h>
+#ifdef MY_ABC_HERE
+#include <linux/ctype.h>
+#endif /* MY_ABC_HERE */
 #include <asm/byteorder.h>
 
 #include "udf_sb.h"
@@ -97,6 +103,56 @@ static void udf_close_lvid(struct super_block *);
 static unsigned int udf_count_free(struct super_block *);
 static int udf_statfs(struct dentry *, struct kstatfs *);
 static int udf_show_options(struct seq_file *, struct dentry *);
+
+#ifdef MY_ABC_HERE
+static int udf_hash(const struct dentry *dentry, struct qstr *qstr)
+{
+	qstr->hash = full_name_hash(dentry, qstr->name, qstr->len);
+	return 0;
+}
+
+static int udf_hashi(const struct dentry *dentry, struct qstr *qstr)
+{
+	const char *name;
+	int len;
+	char c;
+	unsigned long hash;
+
+	len = qstr->len;
+	name = qstr->name;
+	hash = init_name_hash(dentry);
+	while (len--) {
+		c = tolower(*name++);
+		hash = partial_name_hash(c, hash);
+	}
+	qstr->hash = end_name_hash(hash);
+
+	return 0;
+}
+
+static int udf_dentry_cmp(const struct dentry *dentry,
+		unsigned int len, const char *str, const struct qstr *name)
+{
+	return udf_match(len, str, name->len, name->name, 0);
+}
+
+static int udf_dentry_cmpi(const struct dentry *dentry,
+		unsigned int len, const char *str, const struct qstr *name)
+{
+	return udf_match(len, str, name->len, name->name, 1);
+}
+
+const struct dentry_operations udf_dentry_ops[] = {
+	{
+		.d_hash		= udf_hashi,
+		.d_compare	= udf_dentry_cmpi,
+	},
+	{
+		.d_hash		= udf_hash,
+		.d_compare	= udf_dentry_cmp,
+	}
+};
+#endif /* MY_ABC_HERE */
 
 struct logicalVolIntegrityDescImpUse *udf_sb_lvidiu(struct super_block *sb)
 {
@@ -353,6 +409,10 @@ static int udf_show_options(struct seq_file *seq, struct dentry *root)
 		seq_puts(seq, ",utf8");
 	if (UDF_QUERY_FLAG(sb, UDF_FLAG_NLS_MAP) && sbi->s_nls_map)
 		seq_printf(seq, ",iocharset=%s", sbi->s_nls_map->charset);
+#ifdef MY_ABC_HERE
+	if (!UDF_QUERY_FLAG(sb, SYNO_UDF_FLAG_CASELESS))
+		seq_printf(seq, ",casesensitive");
+#endif /* MY_ABC_HERE */
 
 	return 0;
 }
@@ -421,6 +481,9 @@ enum {
 	Opt_rootdir, Opt_utf8, Opt_iocharset,
 	Opt_err, Opt_uforget, Opt_uignore, Opt_gforget, Opt_gignore,
 	Opt_fmode, Opt_dmode
+#ifdef MY_ABC_HERE
+	, Opt_synocasesensitive
+#endif /* MY_ABC_HERE */
 };
 
 static const match_table_t tokens = {
@@ -451,6 +514,9 @@ static const match_table_t tokens = {
 	{Opt_iocharset,	"iocharset=%s"},
 	{Opt_fmode,     "mode=%o"},
 	{Opt_dmode,     "dmode=%o"},
+#ifdef MY_ABC_HERE
+	{Opt_synocasesensitive,     "casesensitive"},
+#endif /* MY_ABC_HERE */
 	{Opt_err,	NULL}
 };
 
@@ -459,11 +525,15 @@ static int udf_parse_options(char *options, struct udf_options *uopt,
 {
 	char *p;
 	int option;
+	unsigned int uv;
 
 	uopt->novrs = 0;
 	uopt->session = 0xFFFFFFFF;
 	uopt->lastblock = 0;
 	uopt->anchor = 0;
+#ifdef MY_ABC_HERE
+	uopt->flags |= (1 << SYNO_UDF_FLAG_CASELESS);
+#endif /* MY_ABC_HERE */
 
 	if (!options)
 		return 1;
@@ -508,17 +578,17 @@ static int udf_parse_options(char *options, struct udf_options *uopt,
 			uopt->flags &= ~(1 << UDF_FLAG_USE_SHORT_AD);
 			break;
 		case Opt_gid:
-			if (match_int(args, &option))
+			if (match_uint(args, &uv))
 				return 0;
-			uopt->gid = make_kgid(current_user_ns(), option);
+			uopt->gid = make_kgid(current_user_ns(), uv);
 			if (!gid_valid(uopt->gid))
 				return 0;
 			uopt->flags |= (1 << UDF_FLAG_GID_SET);
 			break;
 		case Opt_uid:
-			if (match_int(args, &option))
+			if (match_uint(args, &uv))
 				return 0;
-			uopt->uid = make_kuid(current_user_ns(), option);
+			uopt->uid = make_kuid(current_user_ns(), uv);
 			if (!uid_valid(uopt->uid))
 				return 0;
 			uopt->flags |= (1 << UDF_FLAG_UID_SET);
@@ -592,6 +662,11 @@ static int udf_parse_options(char *options, struct udf_options *uopt,
 				return 0;
 			uopt->dmode = option & 0777;
 			break;
+#ifdef MY_ABC_HERE
+		case Opt_synocasesensitive:
+			uopt->flags &= ~(1 << SYNO_UDF_FLAG_CASELESS);
+			break;
+#endif /* MY_ABC_HERE */
 		default:
 			pr_err("bad mount option \"%s\" or missing value\n", p);
 			return 0;
@@ -639,6 +714,9 @@ static int udf_remount_fs(struct super_block *sb, int *flags, char *options)
 	else
 		udf_open_lvid(sb);
 
+#ifdef MY_ABC_HERE
+	sb->s_d_op = &udf_dentry_ops[UDF_QUERY_FLAG(sb, SYNO_UDF_FLAG_CASELESS) ? 0 : 1];
+#endif /* MY_ABC_HERE */
 out_unlock:
 	return error;
 }
@@ -2178,6 +2256,10 @@ static int udf_fill_super(struct super_block *sb, void *options, int silent)
 
 	sb->s_magic = UDF_SUPER_MAGIC;
 	sb->s_time_gran = 1000;
+
+#ifdef MY_ABC_HERE
+	sb->s_d_op = &udf_dentry_ops[UDF_QUERY_FLAG(sb, SYNO_UDF_FLAG_CASELESS) ? 0 : 1];
+#endif /* MY_ABC_HERE */
 
 	if (uopt.flags & (1 << UDF_FLAG_BLOCKSIZE_SET)) {
 		ret = udf_load_vrs(sb, &uopt, silent, &fileset);

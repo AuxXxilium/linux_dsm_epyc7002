@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  libahci.c - Common AHCI SATA low-level routines
@@ -31,6 +34,22 @@
 #include <linux/pci.h>
 #include "ahci.h"
 #include "libata.h"
+#if defined(MY_ABC_HERE) || defined(MY_DEF_HERE)
+#include <linux/leds.h>
+#endif /* MY_ABC_HERE || MY_DEF_HERE */
+#ifdef MY_DEF_HERE
+#include <linux/syno_gpio.h>
+#endif /* MY_DEF_HERE */
+
+#ifdef MY_ABC_HERE
+#define SYNO_LED_BLINK_OFF 0
+#define SYNO_LED_BLINK_ON 1
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+extern void syno_ledtrig_active_set(int iLedNum);
+extern int *gpGreenLedMap;
+#endif /* SYNO_AHCI_SW_ACITIVITY_LED_TRIGGER */
 
 static int ahci_skip_host_reset;
 int ahci_ignore_sss;
@@ -100,6 +119,23 @@ static ssize_t ahci_show_em_supported(struct device *dev,
 				      struct device_attribute *attr, char *buf);
 static irqreturn_t ahci_single_level_irq_intr(int irq, void *dev_instance);
 
+#ifdef MY_ABC_HERE
+static irqreturn_t ahci_multi_irqs_intr_hard(int irq, void *dev_instance);
+static irqreturn_t syno_ahci_multi_irqs_intr_hard_jmb(int irq, void *dev_instance);
+static irqreturn_t (*syno_ahci_multi_irqs_intr)(int, void *);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static void syno_internal_ahci_handle_port_interrupt(struct ata_port *ap,
+				       void __iomem *port_mmio, u32 status);
+static void ahci_handle_port_interrupt(struct ata_port *ap,
+				       void __iomem *port_mmio, u32 status);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static void syno_ahci_force_intr(struct ata_port *ap);
+#endif /* MY_ABC_HERE */
+
 static DEVICE_ATTR(ahci_host_caps, S_IRUGO, ahci_show_host_caps, NULL);
 static DEVICE_ATTR(ahci_host_cap2, S_IRUGO, ahci_show_host_cap2, NULL);
 static DEVICE_ATTR(ahci_host_version, S_IRUGO, ahci_show_host_version, NULL);
@@ -118,6 +154,22 @@ struct device_attribute *ahci_shost_attrs[] = {
 	&dev_attr_ahci_port_cmd,
 	&dev_attr_em_buffer,
 	&dev_attr_em_message_supported,
+#ifdef MY_ABC_HERE
+	&dev_attr_syno_sata_disk_led_ctrl,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	&dev_attr_syno_manutil_power_disable,
+	&dev_attr_syno_pm_gpio,
+	&dev_attr_syno_pm_info,
+	&dev_attr_syno_pm_i2c,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	&dev_attr_syno_power_ctrl,
+	&dev_attr_syno_pm_control_support,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	&dev_attr_syno_port_thaw,
+#endif /* MY_ABC_HERE */
 	NULL
 };
 EXPORT_SYMBOL_GPL(ahci_shost_attrs);
@@ -125,7 +177,29 @@ EXPORT_SYMBOL_GPL(ahci_shost_attrs);
 struct device_attribute *ahci_sdev_attrs[] = {
 	&dev_attr_sw_activity,
 	&dev_attr_unload_heads,
+#ifdef MY_ABC_HERE
+	&dev_attr_syno_wcache,
+#endif /* MY_ABC_HERE */
 	&dev_attr_ncq_prio_enable,
+#ifdef MY_ABC_HERE
+	&dev_attr_syno_deep_sleep_support,
+	&dev_attr_syno_deep_sleep_ctrl,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	&dev_attr_syno_disk_latency_read_hist,
+	&dev_attr_syno_disk_latency_write_hist,
+	&dev_attr_syno_disk_latency_other_hist,
+	&dev_attr_syno_disk_latency_stat,
+#ifdef MY_ABC_HERE
+	&dev_attr_syno_disk_seq_stat,
+#endif /* MY_ABC_HERE */
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	&dev_attr_syno_pwr_reset_count,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	&dev_attr_syno_sata_error_event_debug,
+#endif /* MY_ABC_HERE */
 	NULL
 };
 EXPORT_SYMBOL_GPL(ahci_sdev_attrs);
@@ -165,6 +239,9 @@ struct ata_port_operations ahci_ops = {
 #endif
 	.port_start		= ahci_port_start,
 	.port_stop		= ahci_port_stop,
+#ifdef MY_ABC_HERE
+	.syno_recover 	= syno_ahci_force_intr,
+#endif /* MY_ABC_HERE */
 };
 EXPORT_SYMBOL_GPL(ahci_ops);
 
@@ -841,6 +918,114 @@ static void ahci_power_down(struct ata_port *ap)
 }
 #endif
 
+#ifdef MY_ABC_HERE
+/**
+ *	syno_need_ahci_software_activity - Get Extended AHCI attributes
+	named sw_activity
+ *	@ap: target ata port
+ *
+ *  The implementation reads extended AHCI attributes
+ *  This function aims to replace hard-coded model check of
+ *  syno_need_ahci_software_activity but not limited to it.
+ *
+ *	RETURNS:
+ *	0 if not found or failed, else returns sw_activity value.
+ */
+static int syno_need_ahci_software_activity(struct ata_port* ap)
+{
+	struct device_node *pSlotNode = NULL;
+	struct device_node *pAhciNode = NULL;
+	int sw_activity = 0; /* Do NOT set software activity by default */
+
+	if (!ap) {
+		goto Err;
+	}
+
+	for_each_child_of_node(of_root, pSlotNode) {
+		if (ap->ops->syno_compare_node_info(ap, pSlotNode)) {
+			break;
+		}
+	}
+
+	if (!pSlotNode) {
+		printk(KERN_ERR "Cannot find slot node of this ata_port.\n");
+		goto Err;
+	}
+
+	pAhciNode = of_get_child_by_name(pSlotNode, DT_AHCI);
+	of_node_put(pSlotNode);
+	if (!pAhciNode) {
+		printk(KERN_WARNING "No AHCI child node.\n");
+		goto Err;
+	}
+
+	if (of_property_read_u32(pAhciNode, DT_PROPERTY_SW_ACTIVITY, &sw_activity)) {
+		sw_activity = 0; /* Do NOT set software activity if NOT found */
+	}
+	of_node_put(pAhciNode);
+
+Err:
+	return sw_activity;
+}
+
+int __syno_ahci_disk_led_enable(struct ata_port *ap, const int iValue)
+{
+	int ret = -EINVAL;
+	struct ahci_port_priv *pp = NULL;
+	struct ahci_em_priv *emp = NULL;
+	struct ata_link *link = NULL;
+	unsigned long flags;
+
+	if (NULL == ap) {
+		goto ERROR;
+	}
+
+	// del old timer
+	pp = ap->private_data;
+	spin_lock_irqsave(ap->lock, flags);
+	ata_for_each_link(link, ap, EDGE) {
+		emp = &pp->em_priv[link->pmp];
+		emp->saved_activity = emp->activity = 0;
+		del_timer(&emp->timer);
+	}
+
+	if (iValue) {
+		ap->flags |= ATA_FLAG_SW_ACTIVITY;
+		ata_for_each_link(link, ap, EDGE) {
+			ahci_init_sw_activity(link);
+		}
+	} else {
+		ap->flags &= ~ATA_FLAG_SW_ACTIVITY;
+		ata_for_each_link(link, ap, EDGE) {
+			link->flags &= ~ATA_LFLAG_SW_ACTIVITY;
+		}
+	}
+	spin_unlock_irqrestore(ap->lock, flags);
+	ret = 0;
+
+ERROR:
+	return ret;
+}
+
+extern struct ata_port *syno_ata_port_get_by_port(const unsigned short diskPort);
+/**
+ * This function is used for AHCI software activity led by disk port.
+ * Disk port would be remapped to scsi host number.
+ *
+ * @param diskPort [IN] is disk port index
+ * @param iValue   [IN] is the value going to set.
+ */
+int syno_ahci_disk_led_enable_by_port(const unsigned short diskPort, const int iValue)
+{
+	struct ata_port *ap = NULL;
+
+	ap = syno_ata_port_get_by_port(diskPort);
+
+	return __syno_ahci_disk_led_enable(ap, iValue);
+}
+EXPORT_SYMBOL(syno_ahci_disk_led_enable_by_port);
+#endif /* MY_ABC_HERE */
+
 static void ahci_start_port(struct ata_port *ap)
 {
 	struct ahci_host_priv *hpriv = ap->host->private_data;
@@ -882,6 +1067,12 @@ static void ahci_start_port(struct ata_port *ap)
 			}
 		}
 	}
+
+#ifdef MY_ABC_HERE
+	if (syno_need_ahci_software_activity(ap)) {
+		ap->flags |= ATA_FLAG_SW_ACTIVITY;
+	}
+#endif /* MY_ABC_HERE */
 
 	if (ap->flags & ATA_FLAG_SW_ACTIVITY)
 		ata_for_each_link(link, ap, EDGE)
@@ -927,6 +1118,9 @@ int ahci_reset_controller(struct ata_host *host)
 		tmp = readl(mmio + HOST_CTL);
 		if ((tmp & HOST_RESET) == 0) {
 			writel(tmp | HOST_RESET, mmio + HOST_CTL);
+#ifdef MY_DEF_HERE
+			udelay(1);
+#endif /* MY_DEF_HERE */
 			readl(mmio + HOST_CTL); /* flush */
 		}
 
@@ -974,6 +1168,218 @@ static void ahci_sw_activity(struct ata_link *link)
 		mod_timer(&emp->timer, jiffies + msecs_to_jiffies(10));
 }
 
+#ifdef MY_ABC_HERE
+static int syno_sw_activity(struct ata_port* ap, u32 state)
+{
+	/* Doesn't initialized */
+	if (NULL == gpGreenLedMap) {
+		return 0;
+	}
+
+	/* Do nothing when SYNO_LED_BLINK_OFF */
+	if (SYNO_LED_BLINK_OFF == state) {
+		return 0;
+	}
+
+	syno_ledtrig_active_set(gpGreenLedMap[ap->syno_internal_slot_index]);
+
+	return 0;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_DEF_HERE
+static int sw_activity_by_ledtrig_disk_syno(struct ata_port* ap, u32 state)
+{
+	int ret = -EINVAL;
+	struct device_node *pSlotNode = NULL;
+	struct device_node *pLedNode = NULL;
+	struct led_classdev *led_cdev = NULL;
+
+	if (!ap) {
+		goto Err;
+	}
+
+	for_each_child_of_node(of_root, pSlotNode) {
+		if (ap->ops->syno_compare_node_info(ap, pSlotNode)) {
+			break;
+		}
+	}
+	if (!pSlotNode) {
+		goto Err;
+	}
+
+	pLedNode = of_parse_phandle(pSlotNode, DT_HDD_GREEN_LED, 0);
+	of_node_put(pSlotNode);
+	if (!pLedNode) {
+		goto Err;
+	}
+
+	led_cdev = of_leddev_get(pLedNode);
+	of_node_put(pLedNode);
+	if (IS_ERR(led_cdev)) {
+		goto Err;
+	}
+
+	if (SYNO_LED_BLINK_ON == state) {
+		ledtrig_syno_disk_activity_on(led_cdev);
+	}
+
+	ret = 0;
+
+Err:
+	return ret;
+}
+#endif /* MY_DEF_HERE */
+
+#ifdef MY_DEF_HERE
+/**
+ *	syno_set_blink_gpio - Set led-blinking state of given ata port
+ *	@ap: target ata port
+ *	@state: 0 for SYNO_LED_BLINK_OFF; 1 for SYNO_LED_BLINK_ON
+ *
+ *	The implementation reads information of pin from device tree, and
+ *	set it by input state.
+ *
+ *	RETURNS:
+ *	0 on success, -errno otherwise.
+ */
+static int syno_set_blink_gpio(struct ata_port* ap, u32 state)
+{
+	int ret = -EINVAL;
+	struct device_node *pSlotNode = NULL;
+	struct device_node *pLedNode = NULL;
+	u32 pinInfo[SYNO_GPIO_INDEX_MAX] = {0};
+
+	if (!ap) {
+		goto Err;
+	}
+
+	for_each_child_of_node(of_root, pSlotNode) {
+		if (ap->ops->syno_compare_node_info(ap, pSlotNode)) {
+			break;
+		}
+	}
+	if (!pSlotNode) {
+		printk(KERN_ERR "Cannot find slot node of this ata_port.\n");
+		goto Err;
+	}
+
+	pLedNode = of_get_child_by_name(pSlotNode, DT_HDD_ACT_LED);
+	of_node_put(pSlotNode);
+	if (!pLedNode) {
+		printk(KERN_WARNING "No ACT LED pin.\n");
+		goto Err;
+	}
+
+	if (of_property_read_u32_array(pLedNode, DT_SYNO_GPIO, pinInfo, SYNO_GPIO_INDEX_MAX)) {
+		printk(KERN_ERR "Cannot find pin information.\n");
+		goto Err;
+	}
+	of_node_put(pLedNode);
+
+	if (pinInfo[SYNO_POLARITY_PIN] == state) {
+		SYNO_GPIO_WRITE(pinInfo[SYNO_GPIO_PIN], 1);
+	} else {
+		SYNO_GPIO_WRITE(pinInfo[SYNO_GPIO_PIN], 0);
+	}
+	ret = 0;
+
+Err:
+	return ret;
+}
+#endif /* MY_DEF_HERE */
+
+#ifdef MY_ABC_HERE
+static void syno_setup_blink_method(struct ata_port* ap)
+{
+	struct ahci_port_priv *pp = ap->private_data;
+	struct device_node *slot_node = NULL;
+	const char *led_type = NULL;
+
+	/* Default not implement */
+	pp->syno_set_blink = NULL;
+
+	for_each_child_of_node(of_root, slot_node) {
+		if (ap->ops->syno_compare_node_info(ap, slot_node)) {
+			break;
+		}
+	}
+	if (!slot_node) {
+		goto END;
+	}
+
+	of_property_read_string(slot_node, DT_HDD_LED_TYPE, &led_type);
+	of_node_put(slot_node);
+
+#ifdef MY_ABC_HERE
+	if ((0 == strcmp(led_type, DT_HDD_LED_TYPE_LP3943)) || (0 == strcmp(led_type, DT_HDD_LED_TYPE_ATMEGA1608))) {
+		pp->syno_set_blink = &syno_sw_activity;
+		goto END;
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_DEF_HERE
+	if (0 == strcmp(led_type, DT_HDD_LED_TYPE_GPIO)) {
+		pp->syno_set_blink = &syno_set_blink_gpio;
+		goto END;
+	}
+#endif /* MY_DEF_HERE */
+
+#ifdef MY_DEF_HERE
+	if (0 == strcmp(led_type, DT_HDD_LED_TYPE_TRIG_DISK_SYNO)) {
+		pp->syno_set_blink = &sw_activity_by_ledtrig_disk_syno;
+		goto END;
+	}
+#endif /* MY_DEF_HERE */
+
+END:
+	return;
+}
+
+static void syno_ahci_sw_activity_blink(struct timer_list *t)
+{
+	struct ahci_em_priv *emp = from_timer(emp, t, timer);
+	struct ata_port *ap = emp->link->ap;
+	struct ahci_port_priv *pp = ap->private_data;
+	unsigned long flags;
+	struct Scsi_Host *shost;
+	struct scsi_device *sdev;
+
+	shost = scsi_host_get(ap->scsi_host);
+
+	if (NULL == shost) {
+		goto DO_NOTHING;
+	}
+	list_for_each_entry(sdev, &shost->__devices, siblings) {
+		goto DO_BLINK;
+	}
+	goto DO_NOTHING;
+
+DO_BLINK:
+	/* check to see if we've had activity.  If so,
+	 * toggle state of LED and reset timer.  If not,
+	 * turn LED to desired idle state.
+	 */
+	if (!pp->syno_set_blink) {
+		goto DO_NOTHING;
+	}
+
+	spin_lock_irqsave(ap->lock, flags);
+	if (emp->saved_activity != emp->activity) {
+		emp->saved_activity = emp->activity;
+
+		/* toggle state */
+		pp->syno_set_blink(ap, SYNO_LED_BLINK_ON);
+		mod_timer(&emp->timer, jiffies + msecs_to_jiffies(100));
+	} else {
+		pp->syno_set_blink(ap, SYNO_LED_BLINK_OFF);
+	}
+	spin_unlock_irqrestore(ap->lock, flags);
+
+DO_NOTHING:
+	return;
+}
+#else /* !MY_ABC_HERE */
 static void ahci_sw_activity_blink(struct timer_list *t)
 {
 	struct ahci_em_priv *emp = from_timer(emp, t, timer);
@@ -1017,6 +1423,7 @@ static void ahci_sw_activity_blink(struct timer_list *t)
 	spin_unlock_irqrestore(ap->lock, flags);
 	ap->ops->transmit_led_message(ap, led_message, 4);
 }
+#endif /* MY_ABC_HERE */
 
 static void ahci_init_sw_activity(struct ata_link *link)
 {
@@ -1027,11 +1434,19 @@ static void ahci_init_sw_activity(struct ata_link *link)
 	/* init activity stats, setup timer */
 	emp->saved_activity = emp->activity = 0;
 	emp->link = link;
+
+#ifdef MY_ABC_HERE
+	syno_setup_blink_method(ap);
+
+	timer_setup(&emp->timer, syno_ahci_sw_activity_blink, 0);
+	link->flags |= ATA_LFLAG_SW_ACTIVITY;
+#else /* MY_ABC_HERE */
 	timer_setup(&emp->timer, ahci_sw_activity_blink, 0);
 
 	/* check our blink policy and set flag for link if it's enabled */
 	if (emp->blink_policy)
 		link->flags |= ATA_LFLAG_SW_ACTIVITY;
+#endif /* MY_ABC_HERE */
 }
 
 int ahci_reset_em(struct ata_host *host)
@@ -1239,6 +1654,9 @@ void ahci_init_controller(struct ata_host *host)
 	int i;
 	void __iomem *port_mmio;
 	u32 tmp;
+#ifdef MY_ABC_HERE
+	struct pci_dev *pdev = NULL;
+#endif /* MY_ABC_HERE */
 
 	for (i = 0; i < host->n_ports; i++) {
 		struct ata_port *ap = host->ports[i];
@@ -1249,6 +1667,14 @@ void ahci_init_controller(struct ata_host *host)
 
 		ahci_port_init(host->dev, ap, i, mmio, port_mmio);
 	}
+#ifdef MY_ABC_HERE
+	pdev = to_pci_dev(host->dev);
+	if (0 == syno_jmb58x_check(pdev->vendor, pdev->device)) {
+		syno_ahci_multi_irqs_intr = &syno_ahci_multi_irqs_intr_hard_jmb;
+	} else {
+		syno_ahci_multi_irqs_intr = &ahci_multi_irqs_intr_hard;
+	}
+#endif /* MY_ABC_HERE */
 
 	tmp = readl(mmio + HOST_CTL);
 	VPRINTK("HOST_CTL 0x%x\n", tmp);
@@ -1462,6 +1888,18 @@ int ahci_do_softreset(struct ata_link *link, unsigned int *class,
 
  fail:
 	ata_link_err(link, "softreset failed (%s)\n", reason);
+#ifdef MY_ABC_HERE
+	if (-EBUSY == rc) {
+		ata_link_printk(link, KERN_ERR, "SRST fail, set srst fail flag\n");
+		link->uiSflags |= ATA_SYNO_FLAG_SRST_FAIL;
+	}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+	/* re-enable FBS if disabled before */
+	if (fbs_disabled)
+		ahci_enable_fbs(ap);
+#endif /* MY_ABC_HERE */
 	return rc;
 }
 
@@ -1693,6 +2131,40 @@ static void ahci_fbs_dec_intr(struct ata_port *ap)
 		dev_err(ap->host->dev, "failed to clear device error\n");
 }
 
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+static int irqoff_error_case (struct ata_port *ap, u32 irq_stat)
+{
+#ifdef MY_ABC_HERE
+	/* Only support deep sleep port, we can on ATA_PFLAG_SYNO_IRQ_OFF.
+	 * So if this case happened, we should BUG */
+	if (0 == iIsSynoDeepSleepSupport(ap) && !(ap->pflags & ATA_PFLAG_SYNO_DS_PWROFF)) {
+		printk("BUG!!! This port %d didn't support deep sleep\n", ap->print_id);
+		ap->pflags &= ~ATA_PFLAG_SYNO_IRQ_OFF;
+		return 1;
+	}
+#endif /* MY_ABC_HERE */
+
+	/* unknown & suprise interrupt */
+	if (!(irq_stat & (PORT_IRQ_PHYRDY | PORT_IRQ_CONNECT))) {
+		printk("WARNING: disk %d irq off but received un-wanted interrupts, reset now. irq_stat 0x%x\n",
+			ap->print_id, irq_stat);
+
+		return 1;
+	}
+
+	/* NOTE the caller must make sure, can on irq_off, so we just WARN_ON here. And still
+	 * let this interrupt ignore */
+	if (ap->nr_active_links && !(ap->pflags & ATA_PFLAG_SYNO_DS_PWROFF)) {
+		printk("WARNING: disk %d irq off but still have cmd. Reset now. irq_stat 0x%x\n",
+			ap->print_id, irq_stat);
+
+		return 1;
+	}
+
+	return 0;
+}
+#endif /* MY_ABC_HERE || MY_ABC_HERE */
+
 static void ahci_error_intr(struct ata_port *ap, u32 irq_stat)
 {
 	struct ahci_host_priv *hpriv = ap->host->private_data;
@@ -1727,13 +2199,39 @@ static void ahci_error_intr(struct ata_port *ap, u32 irq_stat)
 	active_ehi = &link->eh_info;
 
 	/* record irq stat */
+
+#ifdef MY_ABC_HERE
+	// ('\0' != host_ehi->desc[0]) is true when there is unhandle message is desc
+	// JMB585 raises BAD_PMP following a IFS sometimes and the IFS msg will be overwritten by BAD_PMP
+	if (unlikely((0 == syno_jmb58x_check(ap->host->vendor, ap->host->device))
+	    && (irq_stat & PORT_IRQ_BAD_PMP) && ('\0' != host_ehi->desc[0]))) {
+		irq_stat &= ~PORT_IRQ_BAD_PMP;
+	} else {
+		ata_ehi_clear_desc(host_ehi);
+		ata_ehi_push_desc(host_ehi, "irq_stat 0x%08x", irq_stat);
+	}
+#else /* MY_ABC_HERE */
 	ata_ehi_clear_desc(host_ehi);
 	ata_ehi_push_desc(host_ehi, "irq_stat 0x%08x", irq_stat);
+#endif /* MY_ABC_HERE */
 
 	/* AHCI needs SError cleared; otherwise, it might lock up */
 	ahci_scr_read(&ap->link, SCR_ERROR, &serror);
 	ahci_scr_write(&ap->link, SCR_ERROR, serror);
 	host_ehi->serror |= serror;
+
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+	/* irq_off case */
+	if (ap->pflags & ATA_PFLAG_SYNO_IRQ_OFF) {
+		/* Skip interrupt handler if no suprise */
+		if (irqoff_error_case(ap, irq_stat)) {
+			WARN_ON(1);
+			host_ehi->action |= ATA_EH_RESET;
+		} else {
+			return;
+		}
+	}
+#endif /* MY_ABC_HERE || MY_ABC_HERE */
 
 	/* some controllers set IRQ_IF_ERR on device errors, ignore it */
 	if (hpriv->flags & AHCI_HFLAG_IGN_IRQ_IF_ERR)
@@ -1782,11 +2280,32 @@ static void ahci_error_intr(struct ata_port *ap, u32 irq_stat)
 			host_ehi->err_mask |= AC_ERR_ATA_BUS;
 			host_ehi->action |= ATA_EH_RESET;
 		}
-
+#ifdef MY_ABC_HERE
+		// if IFS and Proto error exist, we use workaround to check for the real error.
+		// The workaround only works for the first attempt.
+		if (unlikely(0 == syno_jmb58x_check(ap->host->vendor, ap->host->device) && // only JMB585 workaround
+		    (PORT_IRQ_IF_ERR & irq_stat) && (SERR_PROTOCOL & host_ehi->serror) && ATA_EH_MAX_TRIES == ap->eh_tries)) {
+			if (fbs_need_dec) {
+				irq_stat &= ~PORT_IRQ_IF_ERR;
+				active_ehi->uiJM585DubiosIFSProtoFlag |= ATA_SYNO_FLAG_JM585_READ_LOG;
+			} else {
+				host_ehi->uiJM585DubiosIFSProtoFlag |= ATA_SYNO_FLAG_JM585_READ_LOG;
+			}
+		}
+#endif /* MY_ABC_HERE */
 		ata_ehi_push_desc(host_ehi, "interface fatal error");
 	}
 
 	if (irq_stat & (PORT_IRQ_CONNECT | PORT_IRQ_PHYRDY)) {
+#ifdef MY_ABC_HERE
+		if (irq_stat & PORT_IRQ_CONNECT) {
+			ap->pflags |= ATA_PFLAG_SYNO_BOOT_PROBE;
+		}
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+		syno_ata_detection_info_print(ap);
+#endif /* MY_ABC_HERE */
+
 		ata_ehi_hotplugged(host_ehi);
 		ata_ehi_push_desc(host_ehi, "%s",
 			irq_stat & PORT_IRQ_CONNECT ?
@@ -1829,6 +2348,25 @@ static void ahci_handle_port_interrupt(struct ata_port *ap,
 	}
 
 	if (status & PORT_IRQ_SDB_FIS) {
+#ifdef MY_ABC_HERE
+		if (ap->pflags & ATA_PFLAG_SYNO_IRQ_OFF) {
+			/* irq_off case */
+			u32 sntf = 0;
+			sntf = readl(port_mmio + PORT_SCR_NTF);
+			if (sntf & (1<< SATA_PMP_CTRL_PORT)) {
+				if (status & (PORT_IRQ_PHYRDY | PORT_IRQ_CONNECT)) {
+					/* NOTE the caller must make sure, can on irq_off, so we just WARN_ON here.
+					 * The following action is call sata_async_notification()
+					 * and it will call EH.
+					 */
+					printk("WARNING: pmp disk %d irq off but still have cmd. Reset now. irq_stat 0x%x\n",
+							ap->print_id, status);
+					ap->pflags &= ~ATA_PFLAG_SYNO_IRQ_OFF;
+				}
+			}
+		}
+#endif /* MY_ABC_HERE */
+
 		/* If SNotification is available, leave notification
 		 * handling to sata_async_notification().  If not,
 		 * emulate it by snooping SDB FIS RX area.
@@ -1888,6 +2426,59 @@ static void ahci_handle_port_interrupt(struct ata_port *ap,
 	}
 }
 
+#ifdef MY_ABC_HERE
+static void syno_internal_ahci_handle_port_interrupt(struct ata_port *ap,
+				       void __iomem *port_mmio, u32 status)
+{
+	struct ata_eh_info *ehi = &ap->link.eh_info;
+	struct ahci_port_priv *pp = ap->private_data;
+	int resetting = !!(ap->pflags & ATA_PFLAG_RESETTING);
+	u32 qc_active = 0;
+	int rc;
+
+	/* ignore BAD_PMP while resetting */
+	if (unlikely(resetting))
+		status &= ~PORT_IRQ_BAD_PMP;
+
+	if (sata_lpm_ignore_phy_events(&ap->link)) {
+		status &= ~PORT_IRQ_PHYRDY;
+		ahci_scr_write(&ap->link, SCR_ERROR, SERR_PHYRDY_CHG);
+	}
+
+	if (unlikely(status & PORT_IRQ_ERROR)) {
+		ahci_error_intr(ap, status);
+		return;
+	}
+
+	/* pp->active_link is not reliable once FBS is enabled, both
+	 * PORT_SCR_ACT and PORT_CMD_ISSUE should be checked because
+	 * NCQ and non-NCQ commands may be in flight at the same time.
+	 */
+	if (pp->fbs_enabled) {
+		if (ap->qc_active) {
+			qc_active = readl(port_mmio + PORT_SCR_ACT);
+			qc_active |= readl(port_mmio + PORT_CMD_ISSUE);
+		}
+	} else {
+		/* pp->active_link is valid iff any command is in flight */
+		if (ap->qc_active && pp->active_link->sactive)
+			qc_active = readl(port_mmio + PORT_SCR_ACT);
+		else
+			qc_active = readl(port_mmio + PORT_CMD_ISSUE);
+	}
+
+
+	rc = ata_qc_complete_multiple(ap, qc_active);
+
+	/* while resetting, invalid completions are expected */
+	if (unlikely(rc < 0 && !resetting)) {
+		ehi->err_mask |= AC_ERR_HSM;
+		ehi->action |= ATA_EH_RESET;
+		ata_port_freeze(ap);
+	}
+}
+#endif /* MY_ABC_HERE */
+
 static void ahci_port_intr(struct ata_port *ap)
 {
 	void __iomem *port_mmio = ahci_port_base(ap);
@@ -1896,8 +2487,62 @@ static void ahci_port_intr(struct ata_port *ap)
 	status = readl(port_mmio + PORT_IRQ_STAT);
 	writel(status, port_mmio + PORT_IRQ_STAT);
 
-	ahci_handle_port_interrupt(ap, port_mmio, status);
+#ifdef MY_ABC_HERE
+	if (likely(ap->syno_ahci_handle_port_interrupt)) {
+		ap->syno_ahci_handle_port_interrupt(ap, port_mmio, status);
+	}
+#else /* MY_ABC_HERE */
+       ahci_handle_port_interrupt(ap, port_mmio, status);
+#endif /* MY_ABC_HERE */
 }
+
+#ifdef MY_ABC_HERE
+static void syno_ahci_force_intr(struct ata_port *ap)
+{
+	void __iomem *port_mmio = ahci_port_base(ap);
+	u32 status;
+
+	ata_port_err(ap, "do detect tries %d\n", ap->syno_recover_tries);
+
+	status = readl(port_mmio + PORT_IRQ_STAT);
+	writel(status, port_mmio + PORT_IRQ_STAT);
+
+	if (sata_lpm_ignore_phy_events(&ap->link)) {
+		status &= ~PORT_IRQ_PHYRDY;
+		ahci_scr_write(&ap->link, SCR_ERROR, SERR_PHYRDY_CHG);
+	}
+
+	ahci_error_intr(ap, status);
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+static irqreturn_t syno_ahci_multi_irqs_intr_hard_jmb(int irq, void *dev_instance)
+{
+	struct ata_port *ap = dev_instance;
+	void __iomem *port_mmio = ahci_port_base(ap);
+	u32 status;
+
+	VPRINTK("ENTER\n");
+
+	status = readl(port_mmio + PORT_IRQ_STAT);
+	writel(status & ~(PORT_IRQ_PHYRDY | PORT_IRQ_CONNECT), port_mmio + PORT_IRQ_STAT);
+
+	spin_lock(ap->lock);
+#ifdef MY_ABC_HERE
+	if (likely(ap->syno_ahci_handle_port_interrupt)) {
+		ap->syno_ahci_handle_port_interrupt(ap, port_mmio, status);
+	}
+#else /* MY_ABC_HERE */
+	ahci_handle_port_interrupt(ap, port_mmio, status);
+#endif /* MY_ABC_HERE */
+	spin_unlock(ap->lock);
+
+	VPRINTK("EXIT\n");
+
+	return IRQ_HANDLED;
+}
+#endif /* MY_ABC_HERE */
 
 static irqreturn_t ahci_multi_irqs_intr_hard(int irq, void *dev_instance)
 {
@@ -1911,7 +2556,13 @@ static irqreturn_t ahci_multi_irqs_intr_hard(int irq, void *dev_instance)
 	writel(status, port_mmio + PORT_IRQ_STAT);
 
 	spin_lock(ap->lock);
+#ifdef MY_ABC_HERE
+	if (likely(ap->syno_ahci_handle_port_interrupt)) {
+		ap->syno_ahci_handle_port_interrupt(ap, port_mmio, status);
+	}
+#else /* MY_ABC_HERE */
 	ahci_handle_port_interrupt(ap, port_mmio, status);
+#endif /* MY_ABC_HERE */
 	spin_unlock(ap->lock);
 
 	VPRINTK("EXIT\n");
@@ -2073,7 +2724,13 @@ void ahci_error_handler(struct ata_port *ap)
 {
 	struct ahci_host_priv *hpriv = ap->host->private_data;
 
+#ifdef MY_ABC_HERE
+	struct ata_eh_context *host_ehc = &ap->link.eh_context;
+	// the work around need to thaw the ata port for reading ncq log
+	if (!(ap->pflags & ATA_PFLAG_FROZEN) || host_ehc->i.uiJM585DubiosIFSProtoFlag) {
+#else /* MY_ABC_HERE */
 	if (!(ap->pflags & ATA_PFLAG_FROZEN)) {
+#endif /* MY_ABC_HERE */
 		/* restart engine */
 		hpriv->stop_engine(ap);
 		hpriv->start_engine(ap);
@@ -2559,7 +3216,12 @@ static int ahci_host_activate_multi_irqs(struct ata_host *host,
 			continue;
 		}
 
-		rc = devm_request_irq(host->dev, irq, ahci_multi_irqs_intr_hard,
+		rc = devm_request_irq(host->dev, irq,
+#ifdef MY_ABC_HERE
+				syno_ahci_multi_irqs_intr,
+#else /* MY_ABC_HERE */
+				ahci_multi_irqs_intr_hard,
+#endif /* MY_ABC_HERE */
 				0, pp->irq_desc, host->ports[i]);
 
 		if (rc)
@@ -2569,6 +3231,53 @@ static int ahci_host_activate_multi_irqs(struct ata_host *host,
 
 	return ata_host_register(host, sht);
 }
+
+#ifdef MY_ABC_HERE
+static bool syno_internal_slot_check(struct ata_port* ap)
+{
+	struct device_node *pSlotNode = NULL;
+	struct device_node *pAhciNode = NULL;
+	bool blRet = false;
+	int index = 0;
+
+	if (!ap) {
+		goto END;
+	}
+
+	for_each_child_of_node(of_root, pSlotNode) {
+		if (ap->ops->syno_compare_node_info(ap, pSlotNode)) {
+			break;
+		}
+	}
+
+	if (!pSlotNode) {
+		goto END;
+	}
+
+	if (pSlotNode->full_name && 1 == sscanf(pSlotNode->full_name, DT_INTERNAL_SLOT"@%d", &index)) {
+		/*
+		 * At first, we only apply internal slot mode on those models which have "internal_mode" attr in dts
+		 * If we want to apply to all ahci models one day, just remove the comparison as below
+		 */
+		if (NULL == (pAhciNode = of_get_child_by_name(pSlotNode, DT_AHCI))) {
+			goto END;
+		}
+		if (of_property_read_bool(pAhciNode, DT_AHCI_INTERNAL_MODE)) {
+			blRet = true;
+			goto END;
+		}
+	}
+
+END:
+	if (pAhciNode) {
+		of_node_put(pAhciNode);
+	}
+	if (pSlotNode) {
+		of_node_put(pSlotNode);
+	}
+	return blRet;
+}
+#endif /* MY_ABC_HERE */
 
 /**
  *	ahci_host_activate - start AHCI host, request IRQs and register it
@@ -2586,6 +3295,10 @@ int ahci_host_activate(struct ata_host *host, struct scsi_host_template *sht)
 	struct ahci_host_priv *hpriv = host->private_data;
 	int irq = hpriv->irq;
 	int rc;
+#ifdef MY_ABC_HERE
+	int i = 0;
+	struct ata_port *ap = NULL;
+#endif /* MY_ABC_HERE */
 
 	if (hpriv->flags & AHCI_HFLAG_MULTI_MSI) {
 		if (hpriv->irq_handler &&
@@ -2604,6 +3317,16 @@ int ahci_host_activate(struct ata_host *host, struct scsi_host_template *sht)
 				       IRQF_SHARED, sht);
 	}
 
+#ifdef MY_ABC_HERE
+	for (i = 0; i < host->n_ports; i++) {
+		ap = host->ports[i];
+		if (syno_internal_slot_check(ap)) {
+			ap->syno_ahci_handle_port_interrupt = &syno_internal_ahci_handle_port_interrupt;
+		} else {
+			ap->syno_ahci_handle_port_interrupt = &ahci_handle_port_interrupt;
+		}
+	}
+#endif /* MY_ABC_HERE */
 
 	return rc;
 }

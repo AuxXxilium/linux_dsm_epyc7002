@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * AppArmor security module
@@ -222,6 +225,7 @@ void aa_free_profile(struct aa_profile *profile)
 	aa_free_file_rules(&profile->file);
 	aa_free_cap_rules(&profile->caps);
 	aa_free_rlimit_rules(&profile->rlimits);
+	kfree_sensitive(profile->net_compat);
 
 	for (i = 0; i < profile->xattr_count; i++)
 		kfree_sensitive(profile->xattrs[i]);
@@ -1004,9 +1008,12 @@ ssize_t aa_replace_profiles(struct aa_ns *policy_ns, struct aa_label *label,
 
 		if (ent->old && ent->old->rawdata == ent->new->rawdata) {
 			/* dedup actual profile replacement */
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 			audit_policy(label, op, ns_name, ent->new->base.hname,
 				     "same as current profile, skipping",
 				     error);
+#endif /* MY_ABC_HERE */
 			/* break refcount cycle with proxy. */
 			aa_put_proxy(ent->new->label.proxy);
 			ent->new->label.proxy = NULL;
@@ -1017,8 +1024,14 @@ ssize_t aa_replace_profiles(struct aa_ns *policy_ns, struct aa_label *label,
 		 * TODO: finer dedup based on profile range in data. Load set
 		 * can differ but profile may remain unchanged
 		 */
+#ifdef MY_ABC_HERE
+		if (error)
+			audit_policy(label, op, ns_name, ent->new->base.hname, NULL,
+				     error);
+#else /* MY_ABC_HERE */
 		audit_policy(label, op, ns_name, ent->new->base.hname, NULL,
 			     error);
+#endif /* MY_ABC_HERE */
 
 		if (ent->old) {
 			share_name(ent->old, ent->new);
@@ -1056,8 +1069,14 @@ fail_lock:
 	/* audit cause of failure */
 	op = (ent && !ent->old) ? OP_PROF_LOAD : OP_PROF_REPL;
 fail:
+#ifdef MY_ABC_HERE
+	if (error)
+		  audit_policy(label, op, ns_name, ent ? ent->new->base.hname : NULL,
+			       info, error);
+#else /* MY_ABC_HERE */
 	  audit_policy(label, op, ns_name, ent ? ent->new->base.hname : NULL,
 		       info, error);
+#endif /* MY_ABC_HERE */
 	/* audit status that rest of profiles in the atomic set failed too */
 	info = "valid profile in failed atomic policy load";
 	list_for_each_entry(tmp, &lh, list) {
@@ -1146,8 +1165,11 @@ ssize_t aa_remove_profiles(struct aa_ns *policy_ns, struct aa_label *subj,
 	}
 
 	/* don't fail removal if audit fails */
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 	(void) audit_policy(subj, OP_PROF_RM, ns_name, name, info,
 			    error);
+#endif /* MY_ABC_HERE */
 	aa_put_ns(ns);
 	aa_put_profile(profile);
 	return size;

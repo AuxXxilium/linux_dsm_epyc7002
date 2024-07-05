@@ -804,7 +804,7 @@ config DEVICE_PRIVATE
 	  group of devices). You likely also want to select HMM_MIRROR.
 
 config VMAP_PFN
-	bool
+	bool "VMAP_PFN"
 
 config FRAME_VECTOR
 	bool

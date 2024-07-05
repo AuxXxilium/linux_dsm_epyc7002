@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * NTP state machine interfaces and logic.
@@ -570,6 +573,10 @@ static bool sync_cmos_clock(void)
 	int rc = -EPROTO;
 	long target_nsec = NSEC_PER_SEC / 2;
 
+#ifdef MY_ABC_HERE
+	return false;
+#endif
+	
 	if (!IS_ENABLED(CONFIG_GENERIC_CMOS_UPDATE))
 		return false;
 

@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Copyright (c) 2000-2020 Synology Inc. All rights reserved.
+
+[ -z "$__INCLUDE_ENV__" ] || return
+readonly __INCLUDE_ENV__=defined
+
+
+export ARCH="${ARCH:=x86_64}"
+export CROSS_COMPILE="${ToolChainPrefix:=}"
+export KCFLAGS="-fdiagnostics-color=always -Werror"
+
+_init()
+{
+    C_INFO="\e[1;32m"
+    C_WARN="\e[1;33m"
+    C_ERROR="\e[1;31m"
+    C_CLEAR="\e[m"
+
+    # simple alternatives of utilities from lnxscripts
+    local _func
+    for _func in INFO ERROR WARNING; do
+        if ! type -p "$_func"; then
+            eval "$_func() { echo \"[$_func] \$*\"; }"
+        fi
+    done
+}
+
+INFO()
+{
+    echo -e "[${C_INFO:-}INFO${C_CLEAR:-}] $*"
+}
+
+WARNING()
+{
+    echo -e "[${C_WARN:-}WARNING${C_CLEAR:-}] $*"
+}
+
+ERROR()
+{
+    echo -e "[${C_ERROR:-}Error${C_CLEAR:-}] $*"
+}
+
+env_check_command() # $1: command
+{
+    if ! command -v "$1" &>/dev/null; then
+        ERROR "'$1' is not found"
+        return 1
+    fi
+}
+
+env_detect_clang()
+{
+    env_check_command "clang"
+}
+
+env_detect_llvm()
+{
+    env_check_command "lld" # FIXME
+}
+
+env_enable_clang()
+{
+    export CC="clang"
+}
+
+env_enable_llvm()
+{
+    export LLVM=1
+}
+
+_init

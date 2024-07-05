@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  *  Copyright (C) 1991, 1992  Linus Torvalds
  *  Copyright (C) 2000, 2001, 2002 Andi Kleen, SuSE Labs
@@ -69,7 +72,12 @@ static void printk_stack_address(unsigned long address, int reliable,
 				 const char *log_lvl)
 {
 	touch_nmi_watchdog();
+#ifdef MY_ABC_HERE
+	printk("%s [<%px>] %s%pB\n", log_lvl, (void *)address, reliable ? "" : "? ",
+			(void *)address);
+#else /* MY_ABC_HERE */
 	printk("%s %s%pB\n", log_lvl, reliable ? "" : "? ", (void *)address);
+#endif /* MY_ABC_HERE */
 }
 
 static int copy_code(struct pt_regs *regs, u8 *buf, unsigned long src,

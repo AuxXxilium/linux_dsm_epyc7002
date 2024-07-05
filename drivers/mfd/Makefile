@@ -253,6 +253,11 @@ obj-$(CONFIG_MFD_ALTERA_SYSMGR) += altera-sysmgr.o
 obj-$(CONFIG_MFD_STPMIC1)	+= stpmic1.o
 obj-$(CONFIG_MFD_SUN4I_GPADC)	+= sun4i-gpadc.o
 
+ifeq ($(CONFIG_SYNO_LSP_RTD1619B), y)
+obj-$(CONFIG_MFD_APW888X) += apw888x-core.o
+obj-$(CONFIG_MFD_APW8889_I2C) += apw8889-i2c.o
+obj-$(CONFIG_MFD_APW8886_I2C) += apw8886-i2c.o
+endif # CONFIG_SYNO_LSP_RTD1619B
 obj-$(CONFIG_MFD_STM32_LPTIMER)	+= stm32-lptimer.o
 obj-$(CONFIG_MFD_STM32_TIMERS) 	+= stm32-timers.o
 obj-$(CONFIG_MFD_MXS_LRADC)     += mxs-lradc.o

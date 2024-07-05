@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  SATA specific part of ATA helper library
@@ -17,9 +20,17 @@
 #include "libata-transport.h"
 
 /* debounce timing parameters in msecs { interval, duration, timeout } */
+#ifdef MY_ABC_HERE
+const unsigned long sata_deb_timing_normal[]		= {   5,  100, 6000 };
+#else /* MY_ABC_HERE */
 const unsigned long sata_deb_timing_normal[]		= {   5,  100, 2000 };
+#endif /* MY_ABC_HERE */
 EXPORT_SYMBOL_GPL(sata_deb_timing_normal);
+#ifdef MY_ABC_HERE
+const unsigned long sata_deb_timing_hotplug[]		= {  25,  500, 6000 };
+#else /* MY_ABC_HERE */
 const unsigned long sata_deb_timing_hotplug[]		= {  25,  500, 2000 };
+#endif  /* MY_ABC_HERE */
 EXPORT_SYMBOL_GPL(sata_deb_timing_hotplug);
 const unsigned long sata_deb_timing_long[]		= { 100, 2000, 5000 };
 EXPORT_SYMBOL_GPL(sata_deb_timing_long);
@@ -592,7 +603,12 @@ int sata_link_hardreset(struct ata_link *link, const unsigned long *timing,
 
 			pmp_deadline = ata_deadline(jiffies,
 						    ATA_TMOUT_PMP_SRST_WAIT);
+#ifdef MY_ABC_HERE
+			/* SSD Intel S4500 3.84TB Hotplug 100% failed on SATA controller Marvell 88SE9235. */
+			if (time_before(pmp_deadline, deadline))
+#else
 			if (time_after(pmp_deadline, deadline))
+#endif /* MY_ABC_HERE */
 				pmp_deadline = deadline;
 			ata_wait_ready(link, pmp_deadline, check_ready);
 		}
@@ -609,11 +625,160 @@ int sata_link_hardreset(struct ata_link *link, const unsigned long *timing,
 		if (online)
 			*online = false;
 		ata_link_err(link, "COMRESET failed (errno=%d)\n", rc);
+#ifdef MY_ABC_HERE
+		if (-EBUSY == rc || -EIO == rc) {
+			ata_link_printk(link, KERN_ERR, "COMRESET fail, set COMRESET fail flag\n");
+			link->uiSflags |= ATA_SYNO_FLAG_COMRESET_FAIL;
+		}
+#endif /* MY_ABC_HERE */
 	}
 	DPRINTK("EXIT, rc=%d\n", rc);
 	return rc;
 }
 EXPORT_SYMBOL_GPL(sata_link_hardreset);
+
+#ifdef MY_ABC_HERE
+/* Calculate the complete commands latency and record into latency statisics.
+ *
+ * Disk drive could queue multiple waiting commands (NCQ)
+ * and one interrupt may carry multiple complete commands,
+ * So the wating time that command in the disk queue
+ * makes the latency time become inaccurate.
+ *
+ * To solve above problem, we try to estimate the processing time of one command.
+ *
+ * We use the some assumptions to estimate the latency.
+ * 1. When disk drive complete one command,
+ *    it would immediately process the next command in the queue.
+ * 2. In the short interval, all the command processing time may equally.
+ *
+ *
+ * The following example show how we get approximate latency.
+ *
+ * Si : the ith command send to the disk drive from host.
+ * Ci : the ith command is completed and report to host.
+ * I  : host generate interrupt and let software to check complete commands.
+ *
+ * Ex .
+ *   S1  S2  S3      S4          C1  C2  C3          C4
+ * ---|---|---|---|---|---|---|---|---|---|---|---|---|
+ *   1s          4s              8s   I          12s  I
+ *
+ * The first interrupt carry completed commands 1'st and 2'nd.
+ * The time that drive process this 2 commands sould be
+ * the time of disk drive complete the last command [1.] minus
+ * the time of disk drive start to process the first command in this interval [2.]
+ * And according the assumption 2., the approximate latency of this commands is
+ * the total process time divide the number of commands in this interrupt.
+ * So the latency of this 2 commands should be (9s - 1s) / 2 = 4s.
+ *
+ * [1.] we use the time of interrupt generate to approach completed time.
+ * [2.] we use the issue time of first command to approach the start time.
+ *
+ * The second interrupt carry completed commands 3'th and 4'th,
+ * we could use same way to get approximate latency of this commands.
+ * But according the assumption 1.,
+ * we do not use the issue time of first command to approach the start time,
+ * Actually, we should use the time of last interrupt to approach the start time.
+ * So the latency of this 2 commands should be (13s - 9s) / 2 = 2s.
+ *
+ */
+static void syno_ata_latency_calculate(struct ata_link *link, u64 u64AtaIntrTime)
+{
+	int iType					= 0;
+	unsigned int uBucketOffset	= 0;
+	u64 u64CmdStartTime			= 0;
+	u64 u64CmdLatencyTime		= 0;
+	u64 u64StepOffset			= 0;
+
+#ifdef MY_ABC_HERE
+	u8 u8LbaZone = link->ata_latency.u8CplCmdSeqLbaZone &
+		SYNO_SEQ_SAMPLE_LBA_ZONE_MASK;
+#endif /* MY_ABC_HERE */
+
+	if (0 == link->ata_latency.u16TotalCplCmdCnt) {
+		goto END;
+	}
+
+	/* get the qc complete time */
+	u64CmdStartTime = (link->ata_latency.u64FirstCmdStartTime
+						> link->ata_latency.u64LastIntrTime)
+									? link->ata_latency.u64FirstCmdStartTime
+									: link->ata_latency.u64LastIntrTime;
+	u64CmdLatencyTime = div_u64((u64AtaIntrTime - u64CmdStartTime),
+										link->ata_latency.u16TotalCplCmdCnt);
+
+#ifdef MY_ABC_HERE
+	if (SYNO_ALL_SEQ_READ == link->ata_latency.u8CplCmdSeqState) {
+		link->seq_stat.u64TotalSampleTime[u8LbaZone] += u64CmdLatencyTime *
+			link->ata_latency.u16CplCmdCnt[1];
+		link->seq_stat.u64TotalSampleBytes[u8LbaZone] += link->ata_latency.u32CplCmdBytes[1];
+		link->seq_stat.u64TotalSampleSkipBytes[u8LbaZone] += link->ata_latency.u32CplCmdSkipBytes[1];
+	}
+#endif /* MY_ABC_HERE */
+
+	/* calculate the latency buckets
+	 *
+	 * bucket[  0 ~ 31 ] : step is 32 us
+	 * bucket[ 32 ~ 63 ] : step is  1 ms
+	 * bucket[ 64 ~ 95 ] : step is 32 ms
+	 *
+	 * so the limit of latency is 1024 ms which is 20 bits or 0x100000
+	 *
+	 *   1 1 1 1 1   |   1 1 1 1 1   |   1 1 1 1 1   |   1 1 1 1 1
+	 *   0 ~ 31 us      32 ~ 1024 us     1 ~ 31 ms      32 ~ 1023 ms
+	 *
+	 */
+	/* shift to 32us */
+	u64StepOffset = (u64CmdLatencyTime >> 15);
+	/* calculate the offset of buckets with the latency time */
+	uBucketOffset = syno_ata_latency_bucket_offset_get(u64StepOffset);
+	u64StepOffset >>= (5 * uBucketOffset);
+	if (unlikely(31 < u64StepOffset)) {
+		uBucketOffset = (SYNO_LATENCY_BUCKETS_END - 1);
+		u64StepOffset = 31;
+	}
+
+	for (iType = 0 ; iType < SYNO_LATENCY_TYPE_COUNT; iType++) {
+		link->latency_stat.u64TotalTime[iType]
+				+= (u64CmdLatencyTime * link->ata_latency.u16CplCmdCnt[iType]);
+
+		link->ata_latency.u64TimeBuckets[iType][uBucketOffset][u64StepOffset]
+									+= link->ata_latency.u16CplCmdCnt[iType];
+	}
+
+	if (!link->sactive) {
+		/*
+		 * when the link is inactive, it means the whole batch is complete,
+		 * so we record the last qc complete time,
+		 * and use it to calculate the pending time between two batch.
+		 */
+		link->ata_latency.u64BatchComplete = u64AtaIntrTime;
+		link->latency_stat.u64TotalBatchCount += 1;
+		link->latency_stat.u64TotalBatchTime +=
+					(u64AtaIntrTime - link->ata_latency.u64BatchIssue);
+	}
+
+	/* update last intr time if there is any cmd been process */
+	link->ata_latency.u64LastIntrTime = u64AtaIntrTime;
+END:
+	/* reset the link ata latency state */
+	link->ata_latency.u64FirstCmdStartTime = 0;
+	link->ata_latency.u16TotalCplCmdCnt = 0;
+#ifdef MY_ABC_HERE
+	link->ata_latency.u8CplCmdSeqState = 0;
+	link->ata_latency.u8CplCmdSeqLbaZone = 0;
+#endif /* MY_ABC_HERE */
+	for (iType = 0 ; iType < SYNO_LATENCY_TYPE_COUNT; iType++) {
+		link->ata_latency.u16CplCmdCnt[iType] = 0;
+#ifdef MY_ABC_HERE
+		link->ata_latency.u32CplCmdBytes[iType] = 0;
+		link->ata_latency.u32CplCmdSkipBytes[iType] = 0;
+#endif /* MY_ABC_HERE */
+	}
+	return;
+}
+#endif /* MY_ABC_HERE */
 
 /**
  *	ata_qc_complete_multiple - Complete multiple qcs successfully
@@ -639,6 +804,11 @@ int ata_qc_complete_multiple(struct ata_port *ap, u64 qc_active)
 {
 	u64 done_mask, ap_qc_active = ap->qc_active;
 	int nr_done = 0;
+#ifdef MY_ABC_HERE
+	struct ata_link *link = NULL;
+
+	ap->u64AtaIntrTime = cpu_clock(0);
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * If the internal tag is set on ap->qc_active, then we care about
@@ -669,6 +839,11 @@ int ata_qc_complete_multiple(struct ata_port *ap, u64 qc_active)
 		}
 		done_mask &= ~(1ULL << tag);
 	}
+#ifdef MY_ABC_HERE
+	ata_for_each_link(link, ap, HOST_FIRST) {
+		syno_ata_latency_calculate(link, ap->u64AtaIntrTime);
+	}
+#endif /* MY_ABC_HERE */
 
 	return nr_done;
 }
@@ -1302,6 +1477,39 @@ int sata_async_notification(struct ata_port *ap)
 	if (rc == 0)
 		sata_scr_write(&ap->link, SCR_NOTIFICATION, sntf);
 
+#ifdef MY_ABC_HERE
+	/* If PMP is reporting that PHY status of some downstream ports has changed,
+	 * sata_async_notification will call schedule EH.
+	 * So in IRQ_OFF we ignore the PMP interrupt
+	 */
+	if (ap->pflags & ATA_PFLAG_SYNO_IRQ_OFF) {
+
+		if (rc) {
+			DBGMESG("pmp disk %d irq off and read SCR fail, ignore this interrupt, rc %d\n", ap->print_id, rc);
+			return 0;
+		}
+
+#ifdef MY_ABC_HERE
+		if (sntf & (1<< SATA_PMP_CTRL_PORT)) {
+			/* Only support deep sleep port, we on ATA_PFLAG_SYNO_IRQ_OFF.
+			 * So if this case happened, we should BUG
+			 * The following action is call sata_async_notification()
+			 * and it will call EH.
+			 * */
+			if (0 == iIsSynoDeepSleepSupport(ap) && !(ap->pflags & ATA_PFLAG_SYNO_DS_PWROFF)) {
+				printk("BUG!!! This port %d didn't support deep sleep\n", ap->print_id);
+				WARN_ON(1);
+				ap->pflags &= ~ATA_PFLAG_SYNO_IRQ_OFF;
+			} else {
+				// if the eunit enter to deep sleep, we ignore the chip 1's interrupt
+				DBGMESG("pmp disk %d irq off, ignore this interrupt\n", ap->print_id);
+				return 0;
+			}
+		}
+#endif /* MY_ABC_HERE */
+	}
+#endif /* MY_ABC_HERE */
+
 	if (!sata_pmp_attached(ap) || rc) {
 		/* PMP is not attached or SNTF is not available */
 		if (!sata_pmp_attached(ap)) {
@@ -1373,6 +1581,9 @@ static int ata_eh_read_log_10h(struct ata_device *dev,
 	unsigned int err_mask;
 	u8 csum;
 	int i;
+#ifdef MY_ABC_HERE
+	struct scsi_device *sdev = dev->sdev;
+#endif /* MY_ABC_HERE */
 
 	err_mask = ata_read_log_page(dev, ATA_LOG_SATA_NCQ, 0, buf, 1);
 	if (err_mask)
@@ -1404,6 +1615,13 @@ static int ata_eh_read_log_10h(struct ata_device *dev,
 	if (dev->class == ATA_DEV_ZAC && ata_id_has_ncq_autosense(dev->id))
 		tf->auxiliary = buf[14] << 16 | buf[15] << 8 | buf[16];
 
+#ifdef MY_ABC_HERE
+	if (sdev && (0 == strncmp(sdev->vendor, "WDC", strlen("WDC")))) {
+		if (0x4 == buf[256] && 0x49 == buf[257]) {
+			tf->blTler = true;
+		}
+	}
+#endif /* MY_ABC_HERE */
 	return 0;
 }
 
@@ -1433,7 +1651,13 @@ void ata_eh_analyze_ncq_error(struct ata_link *link)
 		return;
 
 	/* is it NCQ device error? */
+#ifdef MY_ABC_HERE
+	// we need to check error by reading ncq log, but the driver may not set AC_ERR_DEV correctly due to JMB585 mishandling UNC.
+	// when uiJM585DubiosIFSProtoFlag is set, we skip the return and let analysis keep going.
+	if (!link->sactive || (!(ehc->i.err_mask & AC_ERR_DEV) && !(ATA_SYNO_FLAG_JM585_READ_LOG & ehc->i.uiJM585DubiosIFSProtoFlag)))
+#else /* MY_ABC_HERE */
 	if (!link->sactive || !(ehc->i.err_mask & AC_ERR_DEV))
+#endif /* MY_ABC_HERE */
 		return;
 
 	/* has LLDD analyzed already? */
@@ -1479,5 +1703,13 @@ void ata_eh_analyze_ncq_error(struct ata_link *link)
 	}
 
 	ehc->i.err_mask &= ~AC_ERR_DEV;
+
+#ifdef MY_ABC_HERE
+	// TLER error
+	if (true == tf.blTler) {
+		ata_link_err(link, "Error caused by TLER, retry command\n");
+		qc->flags |= ATA_QCFLAG_RETRY;
+	}
+#endif /* MY_ABC_HERE */
 }
 EXPORT_SYMBOL_GPL(ata_eh_analyze_ncq_error);

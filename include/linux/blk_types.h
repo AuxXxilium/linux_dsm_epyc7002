@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Block data types and constants.  Directly include this file only to
@@ -207,7 +210,11 @@ struct bio {
 						 * top bits REQ_OP. Use
 						 * accessors.
 						 */
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+	unsigned int bi_flags;
+#else /* defined(MY_ABC_HERE) || defined(MY_ABC_HERE) */
 	unsigned short		bi_flags;	/* status, etc and bvec pool number */
+#endif /* defined(MY_ABC_HERE) || defined(MY_ABC_HERE) */
 	unsigned short		bi_ioprio;
 	unsigned short		bi_write_hint;
 	blk_status_t		bi_status;
@@ -284,6 +291,42 @@ enum {
 				 * of this bio. */
 	BIO_CGROUP_ACCT,	/* has been accounted to a cgroup */
 	BIO_TRACKED,		/* set if bio goes through the rq_qos path */
+#ifdef MY_ABC_HERE
+	/*
+	 * Tell lower layer to get the redundant version for this block.
+	 */
+	BIO_CORRECTION_RETRY,
+	/*
+	 * Report to upper layer we have tried all dedundancies for this block.
+	 */
+	BIO_CORRECTION_ERR,
+	/*
+	 * Tell lower layer that we give up the retry for this block.
+	 */
+	BIO_CORRECTION_ABORT,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	/**
+	 * Make the bio be rearranged behind the other bios which are submitted
+	 * after it in current ->submit_bio.
+	 *
+	 * submit_bio_noacct() will sort bios by following order:
+	 * 1. bios to lower level.
+	 * 2. bios to same level.
+	 * 3. bios with BIO_SYNO_DELAYED flags.
+	 * 4. bios submitted before current->make_request_fn.
+	 *
+	 * Note that bios with BIO_SYNO_DELAYED flags will be sorted by
+	 * last-in-first-out order.
+	 */
+	BIO_SYNO_DELAYED,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	BIO_SYNO_AUTO_REMAP,	/* record if auto-remap occurred */
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	BIO_SYNO_FULL_STRIPE_MERGE,	/* This bio should apply full stripe merge */
+#endif /* MY_ABC_HERE */
 	BIO_FLAG_LAST
 };
 
@@ -302,7 +345,11 @@ enum {
  * freed.
  */
 #define BVEC_POOL_BITS		(3)
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+#define BVEC_POOL_OFFSET (32 - BVEC_POOL_BITS)
+#else /* defined(MY_ABC_HERE) || defined(MY_ABC_HERE) */
 #define BVEC_POOL_OFFSET	(16 - BVEC_POOL_BITS)
+#endif /* defined(MY_ABC_HERE) || defined(MY_ABC_HERE) */
 #define BVEC_POOL_IDX(bio)	((bio)->bi_flags >> BVEC_POOL_OFFSET)
 #if (1<< BVEC_POOL_BITS) < (BVEC_POOL_NR+1)
 # error "BVEC_POOL_BITS is too small"
@@ -367,6 +414,10 @@ enum req_opf {
 	/* Driver private requests */
 	REQ_OP_DRV_IN		= 34,
 	REQ_OP_DRV_OUT		= 35,
+#ifdef MY_ABC_HERE
+	/* Unused hint to raid driver */
+	REQ_OP_UNUSED_HINT	= 128,
+#endif /* MY_ABC_HERE */
 
 	REQ_OP_LAST,
 };
@@ -404,6 +455,11 @@ enum req_flag_bits {
 	/* for driver use */
 	__REQ_DRV,
 	__REQ_SWAP,		/* swapping request. */
+
+#ifdef MY_ABC_HERE
+	__REQ_SYNO_RBD, /* synorbd : this only for bio flag */
+#endif /* MY_ABC_HERE */
+
 	__REQ_NR_BITS,		/* stops here */
 };
 
@@ -428,6 +484,10 @@ enum req_flag_bits {
 
 #define REQ_DRV			(1ULL << __REQ_DRV)
 #define REQ_SWAP		(1ULL << __REQ_SWAP)
+
+#ifdef MY_ABC_HERE
+#define REQ_SYNO_RBD		(1ULL << __REQ_SYNO_RBD)
+#endif /* MY_ABC_HERE */
 
 #define REQ_FAILFAST_MASK \
 	(REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT | REQ_FAILFAST_DRIVER)

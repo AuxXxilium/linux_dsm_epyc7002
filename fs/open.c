@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/fs/open.c
@@ -35,6 +38,13 @@
 
 #include "internal.h"
 
+#ifdef MY_ABC_HERE
+#include <uapi/linux/syno.h>
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#include <linux/syno_acl.h>
+#endif /* MY_ABC_HERE */
+
 int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
 	struct file *filp)
 {
@@ -65,6 +75,9 @@ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
 	inode_unlock(dentry->d_inode);
 	return ret;
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL_GPL(do_truncate);
+#endif /* MY_ABC_HERE */
 
 long vfs_truncate(const struct path *path, loff_t length)
 {
@@ -83,6 +96,11 @@ long vfs_truncate(const struct path *path, loff_t length)
 	if (error)
 		goto out;
 
+#ifdef MY_ABC_HERE
+	if (IS_SYNOACL(path->dentry))
+		error = synoacl_op_permission(path->dentry, MAY_WRITE);
+	else
+#endif /* MY_ABC_HERE */
 	error = inode_permission(inode, MAY_WRITE);
 	if (error)
 		goto mnt_drop_write_and_out;
@@ -117,6 +135,14 @@ out:
 	return error;
 }
 EXPORT_SYMBOL_GPL(vfs_truncate);
+
+#ifdef MY_ABC_HERE
+long syno_vfs_truncate(struct path *path, loff_t length)
+{
+	return vfs_truncate(path, length);
+}
+EXPORT_SYMBOL(syno_vfs_truncate);
+#endif /* MY_ABC_HERE */
 
 long do_sys_truncate(const char __user *pathname, loff_t length)
 {
@@ -335,6 +361,14 @@ int ksys_fallocate(int fd, int mode, loff_t offset, loff_t len)
 	return error;
 }
 
+#ifdef MY_ABC_HERE
+int do_fallocate(struct file *file, int mode, loff_t offset, loff_t len)
+{
+	return vfs_fallocate(file, mode, offset, len);
+}
+EXPORT_SYMBOL(do_fallocate);
+#endif /* MY_ABC_HERE */
+
 SYSCALL_DEFINE4(fallocate, int, fd, int, mode, loff_t, offset, loff_t, len)
 {
 	return ksys_fallocate(fd, mode, offset, len);
@@ -436,6 +470,11 @@ retry:
 			goto out_path_release;
 	}
 
+#ifdef MY_ABC_HERE
+	if (IS_SYNOACL(path.dentry))
+		res = synoacl_op_may_access(path.dentry, mode);
+	else
+#endif /* MY_ABC_HERE */
 	res = inode_permission(inode, mode | MAY_ACCESS);
 	/* SuS v2 requires we report a read only fs too */
 	if (res || !(mode & S_IWOTH) || special_file(inode->i_mode))
@@ -492,6 +531,11 @@ retry:
 	if (error)
 		goto out;
 
+#ifdef MY_ABC_HERE
+	if (IS_SYNOACL(path.dentry))
+		error = synoacl_op_permission(path.dentry, MAY_EXEC);
+	else
+#endif /* MY_ABC_HERE */
 	error = inode_permission(path.dentry->d_inode, MAY_EXEC | MAY_CHDIR);
 	if (error)
 		goto dput_and_out;
@@ -521,6 +565,11 @@ SYSCALL_DEFINE1(fchdir, unsigned int, fd)
 	if (!d_can_lookup(f.file->f_path.dentry))
 		goto out_putf;
 
+#ifdef MY_ABC_HERE
+	if (IS_SYNOACL(file_dentry(f.file)))
+		error = synoacl_op_permission(file_dentry(f.file), MAY_EXEC);
+	else
+#endif /* MY_ABC_HERE */
 	error = inode_permission(file_inode(f.file), MAY_EXEC | MAY_CHDIR);
 	if (!error)
 		set_fs_pwd(current->fs, &f.file->f_path);
@@ -540,6 +589,11 @@ retry:
 	if (error)
 		goto out;
 
+#ifdef MY_ABC_HERE
+	if (IS_SYNOACL(path.dentry))
+		error = synoacl_op_permission(path.dentry, MAY_EXEC);
+	else
+#endif /* MY_ABC_HERE */
 	error = inode_permission(path.dentry->d_inode, MAY_EXEC | MAY_CHDIR);
 	if (error)
 		goto dput_and_out;
@@ -770,13 +824,23 @@ static int do_dentry_open(struct file *f,
 	path_get(&f->f_path);
 	f->f_inode = inode;
 	f->f_mapping = inode->i_mapping;
+#ifdef MY_ABC_HERE
+	file_sb_list_add(f);
+#endif /* MY_ABC_HERE */
 	f->f_wb_err = filemap_sample_wb_err(f->f_mapping);
 	f->f_sb_err = file_sample_sb_err(f);
 
 	if (unlikely(f->f_flags & O_PATH)) {
 		f->f_mode = FMODE_PATH | FMODE_OPENED;
+#ifdef MY_ABC_HERE
+		if (strcmp(inode->i_sb->s_type->name, "ext4") != 0 || !S_ISLNK(inode->i_mode)) {
+			f->f_op = &empty_fops;
+			return 0;
+		}
+#else /* MY_ABC_HERE */
 		f->f_op = &empty_fops;
 		return 0;
+#endif /* MY_ABC_HERE */
 	}
 
 	if (f->f_mode & FMODE_WRITE && !special_file(inode->i_mode)) {
@@ -801,6 +865,12 @@ static int do_dentry_open(struct file *f,
 		goto cleanup_all;
 	}
 
+#ifdef MY_ABC_HERE
+	if (inode->i_opflags & IOP_ECRYPTFS_LOWER_INIT) {
+		inode->i_opflags &= ~IOP_ECRYPTFS_LOWER_INIT;
+		error = 0;
+	} else
+#endif /* MY_ABC_HERE */
 	error = security_file_open(f);
 	if (error)
 		goto cleanup_all;
@@ -852,6 +922,9 @@ cleanup_all:
 	if (WARN_ON_ONCE(error > 0))
 		error = -EINVAL;
 	fops_put(f->f_op);
+#ifdef MY_ABC_HERE
+	file_sb_list_del(f);
+#endif /* MY_ABC_HERE */
 	if (f->f_mode & FMODE_WRITER) {
 		put_write_access(inode);
 		__mnt_drop_write(f->f_path.mnt);
@@ -1393,3 +1466,232 @@ int stream_open(struct inode *inode, struct file *filp)
 }
 
 EXPORT_SYMBOL(stream_open);
+
+#ifdef MY_ABC_HERE
+SYSCALL_DEFINE2(syno_archive_bit, const char __user *, filename, int, cmd)
+{
+#ifdef MY_ABC_HERE
+	struct path path;
+	long error;
+
+	if (SYNO_FCNTL_BASE > cmd || SYNO_FCNTL_LAST < cmd) {
+		printk_ratelimited(KERN_WARNING "Archive bit cmd:%x not implement.\n", cmd);
+		return -EINVAL;
+	}
+
+	error = user_path_at(AT_FDCWD, filename, LOOKUP_FOLLOW, &path);
+	if (error)
+		return error;
+
+	error = mnt_want_write(path.mnt);
+	if (error)
+		goto out_release;
+
+	error = syno_archive_bit_set(path.dentry, cmd);
+	mnt_drop_write(path.mnt);
+
+out_release:
+	path_put(&path);
+	return error;
+#else
+	return -EOPNOTSUPP;
+#endif /* MY_ABC_HERE */
+}
+
+SYSCALL_DEFINE2(syno_archive_overwrite, unsigned int, fd, unsigned int, flags)
+{
+#ifdef MY_ABC_HERE
+	struct fd f = fdget(fd);
+	int error = -EBADF;
+
+	if (!f.file)
+		return error;
+
+	error = mnt_want_write(f.file->f_path.mnt);
+	if (error)
+		goto fput_out;
+
+	error = syno_archive_bit_overwrite(f.file->f_path.dentry, flags);
+	mnt_drop_write(f.file->f_path.mnt);
+
+fput_out:
+	fdput(f);
+	return error;
+#else
+	return -EOPNOTSUPP;
+#endif /* MY_ABC_HERE */
+}
+
+#ifdef MY_ABC_HERE
+#include "ecryptfs/ecryptfs_kernel.h"
+#endif /* MY_ABC_HERE */
+
+SYSCALL_DEFINE2(syno_ecrypt_name, const char __user *, src, char __user *, dst)
+{
+#ifdef MY_ABC_HERE
+	int err = -1;
+	struct qstr *lower_path = NULL;
+	struct path path;
+	struct ecryptfs_dentry_info *crypt_dentry = NULL;
+
+	if (NULL == src || NULL == dst)
+		return -EINVAL;
+
+	err = user_path_at(AT_FDCWD, src, LOOKUP_FOLLOW, &path);
+	if (err)
+		return -ENOENT;
+
+	if (ECRYPTFS_SUPER_MAGIC != path.dentry->d_sb->s_magic) {
+		err = -EINVAL;
+		goto out_release;
+	}
+	crypt_dentry = ecryptfs_dentry_to_private(path.dentry);
+	if (!crypt_dentry) {
+		err = -EINVAL;
+		goto out_release;
+	}
+	lower_path = &crypt_dentry->lower_path.dentry->d_name;
+	err = copy_to_user(dst, lower_path->name, lower_path->len + 1);
+
+out_release:
+	path_put(&path);
+
+	return err;
+#else /* MY_ABC_HERE */
+	return -EOPNOTSUPP;
+#endif /* MY_ABC_HERE */
+}
+
+#ifdef MY_ABC_HERE
+/*
+ * Since strlcat() will BUG_ON when it meet overflow,
+ * We add this api to replace strlcat().
+ */
+static inline int strcat_check(char *dst, size_t *remain,
+			       const char *src, size_t size)
+{
+	if (*remain <= size)
+		return -ENOBUFS;
+	strncat(dst, src, *remain);
+	*remain -= size;
+	return 0;
+}
+#endif /* MY_ABC_HERE */
+
+SYSCALL_DEFINE3(syno_decrypt_name, const char __user *, root, const char __user *, src, char __user *, dst)
+{
+#ifdef MY_ABC_HERE
+	int err = -1;
+	size_t plaintext_name_size = 0;
+	char *plaintext_name = NULL;
+	char *token = NULL;
+	char *target = NULL;
+	struct filename *root_name = NULL;
+	struct filename *src_name = NULL;
+	char *src_walk = NULL;
+	char *src_orig = NULL;
+	struct path path;
+	size_t remain = PATH_MAX;
+	int ret = -1;
+
+	if (NULL == src || NULL == root || NULL == dst)
+		return -EINVAL;
+
+	root_name = getname(root);
+	if (IS_ERR(root_name)) {
+		err = PTR_ERR(root_name);
+		goto out_release;
+	}
+	target = kmalloc(remain, GFP_KERNEL);
+	if (!target) {
+		err = -ENOMEM;
+		goto out_release;
+	}
+
+	ret = snprintf(target, remain, "%s", root_name->name);
+	if (ret < 0 || (ret >= remain)) {
+		err = -ENOBUFS;
+		goto out_release;
+	}
+	remain -= ret;
+
+	src_name = getname(src);
+	if (IS_ERR(src_name)) {
+		err = PTR_ERR(src_name);
+		goto out_release;
+	}
+	// strsep() will move src_walk, so we should keep the head for free mem
+	src_walk = kstrdup(src_name->name, GFP_KERNEL);
+	if (!src_walk) {
+		err = -ENOMEM;
+		goto out_release;
+	}
+	src_orig = src_walk;
+
+	token = strsep(&src_walk, "/");
+
+	while (token) {
+		if (*token == '\0') {
+			err = strcat_check(target, &remain, "/", 1);
+			if (err)
+				goto out_release;
+			goto next_token;
+		}
+
+		err = kern_path(target, LOOKUP_FOLLOW, &path);
+		if (err)
+			goto out_release;
+
+		err = strcat_check(target, &remain, "/", 1);
+		if (err) {
+			path_put(&path);
+			goto out_release;
+		}
+		if (path.dentry->d_sb->s_op &&
+				path.dentry->d_sb->s_op->syno_decrypt_filename) {
+			err = path.dentry->d_sb->s_op->syno_decrypt_filename(
+					&plaintext_name, &plaintext_name_size,
+					path.dentry->d_sb, token, strlen(token));
+			if (err) {
+				path_put(&path);
+				goto out_release;
+			}
+			err = strcat_check(target, &remain,
+					   plaintext_name,
+					   plaintext_name_size);
+			if (err) {
+				path_put(&path);
+				goto out_release;
+			}
+			kfree(plaintext_name);
+			plaintext_name = NULL;
+		} else {
+			err = strcat_check(target, &remain,
+					   token, strlen(token));
+			if (err) {
+				path_put(&path);
+				goto out_release;
+			}
+		}
+
+		path_put(&path);
+next_token:
+		token = strsep(&src_walk, "/");
+	}
+
+	err = copy_to_user(dst, target, strlen(target) + 1);
+out_release:
+	kfree(src_orig);
+	kfree(plaintext_name);
+	kfree(target);
+	if (!IS_ERR_OR_NULL(src_name))
+		putname(src_name);
+	if (!IS_ERR_OR_NULL(root_name))
+		putname(root_name);
+	return err;
+
+#else /* MY_ABC_HERE */
+	return -EOPNOTSUPP;
+#endif /* MY_ABC_HERE */
+}
+#endif /* MY_ABC_HERE */

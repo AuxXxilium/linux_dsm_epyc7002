@@ -105,6 +105,16 @@ config WATCHDOG_PRETIMEOUT_GOV_PANIC
 	  Panic watchdog pretimeout governor, on watchdog pretimeout
 	  event put the kernel into panic.
 
+if SYNO_LSP_RTD1619B
+config WATCHDOG_PRETIMEOUT_GOV_DUMP
+	tristate "Dump watchdog pretimeout governor"
+	depends on WATCHDOG_CORE
+	default WATCHDOG_CORE
+	help
+	  Dump watchdog pretimeout governor, on watchdog pretimeout
+	  event, dump infortmation form sysrq and reboot.
+
+endif # SYNO_LSP_RTD1619B
 choice
 	prompt "Default Watchdog Pretimeout Governor"
 	default WATCHDOG_PRETIMEOUT_DEFAULT_GOV_PANIC
@@ -939,6 +949,14 @@ config ASPEED_WATCHDOG
 	  To compile this driver as a module, choose M here: the
 	  module will be called aspeed_wdt.
 
+if SYNO_LSP_RTD1619B
+config RTK_WATCHDOG
+    tristate "Realtek watchdog support"
+    depends on ARCH_REALTEK
+    select WATCHDOG_CORE
+    help
+      Realtek  watchdog support.
+endif # SYNO_LSP_RTD1619B
 config ZX2967_WATCHDOG
 	tristate "ZTE zx2967 SoCs watchdog support"
 	depends on ARCH_ZX

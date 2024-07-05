@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  *  Copyright (c) 2001 The Regents of the University of Michigan.
  *  All rights reserved.
@@ -381,6 +384,9 @@ struct nfs4_client {
 	struct list_head	async_copies;	/* list of async copies */
 	spinlock_t		async_lock;	/* lock for async copies */
 	atomic_t		cl_cb_inflight;	/* Outstanding callbacks */
+#ifdef MY_ABC_HERE
+	bool			has_syno_client;
+#endif /* MY_ABC_HERE */
 };
 
 /* struct nfs4_client_reset

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2007 Oracle.  All rights reserved.
@@ -265,6 +268,10 @@ struct btrfs_fs_devices {
 	struct completion kobj_unregister;
 
 	enum btrfs_chunk_allocation_policy chunk_alloc_policy;
+
+#ifdef MY_ABC_HERE
+	bool rbd_enabled;
+#endif /* MY_ABC_HERE */
 };
 
 #define BTRFS_BIO_INLINE_CSUM_SIZE	64
@@ -277,6 +284,14 @@ struct btrfs_fs_devices {
 				- 2 * sizeof(struct btrfs_disk_key)	\
 				- 2 * sizeof(struct btrfs_chunk))	\
 				/ sizeof(struct btrfs_stripe) + 1)
+
+#ifdef MY_ABC_HERE
+#define BTRFS_BIO_SHOULD_ABORT_RETRY ((u8)-2)
+#define BTRFS_BIO_RETRY_ABORTED ((u8)-1)
+
+static_assert(BTRFS_BIO_SHOULD_ABORT_RETRY > SYNO_DATA_CORRECTION_MAX_RETRY_TIMES,
+	      "syno data correction bio flag invalid");
+#endif /* MY_ABC_HERE */
 
 /*
  * we need the mirror number and stripe index to be passed around
@@ -292,7 +307,22 @@ struct btrfs_io_bio {
 	struct btrfs_device *device;
 	u64 logical;
 	u8 *csum;
+#ifdef MY_ABC_HERE
+	/*
+	 * In retry mode, the first half is the correct csum, and
+	 * the remaining is bad csum from previous retry.
+	 */
+	union {
+		struct {
+			u8 cur_csum[BTRFS_CSUM_SIZE];
+			u8 prev_bad_csum[BTRFS_CSUM_SIZE];
+		} __attribute__ ((__packed__)) retry;
+		u8 csum_inline[BTRFS_BIO_INLINE_CSUM_SIZE];
+	};
+	u8 nr_retry;
+#else /* MY_ABC_HERE */
 	u8 csum_inline[BTRFS_BIO_INLINE_CSUM_SIZE];
+#endif /* MY_ABC_HERE */
 	struct bvec_iter iter;
 	/*
 	 * This member must come last, bio_alloc_bioset will allocate enough
@@ -300,6 +330,10 @@ struct btrfs_io_bio {
 	 */
 	struct bio bio;
 };
+#ifdef MY_ABC_HERE
+static_assert(BTRFS_BIO_INLINE_CSUM_SIZE >= (BTRFS_CSUM_SIZE << 1),
+	      "Invalid checksum size for syno data correction");
+#endif /* MY_ABC_HERE */
 
 static inline struct btrfs_io_bio *btrfs_io_bio(struct bio *bio)
 {
@@ -391,6 +425,12 @@ struct btrfs_balance_control {
 	u64 flags;
 
 	struct btrfs_balance_progress stat;
+#ifdef MY_ABC_HERE
+	u64 total_chunk_used;
+#endif /* SYNO_BTRFS_BALANCE_DRY_RUN */
+#ifdef MY_ABC_HERE
+	u64 fast_key_offset;         // 0: normal balance; 1: auto select bg; otherwise: bg key offset provided by progs
+#endif /* MY_ABC_HERE */
 };
 
 enum btrfs_map_op {
@@ -423,14 +463,29 @@ int btrfs_map_block(struct btrfs_fs_info *fs_info, enum btrfs_map_op op,
 int btrfs_map_sblock(struct btrfs_fs_info *fs_info, enum btrfs_map_op op,
 		     u64 logical, u64 *length,
 		     struct btrfs_bio **bbio_ret);
-int btrfs_get_io_geometry(struct btrfs_fs_info *fs_info, enum btrfs_map_op op,
-		u64 logical, u64 len, struct btrfs_io_geometry *io_geom);
+int btrfs_get_io_geometry(struct btrfs_fs_info *fs_info, struct extent_map *map,
+			  enum btrfs_map_op op, u64 logical, u64 len,
+			  struct btrfs_io_geometry *io_geom);
 int btrfs_read_sys_array(struct btrfs_fs_info *fs_info);
 int btrfs_read_chunk_tree(struct btrfs_fs_info *fs_info);
+#ifdef MY_ABC_HERE
+int btrfs_alloc_chunk_with_info(struct btrfs_trans_handle *trans, u64 type,
+				u64 *ret_start, u64 *ret_num_bytes) ;
+
+static inline int btrfs_alloc_chunk(struct btrfs_trans_handle *trans, u64 type)
+{
+	return btrfs_alloc_chunk_with_info(trans, type, NULL, NULL);
+}
+#else /* MY_ABC_HERE */
 int btrfs_alloc_chunk(struct btrfs_trans_handle *trans, u64 type);
+#endif /* MY_ABC_HERE */
 void btrfs_mapping_tree_free(struct extent_map_tree *tree);
 blk_status_t btrfs_map_bio(struct btrfs_fs_info *fs_info, struct bio *bio,
 			   int mirror_num);
+#ifdef MY_ABC_HERE
+blk_status_t btrfs_map_bio_log_tree(struct btrfs_fs_info *fs_info, struct bio *bio,
+				    int mirror_num);
+#endif /* MY_ABC_HERE */
 int btrfs_open_devices(struct btrfs_fs_devices *fs_devices,
 		       fmode_t flags, void *holder);
 struct btrfs_device *btrfs_scan_one_device(const char *path,
@@ -579,5 +634,9 @@ void btrfs_scratch_superblocks(struct btrfs_fs_info *fs_info,
 int btrfs_bg_type_to_factor(u64 flags);
 const char *btrfs_bg_type_to_raid_name(u64 flags);
 int btrfs_verify_dev_extents(struct btrfs_fs_info *fs_info);
+
+#ifdef MY_ABC_HERE
+u64 btrfs_syno_calc_reserve_for_metadata(struct btrfs_fs_info *fs_info);
+#endif /* MY_ABC_HERE */
 
 #endif

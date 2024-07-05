@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  *   fs/cifs/cifsfs.c
  *
@@ -68,6 +71,9 @@
 int cifsFYI = 0;
 bool traceSMB;
 bool enable_oplocks = true;
+#ifdef MY_ABC_HERE
+unsigned int SynoPosixSemanticsEnabled = 1;
+#endif /* MY_ABC_HERE */
 bool linuxExtEnabled = true;
 bool lookupCacheEnabled = true;
 bool disable_legacy_dialects; /* false by default */
@@ -103,6 +109,13 @@ MODULE_PARM_DESC(slow_rsp_threshold, "Amount of time (in seconds) to wait "
 				   "Default: 1 (if set to 0 disables msg).");
 #endif /* STATS2 */
 
+#ifdef MY_ABC_HERE
+unsigned short need_nego_timeout = 30;
+module_param(need_nego_timeout, ushort, 0644);
+MODULE_PARM_DESC(need_nego_timeout, "The timeout (second) when tcpStatus is"
+			       "CifsNeedNegotiate. After timeout will reconnect server"
+			       "Default: 30. 0 means never reconnect until socket fail.");
+#endif /* MY_ABC_HERE */
 module_param(enable_oplocks, bool, 0644);
 MODULE_PARM_DESC(enable_oplocks, "Enable or disable oplocks. Default: y/Y/1");
 
@@ -484,6 +497,16 @@ cifs_show_options(struct seq_file *s, struct dentry *root)
 	srcaddr = (struct sockaddr *)&tcon->ses->server->srcaddr;
 
 	seq_show_option(s, "vers", tcon->ses->server->vals->version_string);
+#ifdef MY_ABC_HERE
+	if (&synocifs_values == tcon->ses->server->values) {
+		seq_puts(s, "(syno)");
+	}
+	if (tcon->ses->server->noblocksnd) {
+		seq_puts(s, ",noblocksend");
+	} else {
+		seq_puts(s, ",blocksend");
+	}
+#endif /* MY_ABC_HERE */
 	cifs_show_security(s, tcon->ses);
 	cifs_show_cache_flavor(s, cifs_sb);
 
@@ -654,7 +677,13 @@ static void cifs_umount_begin(struct super_block *sb)
 		   all waiting network requests, nothing to do */
 		spin_unlock(&cifs_tcp_ses_lock);
 		return;
+#ifdef MY_ABC_HERE
+	// tcon->tc_count will always 1. Because it will re-use the exist tcon
+	// So we need to check the same value which is checked before kill_sb.
+	} else if (atomic_read(&sb->s_active) == 1)
+#else /* MY_ABC_HERE */
 	} else if (tcon->tc_count == 1)
+#endif /* MY_ABC_HERE */
 		tcon->tidStatus = CifsExiting;
 	spin_unlock(&cifs_tcp_ses_lock);
 
@@ -1057,6 +1086,10 @@ const struct inode_operations cifs_dir_inode_ops = {
 	.symlink = cifs_symlink,
 	.mknod   = cifs_mknod,
 	.listxattr = cifs_listxattr,
+#ifdef MY_ABC_HERE
+	.syno_getattr = cifs_syno_getattr,
+	.syno_get_crtime = cifs_syno_get_crtime,
+#endif /* MY_ABC_HERE */
 };
 
 const struct inode_operations cifs_file_inode_ops = {
@@ -1065,12 +1098,20 @@ const struct inode_operations cifs_file_inode_ops = {
 	.permission = cifs_permission,
 	.listxattr = cifs_listxattr,
 	.fiemap = cifs_fiemap,
+#ifdef MY_ABC_HERE
+	.syno_getattr = cifs_syno_getattr,
+	.syno_get_crtime = cifs_syno_get_crtime,
+#endif /* MY_ABC_HERE */
 };
 
 const struct inode_operations cifs_symlink_inode_ops = {
 	.get_link = cifs_get_link,
 	.permission = cifs_permission,
 	.listxattr = cifs_listxattr,
+#ifdef MY_ABC_HERE
+	.syno_getattr = cifs_syno_getattr,
+	.syno_get_crtime = cifs_syno_get_crtime,
+#endif /* MY_ABC_HERE */
 };
 
 static loff_t cifs_remap_file_range(struct file *src_file, loff_t off,

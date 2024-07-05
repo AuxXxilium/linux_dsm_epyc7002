@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  *   fs/cifs/cifsfs.h
  *
@@ -86,6 +89,10 @@ extern int cifs_getattr(const struct path *, struct kstat *, u32, unsigned int);
 extern int cifs_setattr(struct dentry *, struct iattr *);
 extern int cifs_fiemap(struct inode *, struct fiemap_extent_info *, u64 start,
 		       u64 len);
+#ifdef MY_ABC_HERE
+extern int cifs_syno_getattr(struct dentry *dentry, struct kstat *kst, unsigned int syno_flags);
+extern int cifs_syno_get_crtime(struct inode *inode, struct timespec64 *crtime);
+#endif /* MY_ABC_HERE */
 
 extern const struct inode_operations cifs_file_inode_ops;
 extern const struct inode_operations cifs_symlink_inode_ops;

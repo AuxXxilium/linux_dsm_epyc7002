@@ -15,7 +15,11 @@ extern int crush_find_rule(const struct crush_map *map, int ruleset, int type, i
 int crush_do_rule(const struct crush_map *map,
 		  int ruleno, int x, int *result, int result_max,
 		  const __u32 *weight, int weight_max,
-		  void *cwin, const struct crush_choose_arg *choose_args);
+		  void *cwin, const struct crush_choose_arg *choose_args
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+		  , int pool_ps
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
+		  );
 
 /*
  * Returns the exact amount of workspace that will need to be used

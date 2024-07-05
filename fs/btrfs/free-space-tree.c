@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2015 Facebook.  All rights reserved.
@@ -15,6 +18,11 @@
 static int __add_block_group_free_space(struct btrfs_trans_handle *trans,
 					struct btrfs_block_group *block_group,
 					struct btrfs_path *path);
+
+#ifdef MY_ABC_HERE
+static int clear_free_space_tree(struct btrfs_trans_handle *trans,
+				 struct btrfs_root *root);
+#endif /* MY_ABC_HERE */
 
 void set_free_space_tree_thresholds(struct btrfs_block_group *cache)
 {
@@ -78,7 +86,10 @@ out:
 	return ret;
 }
 
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 EXPORT_FOR_TESTS
+#endif /* MY_ABC_HERE */
 struct btrfs_free_space_info *search_free_space_info(
 		struct btrfs_trans_handle *trans,
 		struct btrfs_block_group *block_group,
@@ -1153,12 +1164,21 @@ int btrfs_create_free_space_tree(struct btrfs_fs_info *fs_info)
 
 	set_bit(BTRFS_FS_CREATING_FREE_SPACE_TREE, &fs_info->flags);
 	set_bit(BTRFS_FS_FREE_SPACE_TREE_UNTRUSTED, &fs_info->flags);
+
+#ifdef MY_ABC_HERE
+	clear_bit(BTRFS_FS_ABORT_FREE_SPACE_TREE, &fs_info->flags);
+	atomic64_set(&fs_info->free_space_tree_processed_block_group_cnt, 0);
+#endif /* MY_ABC_HERE */
+
 	free_space_root = btrfs_create_tree(trans,
 					    BTRFS_FREE_SPACE_TREE_OBJECTID);
 	if (IS_ERR(free_space_root)) {
 		ret = PTR_ERR(free_space_root);
 		goto abort;
 	}
+#ifdef MY_ABC_HERE
+	free_space_root->block_rsv = &fs_info->global_block_rsv;
+#endif /* MY_ABC_HERE */
 	fs_info->free_space_root = free_space_root;
 
 	node = rb_first(&fs_info->block_group_cache_tree);
@@ -1168,11 +1188,49 @@ int btrfs_create_free_space_tree(struct btrfs_fs_info *fs_info)
 		ret = populate_free_space_tree(trans, block_group);
 		if (ret)
 			goto abort;
+#ifdef MY_ABC_HERE
+		if (test_bit(BTRFS_FS_ABORT_FREE_SPACE_TREE, &fs_info->flags))
+			break;
+#endif /* MY_ABC_HERE */
 		node = rb_next(node);
+#ifdef MY_ABC_HERE
+		atomic64_inc(&fs_info->free_space_tree_processed_block_group_cnt);
+#endif /* MY_ABC_HERE */
 	}
 
+#ifdef MY_ABC_HERE
+	if (!test_bit(BTRFS_FS_ABORT_FREE_SPACE_TREE, &fs_info->flags)) {
+		btrfs_set_fs_compat_ro(fs_info, FREE_SPACE_TREE);
+		btrfs_set_fs_compat_ro(fs_info, FREE_SPACE_TREE_VALID);
+	} else {
+		btrfs_clear_fs_compat_ro(fs_info, FREE_SPACE_TREE);
+		btrfs_clear_fs_compat_ro(fs_info, FREE_SPACE_TREE_VALID);
+		fs_info->free_space_root = NULL;
+
+		ret = clear_free_space_tree(trans, free_space_root);
+		if (ret)
+			goto abort;
+
+		ret = btrfs_del_root(trans, &free_space_root->root_key);
+		if (ret)
+			goto abort;
+
+		list_del(&free_space_root->dirty_list);
+
+		btrfs_tree_lock(free_space_root->node);
+		btrfs_clean_tree_block(free_space_root->node);
+		btrfs_tree_unlock(free_space_root->node);
+		btrfs_free_tree_block(trans, free_space_root,
+				      free_space_root->node, 0, 1);
+
+		btrfs_put_root(free_space_root);
+	}
+	clear_bit(BTRFS_FS_ABORT_FREE_SPACE_TREE, &fs_info->flags);
+#else
 	btrfs_set_fs_compat_ro(fs_info, FREE_SPACE_TREE);
 	btrfs_set_fs_compat_ro(fs_info, FREE_SPACE_TREE_VALID);
+#endif /* MY_ABC_HERE */
+
 	clear_bit(BTRFS_FS_CREATING_FREE_SPACE_TREE, &fs_info->flags);
 	ret = btrfs_commit_transaction(trans);
 
@@ -1184,6 +1242,9 @@ int btrfs_create_free_space_tree(struct btrfs_fs_info *fs_info)
 	return ret;
 
 abort:
+#ifdef MY_ABC_HERE
+	clear_bit(BTRFS_FS_ABORT_FREE_SPACE_TREE, &fs_info->flags);
+#endif /* MY_ABC_HERE */
 	clear_bit(BTRFS_FS_CREATING_FREE_SPACE_TREE, &fs_info->flags);
 	clear_bit(BTRFS_FS_FREE_SPACE_TREE_UNTRUSTED, &fs_info->flags);
 	btrfs_abort_transaction(trans, ret);
@@ -1243,9 +1304,15 @@ int btrfs_clear_free_space_tree(struct btrfs_fs_info *fs_info)
 	if (IS_ERR(trans))
 		return PTR_ERR(trans);
 
+#ifdef MY_ABC_HERE
+	down_write(&fs_info->commit_root_sem);
+#endif /* MY_ABC_HERE */
 	btrfs_clear_fs_compat_ro(fs_info, FREE_SPACE_TREE);
 	btrfs_clear_fs_compat_ro(fs_info, FREE_SPACE_TREE_VALID);
 	fs_info->free_space_root = NULL;
+#ifdef MY_ABC_HERE
+	up_write(&fs_info->commit_root_sem);
+#endif /* MY_ABC_HERE */
 
 	ret = clear_free_space_tree(trans, free_space_root);
 	if (ret)
@@ -1433,8 +1500,6 @@ static int load_free_space_bitmaps(struct btrfs_caching_control *caching_ctl,
 		ASSERT(key.type == BTRFS_FREE_SPACE_BITMAP_KEY);
 		ASSERT(key.objectid < end && key.objectid + key.offset <= end);
 
-		caching_ctl->progress = key.objectid;
-
 		offset = key.objectid;
 		while (offset < key.objectid + key.offset) {
 			bit = free_space_test_bit(block_group, path, offset);
@@ -1469,8 +1534,6 @@ static int load_free_space_bitmaps(struct btrfs_caching_control *caching_ctl,
 		ret = -EIO;
 		goto out;
 	}
-
-	caching_ctl->progress = (u64)-1;
 
 	ret = 0;
 out:
@@ -1511,8 +1574,6 @@ static int load_free_space_extents(struct btrfs_caching_control *caching_ctl,
 		ASSERT(key.type == BTRFS_FREE_SPACE_EXTENT_KEY);
 		ASSERT(key.objectid < end && key.objectid + key.offset <= end);
 
-		caching_ctl->progress = key.objectid;
-
 		total_found += add_new_free_space(block_group, key.objectid,
 						  key.objectid + key.offset);
 		if (total_found > CACHING_CTL_WAKE_UP) {
@@ -1531,8 +1592,6 @@ static int load_free_space_extents(struct btrfs_caching_control *caching_ctl,
 		ret = -EIO;
 		goto out;
 	}
-
-	caching_ctl->progress = (u64)-1;
 
 	ret = 0;
 out:

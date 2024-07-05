@@ -1,0 +1,3 @@
+BASE_VER="`grep -m1 EXFAT_BASE_VERSION version.h | cut -d'"' -f2`"
+EXTRA_VER="`grep -m1 EXFAT_EXTRAVERSION version.h | cut -d'"' -f2`"
+echo "${BASE_VER}-${EXTRA_VER}"

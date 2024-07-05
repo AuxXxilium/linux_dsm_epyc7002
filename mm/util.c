@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 #include <linux/mm.h>
 #include <linux/slab.h>
@@ -957,6 +960,9 @@ out_mm:
 out:
 	return res;
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL(get_cmdline);
+#endif /* MY_ABC_HERE */
 
 int __weak memcmp_pages(struct page *page1, struct page *page2)
 {

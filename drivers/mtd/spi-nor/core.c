@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Based on m25p80.c, by Mike Lavender (mike@steroidmicros.com), with
@@ -1457,6 +1460,10 @@ static int spi_nor_erase(struct mtd_info *mtd, struct erase_info *instr)
 	u32 addr, len;
 	uint32_t rem;
 	int ret;
+#ifdef MY_DEF_HERE
+	u32 origin_erasesize = mtd->erasesize;
+	u32 origin_erase_opcode = nor->erase_opcode;
+#endif /* MY_DEF_HERE */
 
 	dev_dbg(nor->dev, "at 0x%llx, len %lld\n", (long long)instr->addr,
 			(long long)instr->len);
@@ -1507,6 +1514,15 @@ static int spi_nor_erase(struct mtd_info *mtd, struct erase_info *instr)
 	/* "sector"-at-a-time erase */
 	} else if (spi_nor_has_uniform_erase(nor)) {
 		while (len) {
+#ifdef MY_DEF_HERE
+			if ((len >= nor->info->sector_size) && (0 == addr % nor->info->sector_size)) {
+				mtd->erasesize = nor->info->sector_size;
+				nor->erase_opcode = SPINOR_OP_SE;
+			} else {
+				mtd->erasesize = origin_erasesize;
+				nor->erase_opcode = origin_erase_opcode;
+			}
+#endif /* MY_DEF_HERE */
 			ret = spi_nor_write_enable(nor);
 			if (ret)
 				goto erase_err;
@@ -1533,6 +1549,10 @@ static int spi_nor_erase(struct mtd_info *mtd, struct erase_info *instr)
 	ret = spi_nor_write_disable(nor);
 
 erase_err:
+#ifdef MY_DEF_HERE
+	mtd->erasesize = origin_erasesize;
+	nor->erase_opcode = origin_erase_opcode;
+#endif /* MY_DEF_HERE */
 	spi_nor_unlock_and_unprep(nor);
 
 	return ret;
@@ -1862,6 +1882,25 @@ static const struct spi_nor_locking_ops spi_nor_sr_locking_ops = {
 	.unlock = spi_nor_sr_unlock,
 	.is_locked = spi_nor_sr_is_locked,
 };
+
+#ifdef MY_DEF_HERE
+static int syno_null_lock(struct spi_nor *nor, loff_t ofs, uint64_t len)
+{
+	return 0;
+}
+
+static int syno_null_unlock(struct spi_nor *nor, loff_t ofs, uint64_t len)
+{
+	return 0;
+}
+
+
+static const struct spi_nor_locking_ops syno_null_locking_ops = {
+	.lock = syno_null_lock,
+	.unlock = syno_null_unlock,
+	.is_locked = NULL,
+};
+#endif /* MY_DEF_HERE */
 
 static int spi_nor_lock(struct mtd_info *mtd, loff_t ofs, uint64_t len)
 {
@@ -2838,6 +2877,11 @@ static void spi_nor_late_init_params(struct spi_nor *nor)
 	 */
 	if (nor->flags & SNOR_F_HAS_LOCK && !nor->params->locking_ops)
 		nor->params->locking_ops = &spi_nor_sr_locking_ops;
+#ifdef MY_DEF_HERE
+	else {
+		nor->params->locking_ops = &syno_null_locking_ops;
+	}
+#endif /* MY_DEF_HERE */
 }
 
 /**

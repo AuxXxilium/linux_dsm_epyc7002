@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * rtc-ds1307.c - RTC driver for some mostly-compatible I2C chips.
@@ -993,6 +996,9 @@ static const struct rtc_class_ops m41txx_rtc_ops = {
 
 static const struct chip_desc chips[last_ds_type] = {
 	[ds_1307] = {
+#ifdef MY_DEF_HERE
+		.alarm          = 1,
+#endif /* MY_DEF_HERE */
 		.nvram_offset	= 8,
 		.nvram_size	= 56,
 	},
@@ -1091,6 +1097,9 @@ static const struct i2c_device_id ds1307_id[] = {
 	{ "mcp7940x", mcp794xx },
 	{ "mcp7941x", mcp794xx },
 	{ "pt7c4338", ds_1307 },
+#ifdef MY_DEF_HERE
+	{ "pt7c4337", ds_1307 },
+#endif /* MY_DEF_HERE */
 	{ "rx8025", rx_8025 },
 	{ "isl12057", ds_1337 },
 	{ "rx8130", rx_8130 },

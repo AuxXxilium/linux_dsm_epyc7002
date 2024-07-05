@@ -59,6 +59,9 @@ obj-y				+= nomadik/
 obj-$(CONFIG_ARCH_NPCM7XX)	+= nuvoton/
 obj-$(CONFIG_PINCTRL_PXA)	+= pxa/
 obj-$(CONFIG_ARCH_QCOM)		+= qcom/
+ifeq ($(CONFIG_SYNO_LSP_RTD1619B), y)
+obj-$(CONFIG_ARCH_REALTEK)	+= realtek/
+endif # CONFIG_SYNO_LSP_RTD1619B
 obj-$(CONFIG_PINCTRL_RENESAS)	+= renesas/
 obj-$(CONFIG_PINCTRL_SAMSUNG)	+= samsung/
 obj-$(CONFIG_PINCTRL_SPEAR)	+= spear/

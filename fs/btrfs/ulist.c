@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2011 STRATO AG
@@ -215,6 +218,44 @@ int ulist_add_merge(struct ulist *ulist, u64 val, u64 aux,
 	return 1;
 }
 
+#ifdef MY_ABC_HERE
+int ulist_add_for_prealloc(struct ulist *ulist, u64 val, u64 aux, gfp_t gfp_mask, struct ulist_node **prealloc_ulist_node)
+{
+	return ulist_add_merge_for_prealloc(ulist, val, aux, NULL, gfp_mask, prealloc_ulist_node);
+}
+
+int ulist_add_merge_for_prealloc(struct ulist *ulist, u64 val, u64 aux, u64 *old_aux, gfp_t gfp_mask, struct ulist_node **prealloc_ulist_node)
+{
+	int ret;
+	struct ulist_node *node;
+
+	node = ulist_rbtree_search(ulist, val);
+	if (node) {
+		if (old_aux)
+			*old_aux = node->aux;
+		return 0;
+	}
+	if (prealloc_ulist_node) {
+		node = *prealloc_ulist_node;
+		*prealloc_ulist_node = NULL;
+	} else {
+		node = kmalloc(sizeof(*node), gfp_mask);
+		if (!node)
+			return -ENOMEM;
+	}
+
+	node->val = val;
+	node->aux = aux;
+
+	ret = ulist_rbtree_insert(ulist, node);
+	ASSERT(!ret);
+	list_add_tail(&node->list, &ulist->nodes);
+	ulist->nnodes++;
+
+	return 1;
+}
+#endif /* MY_ABC_HERE */
+
 /*
  * ulist_del - delete one node from ulist
  * @ulist:	ulist to remove node from
@@ -274,3 +315,98 @@ struct ulist_node *ulist_next(struct ulist *ulist, struct ulist_iterator *uiter)
 	node = list_entry(uiter->cur_list, struct ulist_node, list);
 	return node;
 }
+
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE) \
+	|| defined(MY_ABC_HERE)
+int ulist_add_lru_adjust(struct ulist *ulist, u64 val, u64 aux, gfp_t gfp_mask)
+{
+	int ret;
+	struct ulist_node *node;
+
+	node = ulist_rbtree_search(ulist, val);
+	if (node) {
+		list_move_tail(&node->list, &ulist->nodes);
+		return 0;
+	}
+	node = kmalloc(sizeof(*node), gfp_mask);
+	if (!node)
+		return -ENOMEM;
+
+	node->val = val;
+	node->aux = aux;
+
+	ret = ulist_rbtree_insert(ulist, node);
+	ASSERT(!ret);
+	list_add_tail(&node->list, &ulist->nodes);
+	ulist->nnodes++;
+
+	return 1;
+}
+
+/*
+ * ulist_remove_first - Remove first node from list (FIFO order)
+ * It just detach the node from list
+ */
+void ulist_remove_first(struct ulist *ulist)
+{
+	struct ulist_node *node;
+
+	if (!ulist->nnodes)
+		return;
+
+	node = list_entry(ulist->nodes.next, struct ulist_node, list);
+	rb_erase(&node->rb_node, &ulist->root);
+	list_del(&node->list);
+	ulist->nnodes--;
+	kfree(node);
+}
+#endif /* MY_ABC_HERE || MY_ABC_HERE || MY_ABC_HERE */
+
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+struct ulist_node * ulist_search(struct ulist *ulist, u64 val)
+{
+	struct rb_node *n = ulist->root.rb_node;
+	struct ulist_node *u = NULL;
+
+	while (n) {
+		u = rb_entry(n, struct ulist_node, rb_node);
+		if (u->val < val)
+			n = n->rb_right;
+		else if (u->val > val)
+			n = n->rb_left;
+		else
+			return u;
+	}
+	return NULL;
+}
+#endif /* MY_ABC_HERE || MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+struct ulist_node * ulist_search_with_prev(struct ulist *ulist, u64 val)
+{
+	struct rb_node *n = ulist->root.rb_node;
+	struct ulist_node *u = NULL;
+	struct rb_node *prev = NULL;
+	struct ulist_node *prev_entry = NULL;
+
+	while (n) {
+		u = rb_entry(n, struct ulist_node, rb_node);
+		prev = n;
+		prev_entry = u;
+		if (u->val < val)
+			n = n->rb_right;
+		else if (u->val > val)
+			n = n->rb_left;
+		else
+			return u;
+	}
+
+	while (prev && val < prev_entry->val) {
+		prev = rb_prev(prev);
+		if (prev)
+			prev_entry = rb_entry(prev, struct ulist_node, rb_node);
+	}
+
+	return prev_entry;
+}
+#endif /* MY_ABC_HERE */

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 
 #include "ctree.h"
@@ -225,8 +228,13 @@ static void btrfs_inode_rsv_release(struct btrfs_inode *inode, bool qgroup_free)
 						   qgroup_to_release);
 }
 
+#ifdef MY_ABC_HERE
+void btrfs_calculate_inode_block_rsv_size(struct btrfs_fs_info *fs_info,
+						 struct btrfs_inode *inode)
+#else
 static void btrfs_calculate_inode_block_rsv_size(struct btrfs_fs_info *fs_info,
 						 struct btrfs_inode *inode)
+#endif /* MY_ABC_HERE */
 {
 	struct btrfs_block_rsv *block_rsv = &inode->block_rsv;
 	u64 reserve_size = 0;
@@ -250,6 +258,16 @@ static void btrfs_calculate_inode_block_rsv_size(struct btrfs_fs_info *fs_info,
 						 inode->csum_bytes);
 	reserve_size += btrfs_calc_insert_metadata_size(fs_info,
 							csum_leaves);
+
+#ifdef MY_ABC_HERE
+	if (outstanding_extents == 0 && atomic_read(&inode->syno_uq_refs) == 0)
+		clear_bit(BTRFS_INODE_USRQUOTA_META_RESERVED,
+			&inode->runtime_flags);
+	if (test_bit(BTRFS_INODE_USRQUOTA_META_RESERVED,
+			&inode->runtime_flags))
+		reserve_size += btrfs_calc_metadata_size(fs_info, 1);;
+#endif /* MY_ABC_HERE */
+
 	/*
 	 * For qgroup rsv, the calculation is very simple:
 	 * account one nodesize for each outstanding extent
@@ -292,6 +310,9 @@ int btrfs_delalloc_reserve_metadata(struct btrfs_inode *inode, u64 num_bytes)
 	unsigned nr_extents;
 	enum btrfs_reserve_flush_enum flush = BTRFS_RESERVE_FLUSH_ALL;
 	int ret = 0;
+#ifdef MY_ABC_HERE
+	bool usrquota_meta = false;
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * If we are a free space inode we need to not flush since we will be in
@@ -329,9 +350,23 @@ int btrfs_delalloc_reserve_metadata(struct btrfs_inode *inode, u64 num_bytes)
 	ret = btrfs_qgroup_reserve_meta_prealloc(root, qgroup_reserve, true);
 	if (ret)
 		return ret;
+
+#ifdef MY_ABC_HERE
+	if (btrfs_usrquota_fast_chown_enable(&inode->vfs_inode) &&
+			!test_and_set_bit(BTRFS_INODE_USRQUOTA_META_RESERVED,
+			&inode->runtime_flags)) {
+		meta_reserve += btrfs_calc_metadata_size(fs_info, 1);
+		usrquota_meta = true;
+	}
+#endif /* MY_ABC_HERE */
+
 	ret = btrfs_reserve_metadata_bytes(root, block_rsv, meta_reserve, flush);
 	if (ret) {
 		btrfs_qgroup_free_meta_prealloc(root, qgroup_reserve);
+#ifdef MY_ABC_HERE
+		if (usrquota_meta)
+			clear_bit(BTRFS_INODE_USRQUOTA_META_RESERVED, &inode->runtime_flags);
+#endif /* MY_ABC_HERE */
 		return ret;
 	}
 

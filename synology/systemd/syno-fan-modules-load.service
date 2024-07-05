@@ -1,0 +1,14 @@
+[Unit]
+Description=Load Fan Modules in Kernel Project
+DefaultDependencies=no
+Requisite=systemd-modules-load.service
+After=systemd-modules-load.service
+IgnoreOnIsolate=yes
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/syno/lib/systemd/scripts/syno-fan-modules-load.sh
+
+[X-Synology]
+Author=Storage Platform Team

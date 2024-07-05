@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Virtio SCSI HBA driver
@@ -29,6 +32,11 @@
 #include <scsi/scsi_devinfo.h>
 #include <linux/seqlock.h>
 #include <linux/blk-mq-virtio.h>
+
+#ifdef MY_ABC_HERE
+#include <linux/synolib.h>
+#include <linux/pci.h>
+#endif /* MY_ABC_HERE */
 
 #include "sd.h"
 
@@ -738,6 +746,29 @@ static enum blk_eh_timer_return virtscsi_eh_timed_out(struct scsi_cmnd *scmnd)
 	return BLK_EH_RESET_TIMER;
 }
 
+#ifdef MY_ABC_HERE
+extern int syno_pciepath_dts_pattern_get(struct pci_dev *pdev, char *szPciePath, const int size);
+static void syno_virtio_info_enum(struct scsi_device *sdev) {
+	struct pci_dev *pdev = NULL;
+	char sztemp[SYNO_DTS_PROPERTY_CONTENT_LENGTH] = {'\0'};
+	struct device *virtdev = sdev->host->shost_gendev.parent;
+	while (virtdev) {
+		if (virtdev->driver && virtdev->driver->name && !strcmp(virtdev->driver->name, "virtio-pci")) {
+			break;
+		}
+		virtdev = virtdev->parent;
+	}
+
+	pdev = to_pci_dev(virtdev);
+
+	if (-1 == syno_pciepath_dts_pattern_get(pdev, sztemp, sizeof(sztemp))) {
+		return;
+	}
+	snprintf(sdev->syno_block_info, BLOCK_INFO_SIZE, "%spciepath=%s\n", sdev->syno_block_info, sztemp);
+	snprintf(sdev->syno_block_info, BLOCK_INFO_SIZE, "%sdriver=%s\n", sdev->syno_block_info, DT_VIRTIO);
+}
+#endif /* MY_ABC_HERE */
+
 static struct scsi_host_template virtscsi_host_template = {
 	.module = THIS_MODULE,
 	.name = "Virtio SCSI HBA",
@@ -755,6 +786,9 @@ static struct scsi_host_template virtscsi_host_template = {
 	.dma_boundary = UINT_MAX,
 	.map_queues = virtscsi_map_queues,
 	.track_queue_depth = 1,
+#ifdef MY_ABC_HERE
+	.syno_sdev_info_enum = syno_virtio_info_enum,
+#endif /* MY_ABC_HERE */
 };
 
 #define virtscsi_config_get(vdev, fld) \

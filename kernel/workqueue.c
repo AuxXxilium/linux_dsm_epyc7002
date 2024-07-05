@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * kernel/workqueue.c - generic async execution with shared worker pool
@@ -106,7 +109,10 @@ enum {
 	RESCUER_NICE_LEVEL	= MIN_NICE,
 	HIGHPRI_NICE_LEVEL	= MIN_NICE,
 
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 	WQ_NAME_LEN		= 24,
+#endif /* MY_ABC_HERE */
 };
 
 /*
@@ -266,6 +272,10 @@ struct workqueue_struct {
 	struct lockdep_map	lockdep_map;
 #endif
 	char			name[WQ_NAME_LEN]; /* I: workqueue name */
+
+#ifdef MY_ABC_HERE
+	atomic64_t 		timer_sampled_us; /* Sample count by timer interrput */
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * Destruction of workqueue_struct is RCU protected to allow walking
@@ -2267,7 +2277,12 @@ __acquires(&pool->lock)
 	 */
 	lockdep_invariant_state(true);
 	trace_workqueue_execute_start(work);
+#ifdef MY_ABC_HERE
+	worker_run_work(worker, work);
+#else
 	worker->current_func(work);
+#endif /* MY_ABC_HERE */
+
 	/*
 	 * While we must be careful to not use "work" after this, the trace
 	 * point will only record its address.
@@ -5415,9 +5430,23 @@ static ssize_t max_active_store(struct device *dev,
 }
 static DEVICE_ATTR_RW(max_active);
 
+#ifdef MY_ABC_HERE
+static ssize_t timer_sampled_us_show(struct device *dev, struct device_attribute *attr,
+			    char *buf)
+{
+	struct workqueue_struct *wq = dev_to_wq(dev);
+
+	return scnprintf(buf, PAGE_SIZE, "%llu\n", (u64)atomic64_read(&wq->timer_sampled_us));
+}
+static DEVICE_ATTR_RO(timer_sampled_us);
+#endif /* MY_ABC_HERE */
+
 static struct attribute *wq_sysfs_attrs[] = {
 	&dev_attr_per_cpu.attr,
 	&dev_attr_max_active.attr,
+#ifdef MY_ABC_HERE
+	&dev_attr_timer_sampled_us.attr,
+#endif /* MY_ABC_HERE */
 	NULL,
 };
 ATTRIBUTE_GROUPS(wq_sysfs);
@@ -5879,6 +5908,31 @@ static void wq_watchdog_init(void)
 static inline void wq_watchdog_init(void) { }
 
 #endif	/* CONFIG_WQ_WATCHDOG */
+#ifdef MY_ABC_HERE
+struct workqueue_struct* get_pwq_wq(struct pool_workqueue *pwq)
+{
+	if (pwq)
+		return pwq->wq;
+	return NULL;
+}
+EXPORT_SYMBOL(get_pwq_wq);
+
+void account_workqueue_time(struct task_struct *p, u64 us, gfp_t gfp)
+{
+	struct work_acct *acct;
+	if (!p)
+		return;
+
+	acct = p->workacct;
+	if (!acct)
+		return;
+
+	if (acct->wq && (acct->wq->flags & WQ_SYSFS))
+		atomic64_add(us, &acct->wq->timer_sampled_us);
+	account_work_time(acct, us, gfp);
+}
+EXPORT_SYMBOL(account_workqueue_time);
+#endif /* MY_ABC_HERE */
 
 static void __init wq_numa_init(void)
 {

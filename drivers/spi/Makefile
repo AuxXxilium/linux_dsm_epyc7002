@@ -42,6 +42,9 @@ spi-dw-$(CONFIG_SPI_DW_DMA)		+= spi-dw-dma.o
 obj-$(CONFIG_SPI_DW_BT1)		+= spi-dw-bt1.o
 obj-$(CONFIG_SPI_DW_MMIO)		+= spi-dw-mmio.o
 obj-$(CONFIG_SPI_DW_PCI)		+= spi-dw-pci.o
+ifeq ($(CONFIG_SYNO_LSP_RTD1619B), y)
+obj-$(CONFIG_SPI_DW_RTK)		+= spi-dw-rtk.o
+endif # CONFIG_SYNO_LSP_RTD1619B
 obj-$(CONFIG_SPI_EFM32)			+= spi-efm32.o
 obj-$(CONFIG_SPI_EP93XX)		+= spi-ep93xx.o
 obj-$(CONFIG_SPI_FALCON)		+= spi-falcon.o

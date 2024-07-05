@@ -1312,6 +1312,15 @@ config RTC_DRV_CROS_EC
 	  This driver can also be built as a module. If so, the module
 	  will be called rtc-cros-ec.
 
+if SYNO_LSP_RTD1619B
+config RTC_DRV_RTK
+	tristate "Realtek RTC"
+	depends on ARCH_REALTEK
+	select MFD_SYSCON
+	help
+	  Realtek RTC support.
+
+endif # SYNO_LSP_RTD1619B
 comment "on-CPU RTC drivers"
 
 config RTC_DRV_ASM9260

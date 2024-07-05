@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * usb port device code
@@ -9,6 +12,9 @@
 
 #include <linux/slab.h>
 #include <linux/pm_qos.h>
+#ifdef MY_ABC_HERE
+#include <linux/syno_gpio.h>
+#endif /* MY_ABC_HERE */
 
 #include "hub.h"
 
@@ -528,11 +534,146 @@ static void find_and_link_peer(struct usb_hub *hub, int port1)
 		link_peers_report(port_dev, peer);
 }
 
+#ifdef MY_ABC_HERE
+/**
+ * syno_usb_hub_node_get - return usb or hub slot index by usb 2 or 3 bus and port
+ * @hdev [IN]: usb device
+ * @portnum [IN]: port number
+ * @prefix [IN]: node name in dts
+ *
+ * return >0: slot number
+ *        -1: slot not found
+ */
+static struct device_node *__syno_usb_hub_node_get(const struct usb_device *hdev, const int portnum, const char *szNodeName)
+{
+	int size = 0;
+	struct device_node *pUsbSlotNode = NULL, *pUsbNode = NULL;
+	char *szUsbNodeBusPort = NULL;
+	char szUsbBusPort[SYNO_DTS_PROPERTY_CONTENT_LENGTH] = {'\0'};
+
+	if (NULL == hdev || NULL == szNodeName || 0 > portnum) {
+		goto END;
+	}
+
+	if (0 == strncmp(dev_name(&hdev->dev), "usb", strlen("usb"))) {
+		snprintf(szUsbBusPort, SYNO_DTS_PROPERTY_CONTENT_LENGTH, "%s-%d", dev_name(&hdev->dev), portnum);
+		sscanf(szUsbBusPort, "usb%s", szUsbBusPort);
+	} else {
+		snprintf(szUsbBusPort, SYNO_DTS_PROPERTY_CONTENT_LENGTH, "%s.%d", dev_name(&hdev->dev), portnum);
+	}
+
+	for_each_child_of_node(of_root, pUsbSlotNode) {
+		if (pUsbSlotNode->name && (strlen(pUsbSlotNode->name) == strlen(szNodeName))
+			&& 0 == (of_node_cmp(pUsbSlotNode->name, szNodeName))) {
+
+			pUsbNode = of_get_child_by_name(pUsbSlotNode, DT_USB2);
+			szUsbNodeBusPort = (char *)of_get_property(pUsbNode, DT_USB_PORT, &size);
+			if (szUsbNodeBusPort && (strlen(szUsbNodeBusPort) == strlen(szUsbBusPort))
+				&& 0 == strcmp(szUsbNodeBusPort, szUsbBusPort)) {
+				goto END;
+			}
+			of_node_put(pUsbNode);
+
+			pUsbNode = of_get_child_by_name(pUsbSlotNode, DT_USB3);
+			szUsbNodeBusPort = (char *)of_get_property(pUsbNode, DT_USB_PORT, &size);
+			if (szUsbNodeBusPort && (strlen(szUsbNodeBusPort) == strlen(szUsbBusPort))
+				&& 0 == strcmp(szUsbNodeBusPort, szUsbBusPort)) {
+				goto END;
+			}
+			of_node_put(pUsbNode);
+		}
+	}
+END:
+	return pUsbSlotNode;
+}
+
+#if defined(MY_DEF_HERE)
+/**
+ * syno_hub_node_get - return hub slot index by usb 2 or 3 bus and port
+ * @hdev [IN]: usb device
+ * @portnum [IN]: port number
+ *
+ * return >0: slot number
+ *        -1: slot not found
+ */
+struct device_node *syno_hub_node_get(const struct usb_device *hdev, const int portnum)
+{
+	struct device_node *pDeviceNode = NULL;
+	if (NULL == hdev || 1 > portnum) {
+		goto END;
+	}
+	pDeviceNode = __syno_usb_hub_node_get(hdev, portnum, DT_HUB_SLOT);
+END:
+	return pDeviceNode;
+}
+EXPORT_SYMBOL(syno_hub_node_get);
+#endif /* MY_DEF_HERE */
+
+/**
+ * syno_usb_hub_node_get - return usb or hub slot index by usb 2 or 3 bus and port
+ * @hdev [IN]: usb device
+ * @portnum [IN]: port number
+ *
+ * return >0: slot number
+ *        -1: slot not found
+ */
+struct device_node *syno_usb_hub_node_get(const struct usb_device *hdev, const int portnum)
+{
+	struct device_node *pDeviceNode = NULL;
+	if (NULL == hdev || 0 > portnum) {
+		goto END;
+	}
+	pDeviceNode = __syno_usb_hub_node_get(hdev, portnum, DT_USB_SLOT);
+	if (NULL != pDeviceNode) {
+		goto END;
+	}
+	pDeviceNode = __syno_usb_hub_node_get(hdev, portnum, DT_HUB_SLOT);
+END:
+	return pDeviceNode;
+}
+EXPORT_SYMBOL(syno_usb_hub_node_get);
+
+/**
+ * syno_vbus_gpio_set - set vbus gpio
+ * @vbus_gpio_pin [IN]: vbus gpio pin
+ * @vbus_gpio_polarity [IN]: polarity of the pin
+ * @port1 [IN]: usb port
+ *
+ * return void
+ */
+void syno_vbus_gpio_set(const char *vbus_host_addr, const unsigned vbus_gpio_pin, const unsigned vbus_gpio_polarity, const int port1)
+{
+	if (UINT_MAX == vbus_gpio_pin || UINT_MAX == vbus_gpio_polarity || 0 > port1) {
+		return;
+	}
+
+	if (vbus_gpio_polarity != SYNO_GPIO_READ(vbus_gpio_pin)) {
+		SYNO_GPIO_WRITE(vbus_gpio_pin, vbus_gpio_polarity);
+		printk(KERN_INFO " port%d is going to power up Vbus by "
+				"GPIO#%d(%s)\n", port1, vbus_gpio_pin,
+				vbus_gpio_polarity ? "ACTIVE_HIGH" : "ACTIVE_LOW");
+
+		mdelay(100);
+	}
+	return;
+}
+#endif /* MY_ABC_HERE */
+
 int usb_hub_create_port_device(struct usb_hub *hub, int port1)
 {
 	struct usb_port *port_dev;
 	struct usb_device *hdev = hub->hdev;
 	int retval;
+#ifdef MY_DEF_HERE
+	extern char gSynoCastratedXhcAddr[CONFIG_SYNO_USB_NUM_CASTRATED_XHC][32];
+	extern unsigned gSynoCastratedXhcPortBitmap[CONFIG_SYNO_USB_NUM_CASTRATED_XHC];
+	int i = 0;
+#endif /* MY_DEF_HERE */
+#ifdef MY_ABC_HERE
+	u32 vbusGpioPin = U32_MAX, vbusGpioPolarity = 0;
+	char *szGpioShared = NULL;
+	struct device_node *pVbusNode = NULL, *pUSBNode = NULL;
+#endif /* MY_ABC_HERE */
 
 	port_dev = kzalloc(sizeof(*port_dev), GFP_KERNEL);
 	if (!port_dev)
@@ -560,6 +701,75 @@ int usb_hub_create_port_device(struct usb_hub *hub, int port1)
 		port_dev->is_superspeed = 1;
 	dev_set_name(&port_dev->dev, "%s-port%d", dev_name(&hub->hdev->dev),
 			port1);
+
+#ifdef MY_ABC_HERE
+	port_dev->power_cycle_counter = SYNO_POWER_CYCLE_TRIES;
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_DEF_HERE
+	if (hdev && hdev->serial) {
+		for (i = 0; i < CONFIG_SYNO_USB_NUM_CASTRATED_XHC; i++) {
+			if (0 == strcmp(gSynoCastratedXhcAddr[i], hdev->serial) &&
+				gSynoCastratedXhcPortBitmap[i] & (0x01 << (port1 - 1))) {
+				/* Castrated xHC-port is an outer USB-port which is serviced by
+				 * a xHCI and without physical links of USB3 (i.e. without USB3
+				 * capability.
+				 */
+				port_dev->flag |= SYNO_USB_PORT_CASTRATED_XHC;
+				if (hub_is_superspeed(hdev))
+					dev_info (&port_dev->dev, "is a castrated xHC-port\n");
+			}
+		}
+	}
+#endif /* MY_DEF_HERE */
+
+#ifdef MY_ABC_HERE
+	port_dev->syno_vbus_gpp = -1;
+	port_dev->syno_vbus_gpp_pol = -1;
+	if (hdev && hdev->serial) {
+		pUSBNode = syno_usb_hub_node_get(hdev, port1);
+		if (NULL == pUSBNode) {
+			goto PUT_NODE;
+		}
+
+		pVbusNode = of_get_child_by_name(pUSBNode, DT_VBUS);
+		if (NULL == pVbusNode) {
+			goto PUT_NODE;
+		}
+
+		if (0 != of_property_read_u32_index(pVbusNode, DT_SYNO_GPIO, SYNO_GPIO_PIN, &vbusGpioPin)) {
+			printk(KERN_ERR "%s reading vbus vbusGpioPin failed.\n", __func__);
+			goto PUT_NODE;
+		}
+
+		if (0 != of_property_read_u32_index(pVbusNode, DT_SYNO_GPIO, SYNO_POLARITY_PIN, &vbusGpioPolarity)) {
+			printk(KERN_ERR "%s reading vbus vbusGpioPolarity failed.\n", __func__);
+			goto PUT_NODE;
+		}
+
+		syno_vbus_gpio_set(NULL, vbusGpioPin, vbusGpioPolarity, port1);
+
+		szGpioShared = (char *)of_get_property(pUSBNode, DT_SHARED, NULL);
+
+		if (szGpioShared && 0 == strncmp(szGpioShared, "true", strlen("true"))) {
+			goto PUT_NODE;
+		}
+
+		port_dev->syno_vbus_gpp = vbusGpioPin;
+		port_dev->syno_vbus_gpp_pol = vbusGpioPolarity;
+		printk(KERN_INFO "host %s port %d has Vbus GPIO#%d with polarity "
+				"%s\n",hdev->serial, port1, port_dev->syno_vbus_gpp,
+				port_dev->syno_vbus_gpp_pol ? "ACTIVE_HIGH" : "ACTIVE_LOW");
+PUT_NODE:
+		if (pUSBNode) {
+			of_node_put(pUSBNode);
+		}
+		if (pVbusNode) {
+			of_node_put(pVbusNode);
+		}
+	}
+#endif /* MY_ABC_HERE */
+
 	mutex_init(&port_dev->status_lock);
 	retval = device_register(&port_dev->dev);
 	if (retval) {

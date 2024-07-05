@@ -116,6 +116,7 @@ obj-$(CONFIG_ACPI_CONFIGFS)	+= acpi_configfs.o
 
 obj-y				+= pmic/
 
+obj-$(CONFIG_SYNO_BIOS_ACPI_FPDT)    += acpi_fpdt.o
 video-objs			+= acpi_video.o video_detect.o
 obj-y				+= dptf/
 

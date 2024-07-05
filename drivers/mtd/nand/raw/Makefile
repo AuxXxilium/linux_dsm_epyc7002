@@ -58,6 +58,10 @@ obj-$(CONFIG_MTD_NAND_STM32_FMC2)	+= stm32_fmc2_nand.o
 obj-$(CONFIG_MTD_NAND_MESON)		+= meson_nand.o
 obj-$(CONFIG_MTD_NAND_CADENCE)		+= cadence-nand-controller.o
 obj-$(CONFIG_MTD_NAND_ARASAN)		+= arasan-nand-controller.o
+ifeq ($(CONFIG_SYNO_LSP_RTD1619B), y)
+obj-$(CONFIG_MTD_NAND_RTK)		+= rtk_nand.o
+obj-$(CONFIG_MTD_NAND_RTK_BBM)		+= rtk_bbm.o
+endif # CONFIG_SYNO_LSP_RTD1619B
 
 nand-objs := nand_base.o nand_legacy.o nand_bbt.o nand_timings.o nand_ids.o
 nand-objs += nand_onfi.o

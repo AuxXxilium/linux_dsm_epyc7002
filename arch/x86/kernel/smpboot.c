@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
  /*
  *	x86 SMP booting functions
@@ -1314,6 +1317,10 @@ static void __init smp_get_logical_apicid(void)
 void __init native_smp_prepare_cpus(unsigned int max_cpus)
 {
 	unsigned int i;
+#ifdef MY_DEF_HERE
+	unsigned long flags;
+	unsigned char SynoMemoryTrainFailReason = 0;
+#endif /* MY_DEF_HERE */
 
 	smp_cpu_index_default();
 
@@ -1366,6 +1373,16 @@ void __init native_smp_prepare_cpus(unsigned int max_cpus)
 
 	pr_info("CPU0: ");
 	print_cpu_info(&cpu_data(0));
+
+#ifdef MY_DEF_HERE
+	spin_lock_irqsave(&rtc_lock, flags);
+	SynoMemoryTrainFailReason = CMOS_READ(CONFIG_SYNO_BIOS_MRC_POSTCODE_CMOS_ADDR);
+	CMOS_WRITE(0xff, CONFIG_SYNO_BIOS_MRC_POSTCODE_CMOS_ADDR);
+	spin_unlock_irqrestore(&rtc_lock, flags);
+	if (0xff != SynoMemoryTrainFailReason) {
+		pr_err("%s: this boot have memory training fail, last reason is 0x%02x\n", __func__, SynoMemoryTrainFailReason);
+	}
+#endif /* MY_DEF_HERE */
 
 	uv_system_init();
 

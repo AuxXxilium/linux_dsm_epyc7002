@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
 *  Copyright (c) 2001 The Regents of the University of Michigan.
 *  All rights reserved.
@@ -52,6 +55,10 @@
 #include "pnfs.h"
 #include "filecache.h"
 #include "trace.h"
+
+#ifdef MY_ABC_HERE
+#include "syno_io_stat.h"
+#endif /* MY_ABC_HERE */
 
 #define NFSDDBG_FACILITY                NFSDDBG_PROC
 
@@ -2019,6 +2026,13 @@ free_client(struct nfs4_client *clp)
 		clp->cl_nfsd_dentry = NULL;
 		wake_up_all(&expiry_wq);
 	}
+#ifdef MY_ABC_HERE
+	if (clp->has_syno_client) {
+		// The version always be 4.
+		syno_nfsd_client_unregister((struct sockaddr *)&clp->cl_addr, 4);
+		clp->has_syno_client = false;
+	}
+#endif /* MY_ABC_HERE */
 	drop_client(clp);
 }
 
@@ -3064,6 +3078,9 @@ nfsd4_exchange_id(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	struct sockaddr		*sa = svc_addr(rqstp);
 	bool	update = exid->flags & EXCHGID4_FLAG_UPD_CONFIRMED_REC_A;
 	struct nfsd_net		*nn = net_generic(SVC_NET(rqstp), nfsd_net_id);
+#ifdef MY_ABC_HERE
+	int ret;
+#endif /* MY_ABC_HERE */
 
 	rpc_ntop(sa, addr_str, sizeof(addr_str));
 	dprintk("%s rqstp=%p exid=%p clname.len=%u clname.data=%p "
@@ -3080,6 +3097,12 @@ nfsd4_exchange_id(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	status = copy_impl_id(new, exid);
 	if (status)
 		goto out_nolock;
+
+#ifdef MY_ABC_HERE
+	ret = syno_nfsd_client_register(svc_addr(rqstp), rqstp->rq_vers, &new->cl_nii_name);
+	if (!ret)
+		new->has_syno_client = true;
+#endif /* MY_ABC_HERE */
 
 	switch (exid->spa_how) {
 	case SP4_MACH_CRED:
@@ -3937,10 +3960,18 @@ nfsd4_setclientid(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	struct nfs4_client	*unconf = NULL;
 	__be32 			status;
 	struct nfsd_net		*nn = net_generic(SVC_NET(rqstp), nfsd_net_id);
+#ifdef MY_ABC_HERE
+	int ret;
+#endif /* MY_ABC_HERE */
 
 	new = create_client(clname, rqstp, &clverifier);
 	if (new == NULL)
 		return nfserr_jukebox;
+#ifdef MY_ABC_HERE
+	ret = syno_nfsd_client_register(svc_addr(rqstp), rqstp->rq_vers, &new->cl_nii_name);
+	if (!ret)
+		new->has_syno_client = true;
+#endif /* MY_ABC_HERE */
 	/* Cases below refer to rfc 3530 section 14.2.33: */
 	spin_lock(&nn->client_lock);
 	conf = find_confirmed_client_by_name(&clname, nn);

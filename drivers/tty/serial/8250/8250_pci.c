@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  *  Probe module for 8250/16550-type PCI serial ports.
@@ -1941,7 +1944,6 @@ pci_moxa_setup(struct serial_private *priv,
 #define PCI_DEVICE_ID_ACCESIO_PCIE_COM_4SM	0x10D9
 #define PCI_DEVICE_ID_ACCESIO_PCIE_COM_8SM	0x10E9
 #define PCI_DEVICE_ID_ACCESIO_PCIE_ICM_4SM	0x11D8
-
 
 #define	PCI_DEVICE_ID_MOXA_CP102E	0x1024
 #define	PCI_DEVICE_ID_MOXA_CP102EL	0x1025
@@ -3910,7 +3912,9 @@ serial_pci_matches(const struct pciserial_board *board,
 	    board->reg_shift == guessed->reg_shift &&
 	    board->first_offset == guessed->first_offset;
 }
-
+#ifdef MY_ABC_HERE
+extern void kt_console_init(void);
+#endif /* MY_ABC_HERE */
 struct serial_private *
 pciserial_init_ports(struct pci_dev *dev, const struct pciserial_board *board)
 {
@@ -3996,6 +4000,14 @@ pciserial_init_ports(struct pci_dev *dev, const struct pciserial_board *board)
 			break;
 		}
 	}
+
+#ifdef MY_ABC_HERE
+	if (PCI_VENDOR_ID_REALTEK == dev->vendor &&
+			0x816a == dev->device) {
+		kt_console_init();
+	}
+#endif /* MY_ABC_HERE */
+
 	priv->nr = i;
 	priv->board = board;
 	return priv;
@@ -5642,9 +5654,12 @@ static const struct pci_device_id serial_pci_tbl[] = {
 		PCI_ANY_ID, PCI_ANY_ID,
 		0, 0, pbn_b0_1_115200 },
 
+#ifdef MY_ABC_HERE
+#else /* MY_ABC_HERE */
 	{	PCI_VENDOR_ID_REALTEK, 0x816b,
 		PCI_ANY_ID, PCI_ANY_ID,
 		0, 0, pbn_b0_1_115200 },
+#endif /* MY_ABC_HERE */
 
 	/* Fintek PCI serial cards */
 	{ PCI_DEVICE(0x1c29, 0x1104), .driver_data = pbn_fintek_4 },

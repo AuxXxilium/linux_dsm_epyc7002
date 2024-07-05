@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2011 Fujitsu.  All rights reserved.
@@ -96,6 +99,11 @@ int btrfs_delete_delayed_dir_index(struct btrfs_trans_handle *trans,
 
 int btrfs_inode_delayed_dir_index_count(struct btrfs_inode *inode);
 
+#ifdef MY_ABC_HERE
+int btrfs_run_delayed_items_and_get_processed(struct btrfs_trans_handle *trans,
+			    unsigned long *processed_inodes,
+			    unsigned long *processed_items);
+#endif /* MY_ABC_HERE */
 int btrfs_run_delayed_items(struct btrfs_trans_handle *trans);
 int btrfs_run_delayed_items_nr(struct btrfs_trans_handle *trans, int nr);
 

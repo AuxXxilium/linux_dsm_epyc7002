@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0+
 /*
  *  Driver core for serial ports
@@ -29,10 +32,24 @@
 #include <linux/irq.h>
 #include <linux/uaccess.h>
 
+#ifdef MY_ABC_HERE
+#include <linux/pci.h>
+#include <linux/synolib.h>
+#endif /* MY_ABC_HERE */
+
+
 /*
  * This is used to lock changes in serial line configuration.
  */
 static DEFINE_MUTEX(port_mutex);
+#ifdef MY_ABC_HERE
+static DEFINE_SPINLOCK(ttyS1_lock);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#include <linux/synobios.h>
+extern int gSynoForbidConsole;
+#endif /* MY_ABC_HERE */
 
 /*
  * lockdep: port->lock is initialized in two places, but we
@@ -582,6 +599,15 @@ static int uart_write(struct tty_struct *tty,
 	unsigned long flags;
 	int c, ret = 0;
 
+#ifdef MY_ABC_HERE
+	/* We need to delay 150 ms avoid micro p buffer queue overflow */
+	if (!strcmp(tty->name, "ttyS1")) {
+		spin_lock(&ttyS1_lock);
+		mdelay(150);
+		spin_unlock(&ttyS1_lock);
+	}
+#endif /* MY_ABC_HERE */
+
 	/*
 	 * This means you called this function _after_ the port was
 	 * closed.  No cookie for you.
@@ -597,6 +623,13 @@ static int uart_write(struct tty_struct *tty,
 		uart_port_unlock(port, flags);
 		return 0;
 	}
+
+#ifdef MY_ABC_HERE
+	if (1 == gSynoForbidConsole && !strcmp(tty->name, "ttyS0")) {
+		uart_port_unlock(port, flags);
+		return count;
+	}
+#endif /* MY_ABC_HERE */
 
 	while (port) {
 		c = CIRC_SPACE_TO_END(circ->head, circ->tail, UART_XMIT_SIZE);
@@ -1942,6 +1975,12 @@ void uart_console_write(struct uart_port *port, const char *s,
 {
 	unsigned int i;
 
+#ifdef MY_ABC_HERE
+	if (1 == gSynoForbidConsole) {
+		return;
+	}
+#endif /* MY_ABC_HERE */
+
 	for (i = 0; i < count; i++, s++) {
 		if (*s == '\n')
 			putchar(port, '\r');
@@ -2375,7 +2414,10 @@ uart_configure_port(struct uart_driver *drv, struct uart_state *state,
 	if (port->type != PORT_UNKNOWN) {
 		unsigned long flags;
 
+#ifdef MY_DEF_HERE
+#else
 		uart_report_port(drv, port);
+#endif
 
 		/* Power up port for set_mctrl() */
 		uart_change_pm(state, UART_PM_STATE_ON);
@@ -2403,6 +2445,9 @@ uart_configure_port(struct uart_driver *drv, struct uart_state *state,
 		 */
 		if (!uart_console(port))
 			uart_change_pm(state, UART_PM_STATE_OFF);
+#ifdef MY_DEF_HERE
+		uart_report_port(drv, port);
+#endif
 	}
 }
 
@@ -2811,6 +2856,56 @@ static ssize_t console_store(struct device *dev,
 	return ret < 0 ? ret : count;
 }
 
+#ifdef MY_ABC_HERE
+#define UART_MSR              0x6
+static ssize_t msr_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct tty_port *port = dev_get_drvdata(dev);
+	struct uart_state *state = container_of(port, struct uart_state, port);
+	struct uart_port *uport = state->uart_port;
+	unsigned int msr = 0;
+
+	msr = uport->serial_in(uport, UART_MSR);
+	return snprintf(buf, PAGE_SIZE, "%x\n", msr);
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+extern int syno_pciepath_dts_pattern_get(struct pci_dev *pdev, char *szPciePath, const int size);
+static void syno_pciepath_enum(struct device *dev, char *buf) {
+	struct pci_dev *pdev = NULL;
+	char sztemp[SYNO_DTS_PROPERTY_CONTENT_LENGTH] = {'\0'};
+
+	if (NULL == buf || NULL == dev) {
+		return;
+	}
+	pdev = to_pci_dev(dev);
+
+	if (-1 == syno_pciepath_dts_pattern_get(pdev, sztemp, sizeof(sztemp))) {
+		return;
+	}
+
+	snprintf(buf, 512, "%spciepath=%s", buf, sztemp);
+}
+
+static ssize_t syno_pcipath_show(struct device *dev,
+				    struct device_attribute *attr,
+				    char *buf)
+{
+	struct tty_port *port = dev_get_drvdata(dev);
+	struct uart_state *state = container_of(port, struct uart_state, port);
+	struct uart_port *uport = state->uart_port;
+	char szPciePath[SYNO_DTS_PROPERTY_CONTENT_LENGTH] = {'\0'};
+
+	if (dev_is_pci(uport->dev)) {
+		syno_pciepath_enum(uport->dev, szPciePath);
+	}
+
+	return sprintf(buf, "%s\n", szPciePath);
+}
+#endif /* MY_ABC_HERE */
+
 static DEVICE_ATTR_RO(uartclk);
 static DEVICE_ATTR_RO(type);
 static DEVICE_ATTR_RO(line);
@@ -2825,6 +2920,12 @@ static DEVICE_ATTR_RO(io_type);
 static DEVICE_ATTR_RO(iomem_base);
 static DEVICE_ATTR_RO(iomem_reg_shift);
 static DEVICE_ATTR_RW(console);
+#ifdef MY_ABC_HERE
+static DEVICE_ATTR_RO(msr);
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+static DEVICE_ATTR_RO(syno_pcipath);
+#endif /* MY_ABC_HERE */
 
 static struct attribute *tty_dev_attrs[] = {
 	&dev_attr_uartclk.attr,
@@ -2841,6 +2942,12 @@ static struct attribute *tty_dev_attrs[] = {
 	&dev_attr_iomem_base.attr,
 	&dev_attr_iomem_reg_shift.attr,
 	&dev_attr_console.attr,
+#ifdef MY_ABC_HERE
+	&dev_attr_msr.attr,
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+	&dev_attr_syno_pcipath.attr,
+#endif /* MY_ABC_HERE */
 	NULL
 };
 
@@ -3272,6 +3379,16 @@ int uart_get_rs485_mode(struct uart_port *port)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(uart_get_rs485_mode);
+
+#ifdef MY_ABC_HERE
+int (*syno_test_list)(unsigned char, struct tty_struct *) = NULL;
+EXPORT_SYMBOL(syno_test_list);
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+int (*syno_get_current)(unsigned char, struct tty_struct *) = NULL;
+EXPORT_SYMBOL(syno_get_current);
+#endif /* MY_ABC_HERE */
 
 MODULE_DESCRIPTION("Serial driver core");
 MODULE_LICENSE("GPL");

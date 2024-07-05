@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/proc_fs.h>
 #include <linux/export.h>
@@ -163,6 +166,10 @@ static void bond_info_show_master(struct seq_file *seq)
 					   ad_info.partner_system);
 			}
 		}
+#if defined(MY_ABC_HERE)
+	} else if (bond->params.mode == BOND_MODE_ALB) {
+		bond_alb_info_show(seq);
+#endif /* MY_ABC_HERE */
 	}
 }
 

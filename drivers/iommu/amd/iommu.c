@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2007-2010 Advanced Micro Devices, Inc.
@@ -2738,6 +2741,17 @@ static int amd_iommu_def_domain_type(struct device *dev)
 {
 	struct iommu_dev_data *dev_data;
 
+#ifdef MY_ABC_HERE
+	if (dev_is_pci(dev)) {
+		struct pci_dev *pdev = to_pci_dev(dev);
+
+		/* AMD Starship USB 3.0 Host Controller 0x148c */
+		if (pdev && pdev->vendor == PCI_VENDOR_ID_AMD && pdev->device == 0x148c) {
+			return IOMMU_DOMAIN_DMA;
+		}
+	}
+#endif /* MY_ABC_HERE */
+	
 	dev_data = dev_iommu_priv_get(dev);
 	if (!dev_data)
 		return 0;

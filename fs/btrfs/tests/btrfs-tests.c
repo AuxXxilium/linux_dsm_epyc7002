@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2013 Fusion IO.  All rights reserved.
@@ -224,8 +227,24 @@ btrfs_alloc_dummy_block_group(struct btrfs_fs_info *fs_info,
 	INIT_LIST_HEAD(&cache->list);
 	INIT_LIST_HEAD(&cache->cluster_list);
 	INIT_LIST_HEAD(&cache->bg_list);
-	btrfs_init_free_space_ctl(cache);
+	btrfs_init_free_space_ctl(cache, cache->free_space_ctl);
 	mutex_init(&cache->free_space_lock);
+#ifdef MY_ABC_HERE
+	spin_lock_init(&cache->lock);
+	cache->syno_allocator.space_info = NULL;
+	RB_CLEAR_NODE(&cache->syno_allocator.bytes_index);
+	RB_CLEAR_NODE(&cache->syno_allocator.max_length_index);
+	RB_CLEAR_NODE(&cache->syno_allocator.max_length_with_extent_index);
+	RB_CLEAR_NODE(&cache->syno_allocator.preload_index);
+	cache->syno_allocator.last_bytes = 0;
+	cache->syno_allocator.last_max_length = 0;
+	cache->syno_allocator.last_max_length_with_extent = 0;
+	cache->syno_allocator.preload_free_space = 0;
+	cache->syno_allocator.ro = false;
+	cache->syno_allocator.cache_error = false;
+	cache->syno_allocator.removed = false;
+	atomic_set(&cache->syno_allocator.refs, 0);
+#endif /* MY_ABC_HERE */
 
 	return cache;
 }
@@ -235,6 +254,10 @@ void btrfs_free_dummy_block_group(struct btrfs_block_group *cache)
 	if (!cache)
 		return;
 	__btrfs_remove_free_space_cache(cache->free_space_ctl);
+#ifdef MY_ABC_HERE
+	btrfs_syno_allocator_release_cache_block_group(cache);
+	btrfs_syno_allocator_remove_block_group(cache);
+#endif /* MY_ABC_HERE */
 	kfree(cache->free_space_ctl);
 	kfree(cache);
 }
@@ -278,9 +301,12 @@ int btrfs_run_sanity_tests(void)
 			ret = btrfs_test_inodes(sectorsize, nodesize);
 			if (ret)
 				goto out;
+#ifdef MY_ABC_HERE
+#else
 			ret = btrfs_test_qgroups(sectorsize, nodesize);
 			if (ret)
 				goto out;
+#endif /* MY_ABC_HERE */
 			ret = btrfs_test_free_space_tree(sectorsize, nodesize);
 			if (ret)
 				goto out;

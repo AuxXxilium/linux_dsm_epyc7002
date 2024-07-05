@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Detect hard lockups on a system
@@ -28,6 +31,10 @@ static struct cpumask dead_events_mask;
 
 static unsigned long hardlockup_allcpu_dumped;
 static atomic_t watchdog_cpus = ATOMIC_INIT(0);
+
+#ifdef MY_DEF_HERE
+#define SYNO_HARDLOCKUP_WATCHDOG_THRESH 60
+#endif /* MY_DEF_HERE */
 
 notrace void arch_touch_nmi_watchdog(void)
 {
@@ -129,6 +136,10 @@ static void watchdog_overflow_callback(struct perf_event *event,
 	 * then this is a good indication the cpu is stuck
 	 */
 	if (is_hardlockup()) {
+#ifdef MY_DEF_HERE
+		/* save hardlockup_panic to avoid enable during printing calltrace */
+		unsigned int panic_backup = hardlockup_panic;
+#endif /* MY_DEF_HERE */
 		int this_cpu = smp_processor_id();
 
 		/* only print hardlockups once */
@@ -152,7 +163,11 @@ static void watchdog_overflow_callback(struct perf_event *event,
 				!test_and_set_bit(0, &hardlockup_allcpu_dumped))
 			trigger_allbutself_cpu_backtrace();
 
+#ifdef MY_DEF_HERE
+		if (panic_backup)
+#else /* MY_DEF_HERE */
 		if (hardlockup_panic)
+#endif /* MY_DEF_HERE */
 			nmi_panic(regs, "Hard LOCKUP");
 
 		__this_cpu_write(hard_watchdog_warn, true);
@@ -170,7 +185,11 @@ static int hardlockup_detector_event_create(void)
 	struct perf_event *evt;
 
 	wd_attr = &wd_hw_attr;
+#ifdef MY_DEF_HERE
+	wd_attr->sample_period = hw_nmi_get_sample_period(SYNO_HARDLOCKUP_WATCHDOG_THRESH);
+#else /* MY_DEF_HERE */
 	wd_attr->sample_period = hw_nmi_get_sample_period(watchdog_thresh);
+#endif /* MY_DEF_HERE */
 
 	/* Try to register using hardware perf events */
 	evt = perf_event_create_kernel_counter(wd_attr, cpu, NULL,

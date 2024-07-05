@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+# Copyright (c) 2000-2020 Synology Inc. All rights reserved.
+
+[ -z "$__INCLUDE_KCONFIG__" ] || return
+readonly __INCLUDE_KCONFIG__=defined
+
+
+# shellcheck source=/dev/null
+source "SynoBuildConf/_platform"
+
+kconfig_check_diff()
+{
+    local _plat_config="synology/synoconfigs/$PLATFORM_ABBR"
+
+    [ -f ".debug" ] && return
+
+    if ! diff -bu "$_plat_config" .config; then
+        ERROR "There's difference between $_plat_config & .config"
+        ERROR "Please reconfirm your modifications before committing."
+        return 1
+    fi
+}
+
+kconfig_check_syno_macro()
+{
+    local _m
+    declare -A syno_kconfig=()
+
+    # collect syno macros from all kconfigs
+    for _m in $(find . -name "Kconfig*" -exec grep "config SYNO" {} + | cut -d' ' -f2); do
+        syno_kconfig[$_m]=
+    done
+
+    # all syno macros should be defined in kconfig.
+    # toolkit: ds.epyc7002-7.2.env
+    # toolchain: epyc7002-gcc1220_glibc236_x86_64-GPL (Not used)
+    find . \( -path './.git' -o -path './SynoBuildConf' -o -path './ds.*' -o -path './drivers/syno' \) -prune -o -type f -exec \
+        grep -rohE --exclude="*.patch" "[/]*((#ifdef)|(#defined))[[:space:]]*\(?CONFIG_SYNO([[:alnum:]]|_)*" {} + \
+        | grep -v "^//" \
+        | awk -F 'CONFIG_' '{ print $2 }' \
+        | while IFS= read -r _m
+    do
+        if [[ ! -v syno_kconfig[$_m] ]]; then
+            ERROR "'$_m' isn't defined in kconfig"
+            return 1
+        fi
+    done
+
+    # '#ifndef CONFIG_SYNO*' isn't allowed.
+    # toolkit: ds.epyc7002-7.2.env
+    # toolchain: epyc7002-gcc1220_glibc236_x86_64-GPL (Not used)
+    if find . \( -path './.git' -o -path './SynoBuildConf' -o -path './ds.*' -o -path './drivers/syno' \) -prune -o -type f -exec \
+        grep -roE "ifndef[[:space:]]*CONFIG_SYNO" {} +; then
+        ERROR "'#ifndef' isn't allowed with syno macros"
+        return 1
+    fi
+
+    # all syno macros should start with prefix SYNO_
+    # toolkit: ds.epyc7002-7.2.env
+    # toolchain: epyc7002-gcc1220_glibc236_x86_64-GPL (Not used)
+    if find . \( -path './.git' -o -path './SynoBuildConf' -o -path './ds.*' -o -path './drivers/syno' \) -prune -o -type f -exec \
+        grep -roE "((ifdef)|(defined))[[:space:]]*\(?SYNO([[:alnum:]]|_)*" {} + \
+		| grep -v -e SYNO_EXPORT_CONFIG -e SYNO_FS_SYNO_ACL; then
+        ERROR "all syno macros should start with prefix SYNO_"
+        return 1
+    fi
+}
+
+kconfig_debug_mode()
+{
+    local _cfg=
+    local _enabled="
+        #
+        # printk and dmesg options
+        #
+        CONFIG_DYNAMIC_DEBUG
+
+        #
+        # Memory Debugging
+        #
+        CONFIG_DEBUG_PAGEALLOC
+        CONFIG_DEBUG_PAGEALLOC_ENABLE_DEFAULT
+        CONFIG_PAGE_OWNER
+        CONFIG_PAGE_POISONING
+
+        #CONFIG_DEBUG_OBJECTS
+        #CONFIG_DEBUG_OBJECTS_FREE
+        #CONFIG_DEBUG_OBJECTS_TIMERS
+        #CONFIG_DEBUG_OBJECTS_WORK
+        #CONFIG_DEBUG_OBJECTS_RCU_HEAD
+        #CONFIG_DEBUG_OBJECTS_PERCPU_COUNTER
+        CONFIG_SLUB_DEBUG_ON
+        CONFIG_SLUB_STATS
+        #CONFIG_DEBUG_KMEMLEAK
+        CONFIG_DEBUG_STACK_USAGE
+
+        #CONFIG_DEBUG_VM
+        #CONFIG_DEBUG_VM_VMACACHE
+        #CONFIG_DEBUG_VM_RB
+        #CONFIG_DEBUG_VIRTUAL
+        #CONFIG_DEBUG_NOMMU_REGIONS
+        #CONFIG_DEBUG_MEMORY_INIT
+        #CONFIG_MEMORY_NOTIFIER_ERROR_INJECT
+        #CONFIG_DEBUG_PER_CPU_MAPS
+        #CONFIG_DEBUG_HIGHMEM
+        #CONFIG_DEBUG_STACKOVERFLOW
+
+        #
+        # Kernel address sanitizer (Kasan)
+        #
+        CONFIG_KASAN
+        CONFIG_KASAN_OUTLINE
+        CONFIG_KASAN_VMALLOC
+        #CONFIG_KASAN_INLINE
+
+        #
+        # Debug Lockups and Hangs
+        #
+        #CONFIG_SCHED_STACK_END_CHECK
+        #CONFIG_DEBUG_TIMEKEEPING
+        #CONFIG_TIMER_STATS
+
+        #
+        # Lock Debugging
+        #
+        CONFIG_DEBUG_SPINLOCK
+        CONFIG_DEBUG_MUTEXES
+        CONFIG_DEBUG_LOCK_ALLOC
+        CONFIG_PROVE_LOCKING
+        CONFIG_LOCK_STAT
+        CONFIG_DEBUG_ATOMIC_SLEEP
+        CONFIG_LOCKDEP
+
+        #CONFIG_TRACE_IRQFLAGS
+        #CONFIG_DEBUG_KOBJECT
+        #CONFIG_DEBUG_KOBJECT_RELEASE
+        #CONFIG_DEBUG_LIST
+        #CONFIG_DEBUG_PI_LIST
+        #CONFIG_DEBUG_SG
+        #CONFIG_DEBUG_NOTIFIERS
+        #CONFIG_DEBUG_CREDENTIALS
+
+        #
+        # RCU Debugging
+        #
+        #CONFIG_PROVE_RCU
+        #CONFIG_PROVE_RCU_REPEATEDLY
+        #CONFIG_RCU_TRACE
+
+        #
+        # Fault-injection framework
+        #
+        CONFIG_FAULT_INJECTION
+        CONFIG_FAILSLAB
+        CONFIG_FAIL_PAGE_ALLOC
+        CONFIG_FAIL_MAKE_REQUEST
+        CONFIG_FAIL_IO_TIMEOUT
+        #CONFIG_FAIL_MMC_REQUEST
+        #CONFIG_FAIL_FUTEX
+        CONFIG_FAULT_INJECTION_DEBUG_FS
+        CONFIG_FAIL_FUNCTION
+        #CONFIG_FAULT_INJECTION_STACKTRACE_FILTER
+
+        #CONFIG_LATENCYTOP
+        #CONFIG_DEBUG_STRICT_USER_COPY_CHECKS
+
+        #
+        # Trace
+        #
+        #CONFIG_FUNCTION_TRACER
+        #CONFIG_FUNCTION_GRAPH_TRACER
+        #CONFIG_IRQSOFF_TRACER
+        #CONFIG_PREEMPT_TRACER
+        #CONFIG_ENABLE_DEFAULT_TRACERS
+        #CONFIG_TRACER_SNAPSHOT_PER_CPU_SWAP
+        #CONFIG_BRANCH_PROFILE_NONE
+        #CONFIG_PROFILE_ANNOTATED_BRANCHES
+        #CONFIG_PROFILE_ALL_BRANCHES
+        #CONFIG_STACK_TRACER
+        #CONFIG_DYNAMIC_FTRACE
+        #CONFIG_FUNCTION_PROFILER
+        #CONFIG_MMIOTRACE
+
+        #
+        # Btrfs
+        #
+        CONFIG_BTRFS_FS_RUN_SANITY_TESTS
+        #CONFIG_BTRFS_DEBUG
+        CONFIG_BTRFS_ASSERT
+        #CONFIG_BTRFS_FS_REF_VERIFY
+    "
+    local _disabled="
+    "
+
+    ./scripts/config --set-val CONFIG_CONSOLE_LOGLEVEL_DEFAULT 7
+    ./scripts/config --set-val CONFIG_MESSAGE_LOGLEVEL_DEFAULT 7
+
+    while read -r _cfg; do
+        if [ -z "$_cfg" ] || [[ "$_cfg" =~ .*"#".* ]]; then
+            continue
+        fi
+
+        INFO "Enable $_cfg"
+        ./scripts/config --enable "$_cfg"
+    done <<< "$_enabled"
+
+    while read -r _cfg; do
+        if [ -z "$_cfg" ] || [[ "$_cfg" =~ .*"#".* ]]; then
+            continue
+        fi
+
+        INFO "Disable $_cfg"
+        ./scripts/config --disable "$_cfg"
+    done <<< "$_disabled"
+
+    # disable KASAN for non-x64 platform due to MTD size
+    if [ "$PLATFORM_FAMILY" != "SYNOPLAT_F_X86_64" ]; then
+        ./scripts/config --disable CONFIG_KASAN
+        ./scripts/config --disable CONFIG_DEBUG_SPINLOCK
+        ./scripts/config --disable CONFIG_DEBUG_MUTEXES
+        ./scripts/config --disable CONFIG_DEBUG_LOCK_ALLOC
+        ./scripts/config --disable CONFIG_PROVE_LOCKING
+        ./scripts/config --disable CONFIG_LOCK_STAT
+        ./scripts/config --disable CONFIG_DEBUG_ATOMIC_SLEEP
+        ./scripts/config --disable CONFIG_LOCKDEP
+    fi
+}
+
+kconfig_generate()
+{
+    if [ -z "$PLATFORM_ABBR" ]; then
+        ERROR "environment variable 'PLATFORM_ABBR' isn't assigned"
+        return 1
+    fi
+
+    cp -f "synology/synoconfigs/$PLATFORM_ABBR" .config
+
+    if [ -f ".debug" ]; then
+        INFO "File '.debug' is detected. Configured as debug mode."
+        kconfig_debug_mode
+        make olddefconfig
+    else
+        make oldconfig
+    fi
+}
+
+kconfig_check_rule()
+{
+    if ! (cd synology/synoconfigs-spec/ || return 1; rake test) > /dev/null; then
+        ERROR "kernel configs don't match the rules."
+        ERROR "please check them with 'rake test' in synology/synoconfigs-spec"
+        return 1
+    fi
+}
+

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * SCSI Enclosure Services
@@ -633,6 +636,9 @@ static int ses_intf_add(struct device *cdev,
 	int num_enclosures;
 	struct enclosure_device *edev;
 	struct ses_component *scomp = NULL;
+#ifdef MY_DEF_HERE
+	int retry_count = SES_RETRIES;
+#endif /* MY_DEF_HERE */
 
 	if (!scsi_device_enclosure(sdev)) {
 		/* not an enclosure, but might be in one */
@@ -655,7 +661,17 @@ static int ses_intf_add(struct device *cdev,
 		goto err_init_free;
 
 	page = 1;
+#ifdef MY_DEF_HERE
+	retry_count = SES_RETRIES;
+	do {
+		result = ses_recv_diag(sdev, page, hdr_buf, INIT_ALLOC_SIZE);
+		if (result) {
+			sdev_printk(KERN_ERR, sdev, "result(%x), page1 retry_count(%d)\n", result, retry_count);
+		}
+	} while (result && ((--retry_count) >= 0));
+#else /* MY_DEF_HERE */
 	result = ses_recv_diag(sdev, page, hdr_buf, INIT_ALLOC_SIZE);
+#endif /* MY_DEF_HERE */
 	if (result)
 		goto recv_failed;
 
@@ -664,7 +680,17 @@ static int ses_intf_add(struct device *cdev,
 	if (!buf)
 		goto err_free;
 
+#ifdef MY_DEF_HERE
+	retry_count = SES_RETRIES;
+	do {
+		result = ses_recv_diag(sdev, page, buf, len);
+		if (result) {
+			sdev_printk(KERN_ERR, sdev, "result(%x), page1 retry_count(%d)\n", result, retry_count);
+		}
+	} while (result && ((--retry_count) >= 0));
+#else /* MY_DEF_HERE */
 	result = ses_recv_diag(sdev, page, buf, len);
+#endif /* MY_DEF_HERE */
 	if (result)
 		goto recv_failed;
 
@@ -695,7 +721,17 @@ static int ses_intf_add(struct device *cdev,
 	buf = NULL;
 
 	page = 2;
+#ifdef MY_DEF_HERE
+	retry_count = SES_RETRIES;
+	do {
+		result = ses_recv_diag(sdev, page, hdr_buf, INIT_ALLOC_SIZE);
+		if (result) {
+			sdev_printk(KERN_ERR, sdev, "result(%x), page2 retry_count(%d)\n", result, retry_count);
+		}
+	} while (result && ((--retry_count) >= 0));
+#else /* MY_DEF_HERE */
 	result = ses_recv_diag(sdev, page, hdr_buf, INIT_ALLOC_SIZE);
+#endif /* MY_DEF_HERE */
 	if (result)
 		goto page2_not_supported;
 
@@ -703,9 +739,19 @@ static int ses_intf_add(struct device *cdev,
 	buf = kzalloc(len, GFP_KERNEL);
 	if (!buf)
 		goto err_free;
-
+#ifdef MY_DEF_HERE
+	retry_count = SES_RETRIES;
+	do {
+		/* make sure getting page 2 actually works */
+		result = ses_recv_diag(sdev, 2, buf, len);
+		if (result) {
+			sdev_printk(KERN_ERR, sdev, "result(%x), page2 retry_count(%d)\n", result, retry_count);
+		}
+	} while (result && ((--retry_count) >= 0));
+#else /* MY_DEF_HERE */
 	/* make sure getting page 2 actually works */
 	result = ses_recv_diag(sdev, 2, buf, len);
+#endif /* MY_DEF_HERE */
 	if (result)
 		goto recv_failed;
 	ses_dev->page2 = buf;
@@ -715,7 +761,14 @@ static int ses_intf_add(struct device *cdev,
 	/* The additional information page --- allows us
 	 * to match up the devices */
 	page = 10;
+#ifdef MY_DEF_HERE
+	retry_count = SES_RETRIES;
+	do {
+		result = ses_recv_diag(sdev, page, hdr_buf, INIT_ALLOC_SIZE);
+	} while (result && ((--retry_count) >= 0));
+#else /* MY_DEF_HERE */
 	result = ses_recv_diag(sdev, page, hdr_buf, INIT_ALLOC_SIZE);
+#endif /* MY_DEF_HERE */
 	if (!result) {
 
 		len = (hdr_buf[2] << 8) + hdr_buf[3] + 4;
@@ -723,7 +776,17 @@ static int ses_intf_add(struct device *cdev,
 		if (!buf)
 			goto err_free;
 
+#ifdef MY_DEF_HERE
+		retry_count = SES_RETRIES;
+		do {
+			result = ses_recv_diag(sdev, page, buf, len);
+			if (result) {
+				sdev_printk(KERN_ERR, sdev, "result(%x), page10 retry_count(%d)\n", result, retry_count);
+			}
+		} while (result && ((--retry_count) >= 0));
+#else /* MY_DEF_HERE */
 		result = ses_recv_diag(sdev, page, buf, len);
+#endif /* MY_DEF_HERE */
 		if (result)
 			goto recv_failed;
 		ses_dev->page10 = buf;

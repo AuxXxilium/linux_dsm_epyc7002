@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * ext4_jbd2.h
@@ -123,7 +126,12 @@
 #define EXT4_HT_MOVE_EXTENTS     9
 #define EXT4_HT_XATTR           10
 #define EXT4_HT_EXT_CONVERT     11
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+#define EXT4_HT_SYNO            12
+#define EXT4_HT_MAX             13
+#else
 #define EXT4_HT_MAX             12
+#endif /* MY_ABC_HERE || MY_ABC_HERE */
 
 /**
  *   struct ext4_journal_cb_entry - Base structure for callback information.

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* -*- mode: c; c-basic-offset: 8; -*-
  * vim: noexpandtab sw=8 ts=8 sts=0:
@@ -26,7 +29,11 @@
  * because an attribute of 16k on ia64 won't work on x86.  So we limit to
  * 4k, our minimum common page size.
  */
+#ifdef MY_ABC_HERE
+#define SIMPLE_ATTR_SIZE PAGE_SIZE
+#else /* MY_ABC_HERE */
 #define SIMPLE_ATTR_SIZE 4096
+#endif /* MY_ABC_HERE */
 
 struct configfs_buffer {
 	size_t			count;

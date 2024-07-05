@@ -34,3 +34,6 @@ obj-$(CONFIG_RESET_UNIPHIER_GLUE) += reset-uniphier-glue.o
 obj-$(CONFIG_RESET_ZYNQ) += reset-zynq.o
 obj-$(CONFIG_ARCH_ZYNQMP) += reset-zynqmp.o
 
+ifeq ($(CONFIG_SYNO_LSP_RTD1619B), y)
+obj-$(CONFIG_RESET_RTK_M2TMX) += reset-rtk-m2tmx.o
+endif # CONFIG_SYNO_LSP_RTD1619B

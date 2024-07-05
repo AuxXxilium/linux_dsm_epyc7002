@@ -72,6 +72,10 @@ meson-mx-sdhc-objs 		:= meson-mx-sdhc-clkc.o meson-mx-sdhc-mmc.o
 obj-$(CONFIG_MMC_MESON_MX_SDHC)	+= meson-mx-sdhc.o
 obj-$(CONFIG_MMC_MESON_MX_SDIO)	+= meson-mx-sdio.o
 obj-$(CONFIG_MMC_MOXART)	+= moxart-mmc.o
+ifeq ($(CONFIG_SYNO_LSP_RTD1619B), y)
+obj-$(CONFIG_MMC_REALTEK_RTD13XX)	+= cqhci.o
+obj-$(CONFIG_MMC_REALTEK_RTD13XX)	+= rtkemmc_rtd13xx.o
+endif # CONFIG_SYNO_LSP_RTD1619B
 obj-$(CONFIG_MMC_SUNXI)		+= sunxi-mmc.o
 obj-$(CONFIG_MMC_USDHI6ROL0)	+= usdhi6rol0.o
 obj-$(CONFIG_MMC_TOSHIBA_PCI)	+= toshsd.o
@@ -80,6 +84,9 @@ obj-$(CONFIG_MMC_OWL)		+= owl-mmc.o
 
 obj-$(CONFIG_MMC_REALTEK_PCI)	+= rtsx_pci_sdmmc.o
 obj-$(CONFIG_MMC_REALTEK_USB)	+= rtsx_usb_sdmmc.o
+ifeq ($(CONFIG_SYNO_LSP_RTD1619B), y)
+obj-$(CONFIG_MMC_RTK_SDMMC)	+= rtk-sdmmc.o
+endif # CONFIG_SYNO_LSP_RTD1619B
 
 obj-$(CONFIG_MMC_SDHCI_PLTFM)		+= sdhci-pltfm.o
 obj-$(CONFIG_MMC_SDHCI_CADENCE)		+= sdhci-cadence.o
@@ -94,6 +101,9 @@ obj-$(CONFIG_MMC_SDHCI_OF_AT91)		+= sdhci-of-at91.o
 obj-$(CONFIG_MMC_SDHCI_OF_ESDHC)	+= sdhci-of-esdhc.o
 obj-$(CONFIG_MMC_SDHCI_OF_HLWD)		+= sdhci-of-hlwd.o
 obj-$(CONFIG_MMC_SDHCI_OF_DWCMSHC)	+= sdhci-of-dwcmshc.o
+ifeq ($(CONFIG_SYNO_LSP_RTD1619B), y)
+obj-$(CONFIG_MMC_SDHCI_OF_RTK)		+= sdhci-rtk.o
+endif # CONFIG_SYNO_LSP_RTD1619B
 obj-$(CONFIG_MMC_SDHCI_OF_SPARX5)	+= sdhci-of-sparx5.o
 obj-$(CONFIG_MMC_SDHCI_BCM_KONA)	+= sdhci-bcm-kona.o
 obj-$(CONFIG_MMC_SDHCI_IPROC)		+= sdhci-iproc.o

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _BTRFS_CTREE_H_
 #define _BTRFS_CTREE_H_
@@ -44,14 +47,61 @@
 /* holds checksums of all the data extents */
 #define BTRFS_CSUM_TREE_OBJECTID 7ULL
 
+#ifdef MY_ABC_HERE
+#else
 /* holds quota configuration and tracking */
 #define BTRFS_QUOTA_TREE_OBJECTID 8ULL
+#endif /* MY_ABC_HERE */
 
 /* for storing items that use the BTRFS_UUID_KEY* types */
 #define BTRFS_UUID_TREE_OBJECTID 9ULL
 
 /* tracks free space in block groups. */
 #define BTRFS_FREE_SPACE_TREE_OBJECTID 10ULL
+
+#ifdef MY_ABC_HERE
+/* holds subvolume user quota configuration */
+#define BTRFS_USRQUOTA_TREE_OBJECTID 200ULL
+
+/* holds subvolume quota configuration */
+#define BTRFS_QUOTA_TREE_OBJECTID 201ULL
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#define BTRFS_BLOCK_GROUP_HINT_TREE_OBJECTID 202ULL
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#define BTRFS_BLOCK_GROUP_CACHE_TREE_OBJECTID 203ULL
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+/*
+ * syno usage tree
+ */
+#define BTRFS_SYNO_USAGE_TREE_OBJECTID 205ULL
+/*
+ * syno extent usage tree
+ */
+#define BTRFS_SYNO_EXTENT_USAGE_TREE_OBJECTID 206ULL
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+/*
+ * syno feature tree
+ *
+ * We would like to create a tree that hold information
+ * about our customized feature after light-weight counter(included)
+ */
+#define BTRFS_SYNO_FEATURE_TREE_OBJECTID 207ULL
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+/* Syno quota v2 qgroup tree */
+#define BTRFS_SYNO_QUOTA_V2_TREE_OBJECTID 208ULL
+
+/* Syno quota v2 usrquota tree */
+#define BTRFS_SYNO_USRQUOTA_V2_TREE_OBJECTID 209ULL
+#endif /* MY_ABC_HERE */
 
 /* device stats in the device tree */
 #define BTRFS_DEV_STATS_OBJECTID 0ULL
@@ -85,6 +135,27 @@
  * free ino cache
  */
 #define BTRFS_FREE_INO_OBJECTID -12ULL
+
+#ifdef MY_ABC_HERE
+/*
+ *  objectid of syno feature tree status item
+ */
+#define BTRFS_SYNO_FEAT_TREE_STATUS_OBJECTID 0ULL
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+/*
+ * syno subvol usage objectid in fs_tree
+ */
+#define BTRFS_SYNO_SUBVOL_USAGE_OBJECTID -206ULL
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+/*
+ * objectid of btrfs_root_locker_item in feature-tree
+ */
+#define BTRFS_SYNO_BTRFS_LOCKER_OBJECTID -211ULL
+#endif /* MY_ABC_HERE */
 
 /* dummy objectid represents multiple objectids */
 #define BTRFS_MULTIPLE_OBJECTIDS -255ULL
@@ -128,6 +199,9 @@
 #define BTRFS_DIR_LOG_ITEM_KEY  60
 #define BTRFS_DIR_LOG_INDEX_KEY 72
 #define BTRFS_DIR_ITEM_KEY	84
+#ifdef MY_ABC_HERE
+#define BTRFS_DIR_ITEM_CASELESS_KEY 91
+#endif /* MY_ABC_HERE */
 #define BTRFS_DIR_INDEX_KEY	96
 /*
  * extent data is for file data
@@ -146,11 +220,20 @@
  */
 #define BTRFS_ROOT_ITEM_KEY	132
 
+#ifdef MY_ABC_HERE
+#define BTRFS_ROOT_LOCKER_KEY     138
+#endif /* MY_ABC_HERE */
+
 /*
  * root backrefs tie subvols and snapshots to the directory entries that
  * reference them
  */
 #define BTRFS_ROOT_BACKREF_KEY	144
+
+#ifdef MY_ABC_HERE
+#define SYNO_BTRFS_RBD_META_FILE_INODE_RECORD 150
+#define SYNO_BTRFS_RBD_META_FILE_SUBVOL_RECORD 151
+#endif /* MY_ABC_HERE */
 
 /*
  * root refs make a fast index for listing all of the snapshots and
@@ -158,6 +241,38 @@
  * directory item in the root that references the subvol
  */
 #define BTRFS_ROOT_REF_KEY	156
+
+#ifdef MY_ABC_HERE
+/*
+ * syno feature tree status key: 157
+ */
+#define SYNO_BTRFS_FEAT_TREE_STATUS_KEY 157
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+/*
+ * syno usage tree
+ * syno usage status key : 158
+ * global type key : 159
+ * root status key : 160
+ */
+#define SYNO_BTRFS_USAGE_STATUS_KEY 158
+#define SYNO_BTRFS_USAGE_GLOBAL_TYPE_KEY 159
+#define SYNO_BTRFS_USAGE_ROOT_STATUS_KEY 160
+
+/*
+ * fs tree
+ * syno subvol dummy key 162
+ * syno subvol usage key 163
+ */
+#define SYNO_BTRFS_SUBVOL_DUMMY_KEY 162
+#define SYNO_BTRFS_SUBVOL_USAGE_KEY 163
+
+/*
+ * syno extent usage key
+ */
+#define SYNO_BTRFS_EXTENT_USAGE_KEY 165
+#endif /* MY_ABC_HERE */
 
 /*
  * extent items are in the extent map tree.  These record which blocks
@@ -228,6 +343,11 @@
  * One key per qgroup, (0, BTRFS_QGROUP_LIMIT_KEY, qgroupid).
  */
 #define BTRFS_QGROUP_LIMIT_KEY          244
+
+#ifdef MY_ABC_HERE
+#define BTRFS_SYNO_QUOTA_RESCAN_KEY	245
+#endif /* MY_ABC_HERE */
+
 /*
  * Records the child-parent relationship of qgroups. For
  * each relation, 2 keys are present:
@@ -235,6 +355,32 @@
  * (parentid, BTRFS_QGROUP_RELATION_KEY, childid)
  */
 #define BTRFS_QGROUP_RELATION_KEY       246
+
+#ifdef MY_ABC_HERE
+/*
+ * Records the overall state of the usrquota.
+ * There's only one instance of this key present,
+ * (0, BTRFS_USRQUOTA_STATUS_KEY, 0)
+ */
+#define BTRFS_USRQUOTA_STATUS_KEY       240
+/*
+ * Records the per root (subvolume) usrquota infomation.
+ * One key per root, (root_id, BTRFS_USRQUOTA_ROOT_KEY, 0).
+ */
+#define BTRFS_USRQUOTA_ROOT_KEY         241
+/*
+ * Records the currently used space of the usrquota.
+ * One key per usrquota, (root_id, BTRFS_USRQUOTA_INFO_KEY, uid).
+ */
+#define BTRFS_USRQUOTA_INFO_KEY         242
+/*
+ * Contains the user configured limits for the usrquota.
+ * One key per usrquota, (root_id, BTRFS_USRGROUP_LIMIT_KEY, uid).
+ */
+#define BTRFS_USRQUOTA_LIMIT_KEY        244
+
+#define BTRFS_USRQUOTA_COMPAT_KEY       245
+#endif /* MY_ABC_HERE */
 
 /*
  * Obsolete name, see BTRFS_TEMPORARY_ITEM_KEY.
@@ -472,6 +618,89 @@ struct btrfs_free_space_header {
 #define BTRFS_SUPER_FLAG_CHANGING_FSID	(1ULL << 35)
 #define BTRFS_SUPER_FLAG_CHANGING_FSID_V2 (1ULL << 36)
 
+#ifdef MY_ABC_HERE
+#define BTRFS_SYNO_USAGE_STATUS_VERSION        1
+
+struct btrfs_syno_extent_usage_item {
+	__u8 type;
+	__le64 reserved[1];
+} __attribute__ ((__packed__));
+
+struct btrfs_syno_extent_usage_inline_ref {
+	__u8 type;
+	__le32 count;
+	__le64 reserved[1];
+} __attribute__ ((__packed__));
+
+struct btrfs_syno_subvol_usage_item {
+	__le32 refs;
+	__le32 num_bytes;
+	__le64 reserved[1];
+} __attribute__ ((__packed__));
+
+#define BTRFS_SYNO_USAGE_ROOT_FLAG_READONLY	(1ULL << 0)
+#define BTRFS_SYNO_USAGE_ROOT_FLAG_FAST_RESCAN	(1ULL << 1)
+#define BTRFS_SYNO_USAGE_ROOT_FLAG_FULL_RESCAN	(1ULL << 2)
+#define BTRFS_SYNO_USAGE_ROOT_FLAG_RESCAN_PROGRESS_ACCOUNTING	(1ULL << 3)
+#define BTRFS_SYNO_USAGE_ROOT_FLAG_RESCAN_MASK	(BTRFS_SYNO_USAGE_ROOT_FLAG_FAST_RESCAN |	\
+												BTRFS_SYNO_USAGE_ROOT_FLAG_FULL_RESCAN |	\
+												BTRFS_SYNO_USAGE_ROOT_FLAG_RESCAN_PROGRESS_ACCOUNTING)
+#define BTRFS_SYNO_USAGE_ROOT_FLAG_FORCE_EXTENT	(1ULL << 4)
+#define BTRFS_SYNO_USAGE_ROOT_FLAG_RESET_MASK	(BTRFS_SYNO_USAGE_ROOT_FLAG_READONLY |	\
+												BTRFS_SYNO_USAGE_ROOT_FLAG_FAST_RESCAN |	\
+												BTRFS_SYNO_USAGE_ROOT_FLAG_RESCAN_PROGRESS_ACCOUNTING |	\
+												BTRFS_SYNO_USAGE_ROOT_FLAG_FORCE_EXTENT)
+struct btrfs_syno_usage_root_status_item {
+	__u8 type;
+	__u8 new_type;
+	__le64 state;
+	__le64 flags;
+	__le64 num_bytes;
+	/* for subvol delete */
+	struct btrfs_disk_key drop_progress;
+	/* for rescan */
+	struct btrfs_disk_key fast_rescan_progress;
+	struct btrfs_disk_key full_rescan_progress;
+	__le64 cur_full_rescan_size;
+	__le64 total_full_rescan_size;
+	/* for disable */
+	__le64 total_syno_subvol_usage_items;
+	__le64 reserved[4];
+} __attribute__ ((__packed__));
+
+struct btrfs_syno_usage_global_type_item {
+	__le64 num_bytes;
+	__le64 reserved[4];
+} __attribute__ ((__packed__));
+
+#define BTRFS_SYNO_USAGE_FLAG_INCONSISTENT	(1ULL << 0)
+
+struct btrfs_syno_usage_status_item {
+	__le64 version;
+	__le64 state;
+	__le64 flags;
+	__le64 generation;
+	/* for rescan */
+	struct btrfs_disk_key extent_rescan_progress;
+	__le64 cur_full_rescan_size;
+	__le64 total_full_rescan_size;
+	__le64 extent_tree_cur_rescan_size;
+	__le64 extent_tree_total_rescan_size;
+	/* for disable */
+	__le64 total_syno_extent_tree_items;
+	__le64 total_syno_subvol_usage_items;
+	__le64 reserved[4];
+} __attribute__ ((__packed__));
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+struct btrfs_syno_feat_tree_status_item {
+	__le64 version;
+	__le64 status;
+} __attribute__ ((__packed__));
+
+#define BTRFS_SYNO_FEAT_TREE_VERSION 1
+#endif /* MY_ABC_HERE */
 
 /*
  * items in the extent btree are used to record the objectid of the
@@ -502,6 +731,21 @@ struct btrfs_extent_item_v0 {
  * it is only declared here to avoid collisions
  */
 #define BTRFS_EXTENT_FLAG_SUPER		(1ULL << 48)
+
+#ifdef MY_ABC_HERE
+/*
+ * This flag is used to indicate that the extent item has more than
+ * one backrefs for a particular file. This could be done by calling
+ * BTRFS_IOC_CLONE_RANGE or dedup. Since our quota reference needs to
+ * drop only if we find out that this is the file's last reference
+ * to this extent item. After enabling dedup and iocl, things become
+ * much more complicated because the variable "last_ref" in
+ * __btrfs_free_extent doesn't serve our purpose for indicating we
+ * need to drop quota due to dropping of file's last reference to
+ * this file.
+ */
+#define BTRFS_EXTENT_FLAG_HAS_CLONE_RANGE	(1ULL << 59)
+#endif /* MY_ABC_HERE */
 
 struct btrfs_tree_block_info {
 	struct btrfs_disk_key key;
@@ -577,7 +821,12 @@ struct btrfs_inode_item {
 	 * a little future expansion, for more than this we can
 	 * just grow the inode item and version it
 	 */
+#ifdef MY_ABC_HERE
+	__le64 reserved[3];
+	__le64 syno_uq_rfer_used;
+#else
 	__le64 reserved[4];
+#endif /* MY_ABC_HERE */
 	struct btrfs_timespec atime;
 	struct btrfs_timespec ctime;
 	struct btrfs_timespec mtime;
@@ -597,6 +846,14 @@ struct btrfs_dir_item {
 } __attribute__ ((__packed__));
 
 #define BTRFS_ROOT_SUBVOL_RDONLY	(1ULL << 0)
+#ifdef MY_ABC_HERE
+#define BTRFS_ROOT_SUBVOL_HIDE		(1ULL << 32)
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+#define BTRFS_ROOT_SUBVOL_NOLOAD_USRQUOTA (1ULL << 33)
+#define BTRFS_ROOT_SUBVOL_CMPR_RATIO (1ULL << 34)
+#define BTRFS_ROOT_SUBVOL_DISABLE_QUOTA (1ULL << 35)
+#endif /* MY_ABC_HERE */
 
 /*
  * Internal in-memory flag that a subvolume has been marked for deletion but
@@ -657,6 +914,26 @@ static inline __u32 btrfs_legacy_root_item_size(void)
 {
 	return offsetof(struct btrfs_root_item, generation_v2);
 }
+
+#ifdef MY_ABC_HERE
+struct btrfs_root_locker_item {
+	__u8 enabled;
+	__u8 mode;
+	__u8 default_state;
+	__u8 state;
+	__u8 unused[4];
+	__le64 waittime;
+	__le64 duration;
+	__le64 clock_adjustment;
+	__le64 update_time_floor;
+
+	__le64 period_begin;
+	__le64 period_begin_sys;
+	__le64 period_end;
+	__le64 period_end_sys;
+	__le64 reserved[3];
+} __attribute__ ((__packed__));
+#endif /* MY_ABC_HERE */
 
 /*
  * this is used for both forward and backward root refs
@@ -752,6 +1029,10 @@ enum {
 	BTRFS_NR_FILE_EXTENT_TYPES = 3,
 };
 
+#ifdef MY_ABC_HERE
+#define BTRFS_FILE_EXTENT_DEDUPED	0x1
+#endif /* MY_ABC_HERE */
+
 struct btrfs_file_extent_item {
 	/*
 	 * transaction id that created this extent
@@ -775,7 +1056,15 @@ struct btrfs_file_extent_item {
 	 */
 	__u8 compression;
 	__u8 encryption;
+#ifdef MY_ABC_HERE
+	__u8 other_encoding; /* spare for later use */
+	/*
+	 * BTRFS_FILE_EXTENT_DEDUPED
+	 */
+	__u8 syno_flag;
+#else /* MY_ABC_HERE */
 	__le16 other_encoding; /* spare for later use */
+#endif /* MY_ABC_HERE */
 
 	/* are we inline data or a real extent? */
 	__u8 type;
@@ -949,7 +1238,17 @@ static inline __u16 btrfs_qgroup_level(__u64 qgroupid)
  */
 #define BTRFS_QGROUP_STATUS_FLAG_INCONSISTENT	(1ULL << 2)
 
+#ifdef MY_ABC_HERE
+// To pause a runnung rescan.
+#define BTRFS_QGROUP_STATUS_FLAG_PAUSE		(1ULL << 17)
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#define BTRFS_QGROUP_STATUS_VERSION         1
+#define BTRFS_QGROUP_V2_STATUS_VERSION     87
+#else
 #define BTRFS_QGROUP_STATUS_VERSION        1
+#endif /* MY_ABC_HERE */
 
 struct btrfs_qgroup_status_item {
 	__le64 version;
@@ -986,8 +1285,99 @@ struct btrfs_qgroup_limit_item {
 	__le64 flags;
 	__le64 max_rfer;
 	__le64 max_excl;
+#ifdef MY_ABC_HERE
+	union {
+		__le64 soft_rfer;
+		__le64 rsv_rfer;
+	};
+	union {
+		__le64 soft_excl;
+		__le64 rsv_excl;
+	};
+#else
 	__le64 rsv_rfer;
 	__le64 rsv_excl;
+#endif /* MY_ABC_HERE */
 } __attribute__ ((__packed__));
+
+#ifdef MY_ABC_HERE
+#define SYNO_QUOTA_RESCAN_DONE     (1ULL << 0)
+#define SYNO_QUOTA_RESCAN_QUEUED   (1ULL << 1)
+#define SYNO_QUOTA_RESCAN_DOING    (1ULL << 2)
+#define SYNO_QUOTA_RESCAN_ERR      (1ULL << 3) // We found werror when rescaning.
+#define SYNO_QUOTA_RESCAN_NEED     (1ULL << 4) // We found error when updating quota.
+
+struct btrfs_syno_quota_rescan_item {
+	__le64 flags;
+	__le64 version;
+	__le64 generation; // generation that we update this item.
+	__le64 rescan_inode; // inode number that we already scanned.
+	__le64 end_inode; // max inode number when we do btrfs_syno_quota_rescan().
+	__le64 tree_size; // fs tree size when we do btrfs_syno_quota_rescan().
+	__le64 next_root;
+	__le64 reserved[1];
+} __attribute__ ((__packed__));
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+#define BTRFS_USRQUOTA_STATUS_FLAG_ON            (1ULL << 0)
+#define BTRFS_USRQUOTA_STATUS_FLAG_RESCAN        (1ULL << 1)
+#define BTRFS_USRQUOTA_STATUS_FLAG_INCONSISTENT  (1ULL << 2)
+
+#define BTRFS_USRQUOTA_STATUS_VERSION             1
+#define BTRFS_USRQUOTA_V2_STATUS_VERSION         87
+
+#define BTRFS_USRQUOTA_COMPAT_FLAG_INODE_QUOTA   (1ULL << 0)
+#define BTRFS_USRQUOTA_COMPAT_FLAG	\
+	(BTRFS_USRQUOTA_COMPAT_FLAG_INODE_QUOTA)
+
+struct btrfs_usrquota_status_item {
+	__le64 version;
+	__le64 generation;
+	__le64 flags;
+	__le64 rescan_rootid;
+	__le64 rescan_objectid;
+	__le64 reserved[3];
+} __attribute__ ((__packed__));
+
+struct btrfs_usrquota_compat_item {
+	__le64 generation;
+	__le64 flags;
+	__le64 reserved[4];
+} __attribute__ ((__packed__));
+
+struct btrfs_usrquota_root_item {
+	__le64 info_item_cnt;
+	__le64 limit_item_cnt;
+} __attribute__ ((__packed__));
+
+struct btrfs_usrquota_info_item {
+	__le64 generation;
+	__le64 rfer_used;
+} __attribute__ ((__packed__));
+
+struct btrfs_usrquota_limit_item {
+	__le64 rfer_soft;
+	__le64 rfer_hard;
+} __attribute__ ((__packed__));
+
+union btrfs_usrquota_item_union {
+	struct btrfs_usrquota_info_item info_item;
+	struct btrfs_usrquota_limit_item limit_item;
+};
+
+#define BTRFS_USRQUOTA_MAX_ITEMS_LEAF(f) (BTRFS_LEAF_DATA_SIZE(f) / \
+							(sizeof(union btrfs_usrquota_item_union) + \
+							 sizeof(struct btrfs_item)))
+#endif /* MY_ABC_HERE */
+#ifdef MY_ABC_HERE
+struct btrfs_rbd_meta_file_subvol_record_item {
+	__le32 inode_cnt;
+} __attribute__ ((__packed__));
+
+struct  btrfs_rbd_meta_file_inode_record_item{
+	__le64 generation; // same as inode's generation
+} __attribute__ ((__packed__));
+#endif /* MY_ABC_HERE */
 
 #endif /* _BTRFS_CTREE_H_ */

@@ -1,0 +1,178 @@
+// SPDX-License-Identifier: (GPL-2.0-or-later OR BSD-2-Clause)
+/*
+ * Copyright (c) 2020 Realtek Semiconductor Corp.
+ */
+
+/dts-v1/;
+
+#include "rtd1619b-bleedingedge.dtsi"
+
+/ {
+	compatible = "realtek,bleeding-edge", "realtek,rtd1619b";
+	model = "Realtek Bleeding Edge EVB (1GB)";
+
+	memory@4000 {
+		device_type = "memory";
+		reg = <0x00040000 0x3ffc0000>; /* 1 GiB */
+	};
+};
+
+&pcie1 {
+	status = "disabled";
+};
+
+&pcie2 {
+	status = "disabled";
+};
+
+&sata_phy {
+	status = "okay";
+};
+
+&sata_phy0 {
+	tx-drv = <0x40ab2001>, <0x40ab6001>, <0x40aba001>,
+	         <0x12601a01>, <0x12605a01>, <0x126b9a01>;
+	status = "okay";
+};
+
+&ahci_sata {
+	hostinit-mode = <1>;
+	status = "okay";
+};
+
+&sata_port0 {
+	status = "okay";
+};
+
+&rtk_pm {
+	wakeup-flags = <(LAN | GPIO | RTC | TIMER | CEC)>;
+	wakeup-gpio-list = <26 GPIO_WAKEUP_ENABLE GPIO_WAKEUP_ACTIVE_HIGH>;
+	wakeup-timer = <0>;
+	status = "okay";
+};
+
+&i2c_1 {
+	s35390a: s35390a@30 {
+		 status = "ok";
+		 compatible = "sii,s35390a";
+		 reg = <0x30>;
+	 };
+
+};
+
+&protected_mem {
+	status = "disabled";
+};
+
+&rpc_comm {
+	status = "disabled";
+};
+
+&rpc_ringbuf {
+	status = "disabled";
+};
+
+&video_fw_ve3 {
+	status = "disabled";
+};
+
+&audio_heap {
+	status = "disabled";
+};
+
+&media_heap {
+	status = "disabled";
+};
+
+&cma_resrved_1 {
+	status = "disabled";
+};
+
+&cma_resrved_2 {
+	status = "disabled";
+};
+
+&cma_resrved_3 {
+	status = "disabled";
+};
+
+&cma_resrved_4 {
+	status = "disabled";
+};
+
+&cma_resrved_5 {
+	status = "disabled";
+};
+
+&cma_resrved_6 {
+	status = "disabled";
+};
+
+&cma_resrved_7 {
+	status = "disabled";
+};
+
+&cma_resrved_8 {
+	status = "disabled";
+};
+
+&cma_resrved_9 {
+	status = "disabled";
+};
+
+&rtk_ion {
+	status = "disabled";
+};
+
+&tee {
+	status = "disabled";
+};
+
+&hifi {
+	status = "disabled";
+};
+
+&nic {
+	led-cfg = <0x1700042F>;
+	eee = <0>; /* 0: disable, 1: enable */
+};
+
+&rpc {
+	status = "disabled";
+};
+
+&rtk_fw_pm {
+	status = "disabled";
+};
+
+&reserved_memory {
+       ramoops@22000000  {
+               compatible = "ramoops";
+               reg = <0x22000000 0x00200000>;
+               console-size = <0x00100000>;
+               record-size = <0x00004000>;
+               ftrace-size = <0x00004000>;
+       };
+};
+&iso {
+	pwm: pwm@d0 {
+		pwm_1 {
+			enable = <1>;
+			clkout_div = <0xff>;
+			clksrc_div = <0xf>;
+			duty_rate = <50>; /* HW active low */
+		};
+		pwm_2 {
+			enable = <1>;
+			clkout_div = <0xff>;
+			clksrc_div = <0xf>;
+			duty_rate = <100>; /* HW active low */
+		};
+	};
+};
+&pwm {
+        pinctrl-names = "default";
+        pinctrl-0 = <&pwm1_0_pins>,
+                    <&pwm2_0_pins>;
+        status = "okay";
+};

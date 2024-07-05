@@ -56,6 +56,9 @@ struct ceph_pg_pool_info {
 	s64 write_tier; /* wins for read+write ops */
 	u64 flags; /* CEPH_POOL_FLAG_* */
 	char *name;
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+	u16 placement_seed;
+#endif /* CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH */
 
 	bool was_full;  /* for handle_one_map() */
 };
@@ -336,4 +339,11 @@ extern const char *ceph_pg_pool_name_by_id(struct ceph_osdmap *map, u64 id);
 extern int ceph_pg_poolid_by_name(struct ceph_osdmap *map, const char *name);
 u64 ceph_pg_pool_flags(struct ceph_osdmap *map, u64 id);
 
+#ifdef CONFIG_SYNO_CEPH_CUSTOMIZED_CRUSH
+extern int do_crush(struct ceph_osdmap *map, int ruleno, int x,
+		    int *result, int result_max,
+		    const __u32 *weight, int weight_max,
+		    s64 choose_args_index
+		    , int pool_ps);
+#endif
 #endif

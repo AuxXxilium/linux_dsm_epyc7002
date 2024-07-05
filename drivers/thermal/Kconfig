@@ -510,4 +510,8 @@ config KHADAS_MCU_FAN_THERMAL
 	  If you say yes here you get support for the FAN controlled
 	  by the Microcontroller found on the Khadas VIM boards.
 
+if SYNO_LSP_RTD1619B
+source "drivers/thermal/realtek/Kconfig"
+
+endif # SYNO_LSP_RTD1619B
 endif

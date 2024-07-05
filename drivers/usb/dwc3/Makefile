@@ -51,3 +51,29 @@ obj-$(CONFIG_USB_DWC3_MESON_G12A)	+= dwc3-meson-g12a.o
 obj-$(CONFIG_USB_DWC3_OF_SIMPLE)	+= dwc3-of-simple.o
 obj-$(CONFIG_USB_DWC3_ST)		+= dwc3-st.o
 obj-$(CONFIG_USB_DWC3_QCOM)		+= dwc3-qcom.o
+ifeq ($(CONFIG_SYNO_LSP_RTD1619B), y)
+ifeq ($(CONFIG_SYNO_RTD1619B), y)
+obj-$(CONFIG_USB_DWC3_RTK)		+= dwc3_rtk.o
+dwc3_rtk-y		    	        := dwc3-rtk.o
+
+ifneq ($(CONFIG_TRACING),)
+	CFLAGS_trace-rtk.o	    	:= -I$(src)
+	dwc3_rtk-y  	      		+= trace-rtk.o
+endif
+
+ifneq ($(CONFIG_DEBUG_FS),)
+	dwc3_rtk-y	            	+= dwc3-rtk-debugfs.o
+endif
+
+ifneq ($(CONFIG_USB_DWC3_RTK_DUAL_ROLE),)
+	dwc3_rtk-y	            	+= dwc3-rtk-drd.o
+endif
+
+else # CONFIG_SYNO_RTD1619B
+obj-$(CONFIG_USB_DWC3_RTK)		+= dwc3-rtk.o
+obj-$(CONFIG_USB_DWC3_RTK)		+= dwc3-rtk-debugfs.o
+obj-$(CONFIG_USB_DWC3_RTK_DUAL_ROLE)	+= dwc3-rtk-drd.o
+endif # CONFIG_SYNO_RTD1619B
+obj-$(CONFIG_USB_DWC3_RTK_TYPE_C)	+= dwc3-rtk-type_c.o
+obj-$(CONFIG_USB_TYPE_C_RTK_RTS5400) += rtk-rts5400.o
+endif # CONFIG_SYNO_LSP_RTD1619B

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  *  linux/include/linux/serial_8250.h
@@ -139,6 +142,10 @@ struct uart_8250_port {
 	/* Serial port overrun backoff */
 	struct delayed_work overrun_backoff;
 	u32 overrun_backoff_time_ms;
+
+#ifdef MY_ABC_HERE
+	bool                    blXmitrCheck;
+#endif /* MY_ABC_HERE */
 };
 
 static inline struct uart_8250_port *up_to_u8250p(struct uart_port *up)

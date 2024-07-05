@@ -13,6 +13,7 @@ ext4-y	:= balloc.o bitmap.o block_validity.o dir.o ext4_jbd2.o extents.o \
 		xattr_user.o fast_commit.o
 
 ext4-$(CONFIG_EXT4_FS_POSIX_ACL)	+= acl.o
+ext4-$(CONFIG_SYNO_EXT4_WINACL)		+= syno_acl.o
 ext4-$(CONFIG_EXT4_FS_SECURITY)		+= xattr_security.o
 ext4-inode-test-objs			+= inode-test.o
 obj-$(CONFIG_EXT4_KUNIT_TESTS)		+= ext4-inode-test.o

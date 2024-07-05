@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  *   fs/cifs/file.c
  *
@@ -4032,6 +4035,13 @@ cifs_read(struct file *file, char *read_data, size_t read_size, loff_t *offset)
 	}
 	open_file = file->private_data;
 	tcon = tlink_tcon(open_file->tlink);
+#ifdef MY_ABC_HERE
+	// CID 45269: Derefernce before null check
+	if (!tcon->ses) {
+		free_xid(xid);
+		return -ENOSYS;
+	}
+#endif /* MY_ABC_HERE */
 	server = cifs_pick_channel(tcon->ses);
 
 	if (!server->ops->sync_read) {

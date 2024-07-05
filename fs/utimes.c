@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/file.h>
 #include <linux/mount.h>
@@ -7,6 +10,10 @@
 #include <linux/uaccess.h>
 #include <linux/compat.h>
 #include <asm/unistd.h>
+
+#ifdef MY_ABC_HERE
+#include <linux/syno_acl.h>
+#endif /* MY_ABC_HERE */
 
 static bool nsec_valid(long nsec)
 {
@@ -225,6 +232,83 @@ SYSCALL_DEFINE2(utime, char __user *, filename, struct utimbuf __user *, times)
 }
 #endif
 
+#ifdef MY_ABC_HERE
+#ifdef MY_ABC_HERE
+static int _syno_utime(const char *filename, struct timespec64 *time)
+{
+	int error;
+	struct path path;
+	struct inode *inode;
+
+	if (!time)
+		return -EINVAL;
+
+	error = user_path_at(AT_FDCWD, filename, LOOKUP_FOLLOW, &path);
+	if (error)
+		goto out;
+
+	error = mnt_want_write(path.mnt);
+	if (error)
+		goto dput_and_out;
+
+	inode = path.dentry->d_inode;
+	if (!inode_owner_or_capable(inode)) {
+#ifdef MY_ABC_HERE
+		if (IS_SYNOACL(path.dentry)) {
+			error = synoacl_op_permission(path.dentry, MAY_WRITE_ATTR | MAY_WRITE_EXT_ATTR);
+			if (error)
+				goto drop_write;
+		} else {
+			error = -EPERM;
+			goto drop_write;
+		}
+#else /* MY_ABC_HERE */
+		error = -EPERM;
+		goto drop_write;
+#endif /* MY_ABC_HERE */
+	}
+
+	error = syno_op_set_crtime(inode, time);
+
+drop_write:
+	mnt_drop_write(path.mnt);
+dput_and_out:
+	path_put(&path);
+out:
+	return error;
+}
+#endif /* MY_ABC_HERE */
+/**
+ * sys_syno_utime() is used to update create time.
+ *
+ * @param filename The file to be changed create time.
+ *        times    Create time should be stored in a ctime field.
+ *
+ * @return 0 success
+ *        !0 error
+ */
+SYSCALL_DEFINE2(syno_utime, const char __user *, filename, struct __kernel_timespec __user *, ctime)
+{
+#ifdef MY_ABC_HERE
+	int error;
+	struct timespec64 time;
+
+	if (!ctime)
+		return -EINVAL;
+
+	error = copy_from_user(&time, ctime, sizeof(struct timespec64));
+	if (error)
+		goto out;
+
+	error = _syno_utime(filename, &time);
+out:
+	return error;
+#else
+	return -EOPNOTSUPP;
+#endif /* MY_ABC_HERE */
+}
+#endif /* MY_ABC_HERE */
+
 #ifdef CONFIG_COMPAT_32BIT_TIME
 /*
  * Not all architectures have sys_utime, so implement this in terms
@@ -295,4 +379,28 @@ SYSCALL_DEFINE2(utimes_time32, const char __user *, filename, struct old_timeval
 	return do_compat_futimesat(AT_FDCWD, filename, t);
 }
 #endif
+
+#ifdef MY_ABC_HERE
+SYSCALL_DEFINE2(syno_utime32, const char __user *, filename, struct old_timespec32 __user *, ctime)
+{
+#ifdef MY_ABC_HERE
+	int error;
+	struct timespec64 time;
+
+	if (!ctime)
+		return -EINVAL;
+
+	error = get_old_timespec32(&time, ctime);
+	if (error)
+		goto out;
+
+	error = _syno_utime(filename, &time);
+out:
+	return error;
+#else
+	return -EOPNOTSUPP;
+#endif /* MY_ABC_HERE */
+}
+#endif /* MY_ABC_HERE */
+
 #endif

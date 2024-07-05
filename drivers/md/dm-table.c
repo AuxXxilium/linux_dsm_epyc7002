@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  * Copyright (C) 2001 Sistina Software (UK) Limited.
  * Copyright (C) 2004-2008 Red Hat, Inc. All rights reserved.
@@ -1783,6 +1786,35 @@ static bool dm_table_supports_secure_erase(struct dm_table *t)
 	return true;
 }
 
+#ifdef MY_ABC_HERE
+static int device_not_unused_hint_capable(struct dm_target *ti, struct dm_dev *dev,
+				      sector_t start, sector_t len, void *data)
+{
+	struct request_queue *q = bdev_get_queue(dev->bdev);
+
+	return q && !blk_queue_unused_hint(q);
+}
+
+static bool dm_table_supports_unused_hint(struct dm_table *t)
+{
+	struct dm_target *ti;
+	unsigned int i;
+
+	for (i = 0; i < dm_table_get_num_targets(t); i++) {
+		ti = dm_table_get_target(t, i);
+
+		if (!ti->num_unused_hint_bios)
+			return false;
+
+		if (!ti->type->iterate_devices ||
+		    ti->type->iterate_devices(ti, device_not_unused_hint_capable, NULL))
+			return false;
+	}
+
+	return true;
+}
+#endif /* MY_ABC_HERE */
+
 static int device_requires_stable_pages(struct dm_target *ti,
 					struct dm_dev *dev, sector_t start,
 					sector_t len, void *data)
@@ -1821,6 +1853,13 @@ void dm_table_set_restrictions(struct dm_table *t, struct request_queue *q,
 
 	if (dm_table_supports_secure_erase(t))
 		blk_queue_flag_set(QUEUE_FLAG_SECERASE, q);
+
+#ifdef MY_ABC_HERE
+	if (dm_table_supports_unused_hint(t))
+		blk_queue_flag_set(QUEUE_FLAG_UNUSED_HINT, q);
+	else
+		blk_queue_flag_clear(QUEUE_FLAG_UNUSED_HINT, q);
+#endif /* MY_ABC_HERE */
 
 	if (dm_table_supports_flush(t, (1UL << QUEUE_FLAG_WC))) {
 		wc = true;

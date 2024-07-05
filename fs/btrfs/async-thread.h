@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2007 Oracle.  All rights reserved.
@@ -34,6 +37,15 @@ struct btrfs_workqueue *btrfs_alloc_workqueue(struct btrfs_fs_info *fs_info,
 					      unsigned int flags,
 					      int limit_active,
 					      int thresh);
+#ifdef MY_ABC_HERE
+struct btrfs_workqueue *btrfs_alloc_workqueue_with_sysfs(
+	struct btrfs_fs_info *fs_info,
+	const char *name,
+	unsigned int flags,
+	int limit_active,
+	int thresh);
+#endif /* MY_ABC_HERE */
+
 void btrfs_init_work(struct btrfs_work *work, btrfs_func_t func,
 		     btrfs_func_t ordered_func, btrfs_func_t ordered_free);
 void btrfs_queue_work(struct btrfs_workqueue *wq,

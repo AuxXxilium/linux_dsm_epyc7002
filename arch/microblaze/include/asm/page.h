@@ -192,9 +192,6 @@ extern int page_is_ram(unsigned long pfn);
 
 #define TOPHYS(addr)  __virt_to_phys(addr)
 
-#ifdef CONFIG_MMU
-
-#endif /* CONFIG_MMU */
 
 #endif /* __KERNEL__ */
 

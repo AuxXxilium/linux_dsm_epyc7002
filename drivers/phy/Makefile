@@ -9,6 +9,9 @@ obj-$(CONFIG_PHY_LPC18XX_USB_OTG)	+= phy-lpc18xx-usb-otg.o
 obj-$(CONFIG_PHY_XGENE)			+= phy-xgene.o
 obj-$(CONFIG_PHY_PISTACHIO_USB)		+= phy-pistachio-usb.o
 obj-$(CONFIG_USB_LGM_PHY)		+= phy-lgm-usb.o
+ifeq ($(CONFIG_SYNO_LSP_RTD1619B), y)
+obj-$(CONFIG_ARCH_REALTEK)		+= realtek/
+endif # CONFIG_SYNO_LSP_RTD1619B
 obj-y					+= allwinner/	\
 					   amlogic/	\
 					   broadcom/	\

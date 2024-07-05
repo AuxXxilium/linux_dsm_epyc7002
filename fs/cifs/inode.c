@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  *   fs/cifs/inode.c
  *
@@ -2014,8 +2017,16 @@ cifs_do_rename(const unsigned int xid, struct dentry *from_dentry,
 	tcon = tlink_tcon(tlink);
 	server = tcon->ses->server;
 
+#ifdef MY_ABC_HERE
+	// cifs_sb_tlink need cifs_put_tlink before return
+	if (!server->ops->rename) {
+		rc = -ENOSYS;
+		goto do_rename_exit;
+	}
+#else /* MY_ABC_HERE */
 	if (!server->ops->rename)
 		return -ENOSYS;
+#endif /* MY_ABC_HERE */
 
 	/* try path-based rename first */
 	rc = server->ops->rename(xid, tcon, from_path, to_path, cifs_sb);
@@ -2432,6 +2443,28 @@ int cifs_getattr(const struct path *path, struct kstat *stat,
 	}
 	return 0;
 }
+
+#ifdef MY_ABC_HERE
+int cifs_syno_getattr(struct dentry *dentry, struct kstat *kst, unsigned int syno_flags)
+{
+	struct inode *inode = d_inode(dentry);
+
+	/* old CIFS Unix Extensions doesn't return create time */
+	if ((syno_flags & SYNOST_CREATE_TIME) && CIFS_I(inode)->createtime)
+		kst->syno_create_time = cifs_NTtimeToUnix(cpu_to_le64(CIFS_I(inode)->createtime));
+
+	return 0;
+}
+
+int cifs_syno_get_crtime(struct inode *inode, struct timespec64 *crtime)
+{
+	/* old CIFS Unix Extensions doesn't return create time */
+	if (CIFS_I(inode)->createtime)
+		*crtime = cifs_NTtimeToUnix(cpu_to_le64(CIFS_I(inode)->createtime));
+
+	return 0;
+}
+#endif /* MY_ABC_HERE */
 
 int cifs_fiemap(struct inode *inode, struct fiemap_extent_info *fei, u64 start,
 		u64 len)

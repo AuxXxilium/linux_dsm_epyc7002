@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/fs/fat/inode.c
@@ -566,8 +569,13 @@ int fat_fill_inode(struct inode *inode, struct msdos_dir_entry *de)
 
 	fat_time_fat2unix(sbi, &inode->i_mtime, de->time, de->date, 0);
 	if (sbi->options.isvfat) {
+#ifdef MY_ABC_HERE
+		fat_time_fat2unix(sbi, &MSDOS_I(inode)->i_btime, de->ctime,
+				  de->cdate, de->ctime_cs);
+#else
 		fat_time_fat2unix(sbi, &inode->i_ctime, de->ctime,
 				  de->cdate, de->ctime_cs);
+#endif /* MY_ABC_HERE */
 		fat_time_fat2unix(sbi, &inode->i_atime, 0, de->adate, 0);
 	} else
 		fat_truncate_time(inode, &inode->i_mtime, S_ATIME|S_CTIME);
@@ -755,6 +763,11 @@ static struct inode *fat_alloc_inode(struct super_block *sb)
 	ei->i_logstart = 0;
 	ei->i_attrs = 0;
 	ei->i_pos = 0;
+#ifdef MY_ABC_HERE
+	/* update to curret time later in fat_fill_inode() */
+	ei->i_btime.tv_sec = 0;
+	ei->i_btime.tv_nsec = 0;
+#endif /* MY_ABC_HERE */
 
 	return &ei->vfs_inode;
 }
@@ -886,8 +899,13 @@ retry:
 			  &raw_entry->date, NULL);
 	if (sbi->options.isvfat) {
 		__le16 atime;
+#ifdef MY_ABC_HERE
+		fat_time_unix2fat(sbi, &MSDOS_I(inode)->i_btime, &raw_entry->ctime,
+				  &raw_entry->cdate, &raw_entry->ctime_cs);
+#else
 		fat_time_unix2fat(sbi, &inode->i_ctime, &raw_entry->ctime,
 				  &raw_entry->cdate, &raw_entry->ctime_cs);
+#endif /* MY_ABC_HERE */
 		fat_time_unix2fat(sbi, &inode->i_atime, &atime,
 				  &raw_entry->adate, NULL);
 	}
@@ -1036,7 +1054,11 @@ enum {
 	Opt_charset, Opt_shortname_lower, Opt_shortname_win95,
 	Opt_shortname_winnt, Opt_shortname_mixed, Opt_utf8_no, Opt_utf8_yes,
 	Opt_uni_xl_no, Opt_uni_xl_yes, Opt_nonumtail_no, Opt_nonumtail_yes,
+#ifdef MY_ABC_HERE
+	Opt_obsolete, Opt_flush, Opt_noflush, Opt_tz_utc, Opt_rodir, Opt_err_cont,
+#else
 	Opt_obsolete, Opt_flush, Opt_tz_utc, Opt_rodir, Opt_err_cont,
+#endif /* MY_ABC_HERE */
 	Opt_err_panic, Opt_err_ro, Opt_discard, Opt_nfs, Opt_time_offset,
 	Opt_nfs_stale_rw, Opt_nfs_nostale_ro, Opt_err, Opt_dos1xfloppy,
 };
@@ -1062,6 +1084,9 @@ static const match_table_t fat_tokens = {
 	{Opt_debug, "debug"},
 	{Opt_immutable, "sys_immutable"},
 	{Opt_flush, "flush"},
+#ifdef MY_ABC_HERE
+	{Opt_noflush, "noflush"},
+#endif /* MY_ABC_HERE */
 	{Opt_tz_utc, "tz=UTC"},
 	{Opt_time_offset, "time_offset=%d"},
 	{Opt_err_cont, "errors=continue"},
@@ -1154,6 +1179,9 @@ static int parse_options(struct super_block *sb, char *options, int is_vfat,
 	opts->tz_set = 0;
 	opts->nfs = 0;
 	opts->errors = FAT_ERRORS_RO;
+#ifdef MY_ABC_HERE
+	opts->flush = 1;
+#endif /* MY_ABC_HERE */
 	*debug = 0;
 
 	opts->utf8 = IS_ENABLED(CONFIG_FAT_DEFAULT_UTF8) && is_vfat;
@@ -1249,6 +1277,11 @@ static int parse_options(struct super_block *sb, char *options, int is_vfat,
 		case Opt_flush:
 			opts->flush = 1;
 			break;
+#ifdef MY_ABC_HERE
+		case Opt_noflush:
+			opts->flush = 0;
+			break;
+#endif /* MY_ABC_HERE */
 		case Opt_time_offset:
 			if (match_int(&args[0], &option))
 				return -EINVAL;

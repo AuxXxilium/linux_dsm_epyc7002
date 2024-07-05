@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2007 Oracle.  All rights reserved.
@@ -213,6 +216,9 @@ int btrfs_find_orphan_roots(struct btrfs_fs_info *fs_info)
 	struct btrfs_root *root;
 	int err = 0;
 	int ret;
+#ifdef MY_ABC_HERE
+	int empty = 0;
+#endif /* MY_ABC_HERE */
 
 	path = btrfs_alloc_path();
 	if (!path)
@@ -281,7 +287,15 @@ int btrfs_find_orphan_roots(struct btrfs_fs_info *fs_info)
 		WARN_ON(!test_bit(BTRFS_ROOT_ORPHAN_ITEM_INSERTED, &root->state));
 		if (btrfs_root_refs(&root->root_item) == 0) {
 			set_bit(BTRFS_ROOT_DEAD_TREE, &root->state);
+#ifdef MY_ABC_HERE
+			spin_lock(&root->inode_lock);
+			empty = RB_EMPTY_ROOT(&root->inode_tree);
+			spin_unlock(&root->inode_lock);
+			if (empty)
+				btrfs_add_dead_root(root);
+#else /* MY_ABC_HERE */
 			btrfs_add_dead_root(root);
+#endif /* MY_ABC_HERE */
 		}
 		btrfs_put_root(root);
 	}

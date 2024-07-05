@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/capability.h>
 #include <linux/compat.h>
@@ -150,6 +153,45 @@ static int blk_ioctl_discard(struct block_device *bdev, fmode_t mode,
 	return blkdev_issue_discard(bdev, start >> 9, len >> 9,
 				    GFP_KERNEL, flags);
 }
+
+#ifdef MY_ABC_HERE
+static int blk_ioctl_hint_unused(struct block_device *bdev, fmode_t mode,
+		unsigned long arg)
+{
+	uint64_t range[2];
+	uint64_t start, len;
+	struct request_queue *q = bdev_get_queue(bdev);
+
+	if (!blk_queue_unused_hint(q))
+		return -EOPNOTSUPP;
+
+	if (copy_from_user(range, (void __user *)arg, sizeof(range)))
+		return -EFAULT;
+
+	start = range[0];
+	len = range[1];
+
+	/**
+	 * Shrink the range to fit it for the device so that userspace
+	 * can give casual range, such as [0, ULLONG_MAX].
+	 */
+	if (start & 511) {
+		start += 512;
+		if (len < 512 || start < 512)
+			return -EINVAL;
+		len -= 512;
+	}
+
+	if (start > (uint64_t)i_size_read(bdev->bd_inode))
+		return -EINVAL;
+
+	if (start + len > (uint64_t)i_size_read(bdev->bd_inode))
+		len = (uint64_t)i_size_read(bdev->bd_inode) - start;
+
+	return blkdev_hint_unused(bdev, start >> 9, len >> 9,
+				    GFP_KERNEL);
+}
+#endif /* MY_ABC_HERE */
 
 static int blk_ioctl_zeroout(struct block_device *bdev, fmode_t mode,
 		unsigned long arg)
@@ -518,6 +560,10 @@ static int blkdev_common_ioctl(struct block_device *bdev, fmode_t mode,
 	case BLKSECDISCARD:
 		return blk_ioctl_discard(bdev, mode, arg,
 				BLKDEV_DISCARD_SECURE);
+#ifdef MY_ABC_HERE
+	case BLKHINTUNUSED:
+		return blk_ioctl_hint_unused(bdev, mode, arg);
+#endif /* MY_ABC_HERE */
 	case BLKZEROOUT:
 		return blk_ioctl_zeroout(bdev, mode, arg);
 	case BLKREPORTZONE:

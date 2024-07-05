@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Linux I2C core OF support code
@@ -16,6 +19,11 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/sysfs.h>
+#ifdef MY_ABC_HERE
+#include <linux/synolib.h>
+#include <linux/string.h>
+#include <linux/syno_fdt.h>
+#endif /* MY_ABC_HERE */
 
 #include "i2c-core.h"
 
@@ -61,6 +69,49 @@ int of_i2c_get_board_info(struct device *dev, struct device_node *node,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(of_i2c_get_board_info);
+
+#ifdef MY_ABC_HERE
+void syno_of_i2c_register_device(struct i2c_adapter *adap, struct device_node *node)
+{
+	struct i2c_board_info info = {};
+	const char *i2c_address = NULL;
+	const char *i2c_driver_name = NULL;
+	unsigned short val = 0;
+
+
+	if ( 0 == of_property_read_string(node, DT_I2C_DEVICE_NAME, &i2c_driver_name) && 
+			0 == of_property_read_string(node, DT_I2C_ADDRESS, &i2c_address)) {
+		if(0 == kstrtoul(i2c_address, 16, (unsigned long*) &val)) {
+			info.addr = val;
+			info.of_node = node;
+			strlcpy(info.type,i2c_driver_name,sizeof(info.type));
+
+			if (!i2c_new_client_device(adap, &info)) {
+				pr_err("fail to add I2C device %s at 0x%d", info.type, info.addr);
+				return;
+			}
+		}
+	}
+}
+
+void syno_of_i2c_register_devices(struct i2c_adapter *adap)
+{
+	struct device_node *pI2CNode = NULL;
+	struct device_node *pI2CDevNode = NULL;
+
+	if (NULL == of_root || NULL == adap){
+		return;
+	}
+
+	pI2CNode = syno_of_i2c_adapter_match(adap);
+
+	if (NULL != pI2CNode) {
+		for_each_child_of_node(pI2CNode, pI2CDevNode) {
+			syno_of_i2c_register_device(adap, pI2CDevNode);
+		}
+	}
+}
+#endif /* MY_ABC_HERE */
 
 static struct i2c_client *of_i2c_register_device(struct i2c_adapter *adap,
 						 struct device_node *node)

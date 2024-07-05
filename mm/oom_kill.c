@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/mm/oom_kill.c
@@ -54,6 +57,16 @@
 int sysctl_panic_on_oom;
 int sysctl_oom_kill_allocating_task;
 int sysctl_oom_dump_tasks = 1;
+
+#ifdef MY_ABC_HERE
+extern void syno_dump_modules(void);
+
+#ifdef KERN_INFO
+#undef KERN_INFO
+#define KERN_INFO KERN_WARNING
+#endif /* KERN_INFO */
+
+#endif /* MY_ABC_HERE */
 
 /*
  * Serializes oom killer invocations (out_of_memory()) from all contexts to
@@ -470,6 +483,9 @@ static void dump_header(struct oom_control *oc, struct task_struct *p)
 		dump_tasks(oc);
 	if (p)
 		dump_oom_summary(oc, p);
+#ifdef MY_ABC_HERE
+	syno_dump_modules();
+#endif /*  MY_ABC_HERE  */
 }
 
 /*
@@ -855,6 +871,18 @@ static bool task_will_free_mem(struct task_struct *task)
 	return ret;
 }
 
+#ifdef MY_ABC_HERE
+int (*funcSYNOSendErrorOOMEvent)(const char*) = NULL;
+static void sendOOMEvent(const char* process_name){
+	if (NULL == funcSYNOSendErrorOOMEvent){
+		printk(KERN_ERR "Can't reference to function 'funcSYNOSendErrorOOMEvent'\n");
+		return;
+	}
+	funcSYNOSendErrorOOMEvent(process_name);
+}
+EXPORT_SYMBOL(funcSYNOSendErrorOOMEvent);
+#endif /* MY_ABC_HERE */
+
 static void __oom_kill_process(struct task_struct *victim, const char *message)
 {
 	struct task_struct *p;
@@ -985,6 +1013,10 @@ static void oom_kill_process(struct oom_control *oc, const char *message)
 	oom_group = mem_cgroup_get_oom_group(victim, oc->memcg);
 
 	__oom_kill_process(victim, message);
+#ifdef MY_ABC_HERE
+	if (!is_memcg_oom(oc))
+		sendOOMEvent(victim->comm);
+#endif /* MY_ABC_HERE */
 
 	/*
 	 * If necessary, kill all tasks in the selected memory cgroup.

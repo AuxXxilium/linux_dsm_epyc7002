@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  * AMD 10Gb Ethernet driver
  *
@@ -149,12 +152,12 @@
 #define XGBE_RATECHANGE_COUNT		500
 
 /* CDR delay values for KR support (in usec) */
-#define XGBE_CDR_DELAY_INIT		10000
-#define XGBE_CDR_DELAY_INC		10000
-#define XGBE_CDR_DELAY_MAX		100000
+#define XGBE_CDR_DELAY_INIT		22000
+#define XGBE_CDR_DELAY_INC		22000
+#define XGBE_CDR_DELAY_MAX		110000
 
 /* RRC frequency during link status check */
-#define XGBE_RRC_FREQUENCY		10
+#define XGBE_RRC_FREQUENCY		1
 
 enum xgbe_port_mode {
 	XGBE_PORT_MODE_RSVD = 0,
@@ -380,6 +383,7 @@ struct xgbe_phy_data {
 	/* KR AN support */
 	unsigned int phy_cdr_notrack;
 	unsigned int phy_cdr_delay;
+	unsigned int phy_cdr_delay_required;
 };
 
 /* I2C, MDIO and GPIO lines are muxed, so only one device at a time */
@@ -849,10 +853,12 @@ static void xgbe_phy_free_phy_device(struct xgbe_prv_data *pdata)
 	struct xgbe_phy_data *phy_data = pdata->phy_data;
 
 	if (phy_data->phydev) {
-		phy_detach(phy_data->phydev);
-		phy_device_remove(phy_data->phydev);
-		phy_device_free(phy_data->phydev);
-		phy_data->phydev = NULL;
+		if(!pdata->ext_fixed_phy) {
+			phy_detach(phy_data->phydev);
+			phy_device_remove(phy_data->phydev);
+			phy_device_free(phy_data->phydev);
+			phy_data->phydev = NULL;
+		}
 	}
 }
 
@@ -1001,6 +1007,36 @@ static int xgbe_phy_find_phy_device(struct xgbe_prv_data *pdata)
 	/* Clear the extra AN flag */
 	pdata->an_again = 0;
 
+	netif_dbg(pdata, drv, pdata->netdev, "xgbe portmode = %d, phy_mode = %d, con_type= %d\n", phy_data->port_mode,phy_data->phydev_mode,phy_data->conn_type);
+
+	/* Check for the presence of an external PHY in KR mode, example Bilby platform */
+	if(phy_data->port_mode == XGBE_PORT_MODE_BACKPLANE) {
+		int addr = 0;
+		int reg = MII_ADDR_C45 | 1 << 16 | 2;
+		enum xgbe_conn_type  conn_type = phy_data->conn_type;
+		enum xgbe_mdio_mode  phy_mode = phy_data->phydev_mode;
+
+		pdata->ext_fixed_phy = 0;
+		phy_data->phydev_mode = XGBE_MDIO_MODE_CL45;
+		phy_data->conn_type = XGBE_CONN_TYPE_MDIO;
+
+		ret = xgbe_phy_get_comm_ownership(pdata);
+		if(ret) {
+			return ret;
+		}
+		ret = xgbe_phy_mdio_mii_read(pdata, addr, reg);
+		/* for Marvell PHY on bilby this is 0x2b , this is a workaround for Bilby , issue EMBDEV-10275*/ 
+		if((ret & 0x1FFF) == 0x2b){
+			pdata->ext_fixed_phy = 1;
+		}
+		xgbe_phy_put_comm_ownership(pdata);
+
+		if(!pdata->ext_fixed_phy) {
+			phy_data->phydev_mode = phy_mode;
+			phy_data->conn_type = conn_type;
+		}
+	}
+
 	/* Check for the use of an external PHY */
 	if (phy_data->phydev_mode == XGBE_MDIO_MODE_NONE)
 		return 0;
@@ -1024,11 +1060,17 @@ static int xgbe_phy_find_phy_device(struct xgbe_prv_data *pdata)
 	phydev = get_phy_device(phy_data->mii, phy_data->mdio_addr,
 				(phy_data->phydev_mode == XGBE_MDIO_MODE_CL45));
 	if (IS_ERR(phydev)) {
-		netdev_err(pdata->netdev, "get_phy_device failed\n");
+		netdev_err(pdata->netdev, "get_phy_device failed portmode = %d  phydev_mode = %d\n", phy_data->port_mode,phy_data->phydev_mode);
 		return -ENODEV;
 	}
 	netif_dbg(pdata, drv, pdata->netdev, "external PHY id is %#010x\n",
-		  phydev->phy_id);
+		 (phy_data->phydev_mode == XGBE_MDIO_MODE_CL45) ? phydev->c45_ids.device_ids[MDIO_MMD_PMAPMD] : phydev->phy_id);
+
+	if(((phy_data->phydev_mode == XGBE_MDIO_MODE_CL45) ? phydev->c45_ids.device_ids[MDIO_MMD_PMAPMD] : phydev->phy_id) == 0xFFFFFFFF) {
+		pdata->ext_fixed_phy = 0;
+		phy_device_free(phydev);
+		return 0;
+	}
 
 	/*TODO: If c45, add request_module based on one of the MMD ids? */
 
@@ -1040,7 +1082,7 @@ static int xgbe_phy_find_phy_device(struct xgbe_prv_data *pdata)
 	}
 
 	ret = phy_attach_direct(pdata->netdev, phydev, phydev->dev_flags,
-				PHY_INTERFACE_MODE_SGMII);
+				(phy_data->phydev_mode == XGBE_MDIO_MODE_CL45) ? PHY_INTERFACE_MODE_10GKR : PHY_INTERFACE_MODE_SGMII);
 	if (ret) {
 		netdev_err(pdata->netdev, "phy_attach_direct failed\n");
 		phy_device_remove(phydev);
@@ -1049,10 +1091,30 @@ static int xgbe_phy_find_phy_device(struct xgbe_prv_data *pdata)
 	}
 	phy_data->phydev = phydev;
 
+	switch (phy_data->port_mode) {
+	case XGBE_PORT_MODE_SFP:
+		/*  reset the sfp phy  EMBDEV-8951 */
+		if(phydev)
+			genphy_soft_reset(phydev);
+		else
+			netdev_err(pdata->netdev, "phy reset failed\n");
+		break;
+	default:
+		break;
+	}
+
 	xgbe_phy_external_phy_quirks(pdata);
 
 	linkmode_and(phydev->advertising, phydev->advertising,
 		     lks->link_modes.advertising);
+
+       if(phy_data->port_mode == XGBE_PORT_MODE_BACKPLANE) {
+       /* to do : add code to set the auto neg mode
+       phy_data->phydev->drv->config_aneg(phy_data->phydev);
+       phy_start_aneg() wornt work with Marvell PHY
+       */
+               return 0;
+       }
 
 	phy_start_aneg(phy_data->phydev);
 
@@ -1283,7 +1345,7 @@ static int xgbe_phy_sfp_read_eeprom(struct xgbe_prv_data *pdata)
 
 		memcpy(&phy_data->sfp_eeprom, &sfp_eeprom, sizeof(sfp_eeprom));
 
-		xgbe_phy_free_phy_device(pdata);
+
 	} else {
 		phy_data->sfp_changed = 0;
 	}
@@ -1320,7 +1382,6 @@ static void xgbe_phy_sfp_mod_absent(struct xgbe_prv_data *pdata)
 {
 	struct xgbe_phy_data *phy_data = pdata->phy_data;
 
-	xgbe_phy_free_phy_device(pdata);
 
 	phy_data->sfp_mod_absent = 1;
 	phy_data->sfp_phy_avail = 0;
@@ -1372,6 +1433,9 @@ put:
 	xgbe_phy_sfp_phy_settings(pdata);
 
 	xgbe_phy_put_comm_ownership(pdata);
+
+	if((phy_data->sfp_mod_absent) || (phy_data->sfp_changed))
+			xgbe_phy_free_phy_device(pdata);
 }
 
 static int xgbe_phy_module_eeprom(struct xgbe_prv_data *pdata,
@@ -1851,6 +1915,14 @@ static int xgbe_phy_an_config(struct xgbe_prv_data *pdata)
 		phy_data->phydev->duplex = pdata->phy.duplex;
 	}
 
+	if(phy_data->port_mode == XGBE_PORT_MODE_BACKPLANE) {
+	/* to do : add code to set the auto neg mode
+	 phy_data->phydev->drv->config_aneg(phy_data->phydev);
+	phy_start_aneg() wornt work with Marvell PHY
+	*/
+		return 0;
+	}
+
 	ret = phy_start_aneg(phy_data->phydev);
 
 	return ret;
@@ -1956,38 +2028,23 @@ static void xgbe_phy_set_redrv_mode(struct xgbe_prv_data *pdata)
 	xgbe_phy_put_comm_ownership(pdata);
 }
 
-static void xgbe_phy_rx_reset(struct xgbe_prv_data *pdata)
-{
-	int reg;
-
-	reg = XMDIO_READ_BITS(pdata, MDIO_MMD_PCS, MDIO_PCS_DIGITAL_STAT,
-			      XGBE_PCS_PSEQ_STATE_MASK);
-	if (reg == XGBE_PCS_PSEQ_STATE_POWER_GOOD) {
-		/* Mailbox command timed out, reset of RX block is required.
-		 * This can be done by asseting the reset bit and wait for
-		 * its compeletion.
-		 */
-		XMDIO_WRITE_BITS(pdata, MDIO_MMD_PMAPMD, MDIO_PMA_RX_CTRL1,
-				 XGBE_PMA_RX_RST_0_MASK, XGBE_PMA_RX_RST_0_RESET_ON);
-		ndelay(20);
-		XMDIO_WRITE_BITS(pdata, MDIO_MMD_PMAPMD, MDIO_PMA_RX_CTRL1,
-				 XGBE_PMA_RX_RST_0_MASK, XGBE_PMA_RX_RST_0_RESET_OFF);
-		usleep_range(40, 50);
-		netif_err(pdata, link, pdata->netdev, "firmware mailbox reset performed\n");
-	}
-}
-
 static void xgbe_phy_perform_ratechange(struct xgbe_prv_data *pdata,
 					unsigned int cmd, unsigned int sub_cmd)
 {
 	unsigned int s0 = 0;
 	unsigned int wait;
+	unsigned int i;
+	int reg;
+
+	XMDIO_WRITE_BITS(pdata, MDIO_MMD_PMAPMD, MDIO_VEND2_PMA_MISC_CTRL0,
+			 XGBE_PMA_PLL_CTRL_MASK, XGBE_PMA_PLL_CTRL_CLEAR);
+	usleep_range(100, 200);
 
 	/* Log if a previous command did not complete */
 	if (XP_IOREAD_BITS(pdata, XP_DRIVER_INT_RO, STATUS)) {
-		netif_dbg(pdata, link, pdata->netdev,
+		netif_err(pdata, link, pdata->netdev,
 			  "firmware mailbox not ready for command\n");
-		xgbe_phy_rx_reset(pdata);
+			goto rx_reset;
 	}
 
 	/* Construct the command */
@@ -2008,11 +2065,20 @@ static void xgbe_phy_perform_ratechange(struct xgbe_prv_data *pdata,
 		usleep_range(1000, 2000);
 	}
 
-	netif_dbg(pdata, link, pdata->netdev,
-		  "firmware mailbox command did not complete\n");
+rx_reset:
+	reg = XMDIO_READ(pdata, MDIO_MMD_PCS, MDIO_MMD_DIGITAL_STAT);
+	if (reg & 0x10) {
+		/* mailbox command timed out, reset Rx block */
+		XMDIO_WRITE_BITS(pdata, MDIO_MMD_PMAPMD, MDIO_PMA_RX_CTRL1,
+				 BIT(4) /* mask */, BIT(4)/* value*/);
 
-	/* Reset on error */
-	xgbe_phy_rx_reset(pdata);
+		for (i = 0; i < 100; i++)
+			usleep_range(1000, 2000);
+
+		XMDIO_WRITE_BITS(pdata, MDIO_MMD_PMAPMD, MDIO_PMA_RX_CTRL1,
+				 BIT(4) /* mask */, 0/* value*/);
+		netif_err(pdata, link, pdata->netdev, " rxX_reset done!\n");
+	}
 }
 
 static void xgbe_phy_rrc(struct xgbe_prv_data *pdata)
@@ -2610,8 +2676,16 @@ static int xgbe_phy_link_status(struct xgbe_prv_data *pdata, int *an_restart)
 	 */
 	reg = XMDIO_READ(pdata, MDIO_MMD_PCS, MDIO_STAT1);
 	reg = XMDIO_READ(pdata, MDIO_MMD_PCS, MDIO_STAT1);
+
 	if (reg & MDIO_STAT1_LSTATUS)
 		return 1;
+
+#if defined(MY_DEF_HERE)
+	if (phy_data->phydev && phy_data->phydev->link) {
+		dev_warn(pdata->dev, "MDIO_STAT1: 0x%x , but phy_data->phydev->link: 0x%x", reg, phy_data->phydev->link);
+		return 1;
+	}
+#endif
 
 	if (pdata->phy.autoneg == AUTONEG_ENABLE &&
 	    phy_data->port_mode == XGBE_PORT_MODE_BACKPLANE) {
@@ -2624,7 +2698,11 @@ static int xgbe_phy_link_status(struct xgbe_prv_data *pdata, int *an_restart)
 	/* No link, attempt a receiver reset cycle */
 	if (phy_data->rrc_count++ > XGBE_RRC_FREQUENCY) {
 		phy_data->rrc_count = 0;
-		xgbe_phy_rrc(pdata);
+		if (pdata->phy.autoneg == AUTONEG_DISABLE) {
+			XMDIO_WRITE_BITS(pdata, MDIO_MMD_PMAPMD, MDIO_VEND2_PMA_MISC_CTRL0,
+					 XGBE_PMA_PLL_CTRL_MASK, XGBE_PMA_PLL_CTRL_SET);
+			usleep_range(100, 200);
+		}
 	}
 
 	return 0;
@@ -2935,13 +3013,16 @@ static void xgbe_phy_cdr_track(struct xgbe_prv_data *pdata)
 	if (!phy_data->phy_cdr_notrack)
 		return;
 
-	usleep_range(phy_data->phy_cdr_delay,
-		     phy_data->phy_cdr_delay + 500);
+	/* when there is no link, no need to use the cdr delay, when ever a page is */
+	/* received , pdata->cdr_delay_required is set to 1 */
+	if (pdata->cdr_delay_required) {
+		usleep_range(phy_data->phy_cdr_delay,
+			     phy_data->phy_cdr_delay + 500);
+	}
 
 	XMDIO_WRITE_BITS(pdata, MDIO_MMD_PMAPMD, MDIO_VEND2_PMA_CDR_CONTROL,
 			 XGBE_PMA_CDR_TRACK_EN_MASK,
 			 XGBE_PMA_CDR_TRACK_EN_ON);
-
 	phy_data->phy_cdr_notrack = 0;
 }
 
@@ -2958,22 +3039,140 @@ static void xgbe_phy_cdr_notrack(struct xgbe_prv_data *pdata)
 	XMDIO_WRITE_BITS(pdata, MDIO_MMD_PMAPMD, MDIO_VEND2_PMA_CDR_CONTROL,
 			 XGBE_PMA_CDR_TRACK_EN_MASK,
 			 XGBE_PMA_CDR_TRACK_EN_OFF);
-
 	xgbe_phy_rrc(pdata);
-
+	pdata->rrc_start_time = jiffies;
 	phy_data->phy_cdr_notrack = 1;
+}
+
+static void xgbe_phy_kr_workaround(struct xgbe_prv_data *pdata)
+{
+	struct xgbe_phy_data *phy_data = pdata->phy_data;
+	unsigned int reg;
+
+	/* Disable KR training for now */
+	reg = XMDIO_READ(pdata, MDIO_MMD_PMAPMD, MDIO_PMA_10GBR_PMD_CTRL);
+	reg &= ~XGBE_KR_TRAINING_ENABLE;
+	XMDIO_WRITE(pdata, MDIO_MMD_PMAPMD, MDIO_PMA_10GBR_PMD_CTRL, reg);
+
+	/* step-4 Start AN */
+	reg = XMDIO_READ(pdata, MDIO_MMD_AN, MDIO_CTRL1);
+	reg &= ~MDIO_AN_CTRL1_ENABLE;
+
+	reg |= MDIO_AN_CTRL1_ENABLE;
+
+	reg |= MDIO_AN_CTRL1_RESTART;
+
+	XMDIO_WRITE(pdata, MDIO_MMD_AN, MDIO_CTRL1, reg);
+
+	if (phy_data->cur_mode == XGBE_MODE_KR) {
+		/* step-4 Start AN with KR training auto start */
+		XMDIO_WRITE_BITS(pdata, MDIO_MMD_PMAPMD,
+				 MDIO_PMA_10GBR_PMD_CTRL,
+				 (XGBE_KR_TRAINING_ENABLE | XGBE_KR_TRAINING_START),
+				 (XGBE_KR_TRAINING_ENABLE | XGBE_KR_TRAINING_START));
+
+		/* Step-5 Set RX_EQ_MGMT_MODE to disable RX Adapt Requests */
+		XMDIO_WRITE_BITS(pdata, MDIO_MMD_PMAPMD,
+				 MDIO_PMA_RX_EQ_CTRL,
+				 XGBE_PMA_RX_EQ_MGMT_MODE_MASK,
+				 XGBE_PMA_RX_EQ_MGMT_MODE_OFF);
+	}
+}
+
+static int xgbe_phy_kr_training_cdroff(struct xgbe_prv_data *pdata)
+{
+	int ret;
+	struct xgbe_phy_data *phy_data = pdata->phy_data;
+
+	/* set phy_data->phy_cdr_notrack, if it is not set so
+	 * next call to xgbe_phy_cdr_track will work as expected
+	 */
+
+	ret = phy_data->phy_cdr_notrack;
+	if (!phy_data->phy_cdr_notrack) {
+		netif_dbg(pdata, link, pdata->netdev, "setting phy_data->phy_cdr_notrack\n");
+		phy_data->phy_cdr_notrack = 1;
+	}
+
+	return ret;
+}
+
+static void xgbe_phy_update_cdr_delay(struct xgbe_prv_data *pdata)
+{
+	struct xgbe_phy_data *phy_data = pdata->phy_data;
+
+	/* step-12 Increment delay by 22ms. if delay is > 110ms, reset to 22ms */
+	if (phy_data->phy_cdr_delay < XGBE_CDR_DELAY_MAX)
+		phy_data->phy_cdr_delay += XGBE_CDR_DELAY_INC;
+	else
+		phy_data->phy_cdr_delay = XGBE_CDR_DELAY_INIT;
 }
 
 static void xgbe_phy_kr_training_post(struct xgbe_prv_data *pdata)
 {
-	if (!pdata->debugfs_an_cdr_track_early)
-		xgbe_phy_cdr_track(pdata);
+	struct xgbe_phy_data *phy_data = pdata->phy_data;
+
+	/* an_kr_workaround is enabled with kr_training_post routine and
+	 * debugfs_an_cdr_track_early should be disabled
+	 */
+
+	if (pdata->debugfs_an_cdr_track_early)
+		return;
+
+	if (pdata->vdata->an_kr_workaround) {
+		xgbe_phy_kr_training_cdroff(pdata);
+
+		/* step-7 Set RX_EQ_MGMT_MODE to disable RX adapt requests */
+		XMDIO_WRITE_BITS(pdata, MDIO_MMD_PMAPMD, MDIO_PMA_RX_EQ_CTRL,
+				 XGBE_PMA_RX_EQ_MGMT_MODE_MASK, XGBE_PMA_RX_EQ_MGMT_MODE_OFF);
+		/* step-8 Set CDR_TRACK_EN to 0 */
+		XMDIO_WRITE_BITS(pdata, MDIO_MMD_PMAPMD, MDIO_VEND2_PMA_CDR_CONTROL,
+				 XGBE_PMA_CDR_TRACK_EN_MASK,
+				 XGBE_PMA_CDR_TRACK_EN_OFF);
+		/* step-8 Set rx_data_en =0 (Reference tracking mode) */
+		XMDIO_WRITE_BITS(pdata, MDIO_MMD_PMAPMD, MDIO_PMA_RX_CTRL0,
+				 XGBE_PMA_RX_DT_EN_0_MASK, XGBE_PMA_RX_DT_EN_0_OFF);
+	}
+	/* step-9 Delay and step-10 and Set CDR_TRACK_EN to 1 */
+	phy_data->phy_cdr_delay_required = 1;
+	xgbe_phy_cdr_track(pdata);
+	phy_data->phy_cdr_delay_required = 0;
+
+	if (pdata->vdata->an_kr_workaround) {
+		/*step-10 rx_data_en = 1 (Data tracking mode) */
+		XMDIO_WRITE_BITS(pdata, MDIO_MMD_PMAPMD, MDIO_PMA_RX_CTRL0,
+				 XGBE_PMA_RX_DT_EN_0_MASK, XGBE_PMA_RX_DT_EN_0_ON);
+		/* step-11. Wait for 1 usec (for CDR to lock to data) */
+		usleep_range(1, 2);
+		/* step-11.  Clear RX_EQ_MGMT_MODE to allow RX Adapt rquests */
+		XMDIO_WRITE_BITS(pdata, MDIO_MMD_PMAPMD, MDIO_PMA_RX_EQ_CTRL,
+				 XGBE_PMA_RX_EQ_MGMT_MODE_MASK, XGBE_PMA_RX_EQ_MGMT_MODE_ON);
+	}
+	/* step-12 Increment delay by 22ms. if delay is > 110ms, reset to 22ms */
+	xgbe_phy_update_cdr_delay(pdata);
+
+}
+
+static void xgbe_phy_reset_cdr_delay(struct xgbe_prv_data *pdata)
+{
+	struct xgbe_phy_data *phy_data = pdata->phy_data;
+
+	phy_data->phy_cdr_delay = XGBE_CDR_DELAY_INIT;
+	pdata->kr_done = 0;
 }
 
 static void xgbe_phy_kr_training_pre(struct xgbe_prv_data *pdata)
 {
-	if (pdata->debugfs_an_cdr_track_early)
+	struct xgbe_phy_data *phy_data = pdata->phy_data;
+
+	/* an_kr_workaround is not enabled with kr_training_pre routine */
+	if (pdata->debugfs_an_cdr_track_early) {
+		phy_data->phy_cdr_delay_required = 1;
 		xgbe_phy_cdr_track(pdata);
+		phy_data->phy_cdr_delay_required = 0;
+		/* step-12 Increment delay by 22ms. if delay is > 110ms, reset to 22ms */
+		xgbe_phy_update_cdr_delay(pdata);
+	}
 }
 
 static void xgbe_phy_an_post(struct xgbe_prv_data *pdata)
@@ -2987,18 +3186,6 @@ static void xgbe_phy_an_post(struct xgbe_prv_data *pdata)
 			break;
 
 		xgbe_phy_cdr_track(pdata);
-
-		switch (pdata->an_result) {
-		case XGBE_AN_READY:
-		case XGBE_AN_COMPLETE:
-			break;
-		default:
-			if (phy_data->phy_cdr_delay < XGBE_CDR_DELAY_MAX)
-				phy_data->phy_cdr_delay += XGBE_CDR_DELAY_INC;
-			else
-				phy_data->phy_cdr_delay = XGBE_CDR_DELAY_INIT;
-			break;
-		}
 		break;
 	default:
 		break;
@@ -3016,6 +3203,14 @@ static void xgbe_phy_an_pre(struct xgbe_prv_data *pdata)
 			break;
 
 		xgbe_phy_cdr_notrack(pdata);
+		if (pdata->vdata->an_kr_workaround) {
+			/* Enable interrupt when KR workaround is used */
+			XMDIO_WRITE(pdata, MDIO_MMD_AN, MDIO_AN_INTMASK, XGBE_AN_CL73_INT_MASK);
+			/* Step 4 and step 5 for KR workaround
+			 * Start AN and disable RX Adapt Requests
+			 */
+			xgbe_phy_kr_workaround(pdata);
+		}
 		break;
 	default:
 		break;
@@ -3104,7 +3299,7 @@ static int xgbe_phy_reset(struct xgbe_prv_data *pdata)
 	xgbe_phy_power_off(pdata);
 	xgbe_phy_set_mode(pdata, cur_mode);
 
-	if (!phy_data->phydev)
+	if (!phy_data->phydev || !pdata->phy_started)
 		return 0;
 
 	/* Reset the external PHY */
@@ -3403,6 +3598,204 @@ static int xgbe_phy_init(struct xgbe_prv_data *pdata)
 	return 0;
 }
 
+#if defined(MY_DEF_HERE)
+static void syno_force_1g(struct xgbe_prv_data *pdata)
+{
+	int reg;
+	struct xgbe_phy_data *phy_data = pdata->phy_data;
+	int temp_m, temp_c;
+	enum xgbe_mode cur_mode;
+
+	reg = xgbe_phy_get_comm_ownership(pdata);
+	if (reg){
+		printk("get ownership fail \n");
+		return ;
+	}
+
+	temp_c = phy_data->conn_type;
+	temp_m = phy_data->phydev_mode;
+
+	phy_data->phydev_mode = XGBE_MDIO_MODE_CL45;
+	phy_data->conn_type = XGBE_CONN_TYPE_MDIO;
+
+	/* Do not advertise PHY as 10G */
+	reg = xgbe_phy_mdio_mii_read(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_AN << 16) | 0x0020);
+	reg &= ~0x1000;
+	xgbe_phy_mdio_mii_write(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_AN << 16) | 0x0020, reg);
+
+	/* Disable extended next pages */
+	reg = xgbe_phy_mdio_mii_read(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_AN << 16) | 0x0000);
+	reg &= ~0x2000;
+	xgbe_phy_mdio_mii_write(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_AN << 16) | 0x0000, reg);
+
+	/* Extended next page not capable */
+	reg = xgbe_phy_mdio_mii_read(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_AN << 16) | 0x0010);
+	reg &= ~0x1000;
+	xgbe_phy_mdio_mii_write(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_AN << 16) | 0x0010, reg);
+
+	/* Speed Select 1000 Mbps */
+	reg = xgbe_phy_mdio_mii_read(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_PMAPMD << 16) | 0x0000);
+	reg &= ~0x2000;
+	xgbe_phy_mdio_mii_write(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_PMAPMD << 16) | 0x0000, reg);
+
+	/* Reset by power cycling the PHY */
+	cur_mode = phy_data->cur_mode;
+	xgbe_phy_power_off(pdata);
+	xgbe_phy_set_mode(pdata, cur_mode);
+	phy_init_hw(phy_data->phydev);
+	
+	/* Disable auto-negotiation for now */
+	reg = XMDIO_READ(pdata, MDIO_MMD_AN, MDIO_CTRL1);
+	reg &= ~MDIO_AN_CTRL1_ENABLE;
+	XMDIO_WRITE(pdata, MDIO_MMD_AN, MDIO_CTRL1, reg);
+	
+	// Disable auto-negotiation interrupts
+	XMDIO_WRITE(pdata, MDIO_MMD_AN, MDIO_AN_INTMASK, 0);
+	pdata->an_start = 0;
+
+	/* Clear auto-negotiation interrupts */
+	XMDIO_WRITE(pdata, MDIO_MMD_AN, MDIO_AN_INT, 0);
+
+	xgbe_phy_put_comm_ownership(pdata);
+
+	phy_data->phydev_mode = temp_m;
+	phy_data->conn_type = temp_c;
+}
+
+static void syno_phy_led_test_mode(struct xgbe_prv_data *pdata, unsigned int test_mode)
+{
+	int reg, reg_led_act, reg_led_orange, reg_led_green;
+	struct xgbe_phy_data *phy_data = pdata->phy_data;
+	int temp_m, temp_c;
+
+	reg = xgbe_phy_get_comm_ownership(pdata);
+	if (reg){
+		printk("get ownership fail \n");
+		return ;
+	}
+
+	temp_c = phy_data->conn_type;
+	temp_m = phy_data->phydev_mode;
+
+	phy_data->phydev_mode = XGBE_MDIO_MODE_CL45;
+	phy_data->conn_type = XGBE_CONN_TYPE_MDIO;
+
+	reg_led_act = xgbe_phy_mdio_mii_read(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_VEND2 << 16) | 0xf020);
+	reg_led_orange = xgbe_phy_mdio_mii_read(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_VEND2 << 16) | 0xf022);
+	reg_led_green = xgbe_phy_mdio_mii_read(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_VEND2 << 16) | 0xf023);
+
+	reg_led_act &= 0xE000;
+	reg_led_orange &= 0xE000;
+	reg_led_green &= 0xE000;
+
+
+	switch (test_mode) {
+		case 0 :
+			reg_led_act |= 0x128;
+			reg_led_orange |= 0x68;
+			reg_led_green |= 0x58;
+			break;
+		case 1 :
+			reg_led_act |= 0x1728;
+			reg_led_orange |= 0xB8;
+			break;
+		case 2 :
+			reg_led_act |= 0x1728;
+			reg_led_green |= 0xB8;
+			break;
+		default :
+			break;
+	}
+
+	xgbe_phy_mdio_mii_write(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_VEND2 << 16) | 0xf020, reg_led_act);
+	xgbe_phy_mdio_mii_write(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_VEND2 << 16) | 0xf022, reg_led_orange);	
+	xgbe_phy_mdio_mii_write(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_VEND2 << 16) | 0xf023, reg_led_green);	
+
+	xgbe_phy_put_comm_ownership(pdata);
+	phy_data->phydev_mode = temp_m;
+	phy_data->conn_type = temp_c;
+}
+
+static void syno_resume_autoneg(struct xgbe_prv_data *pdata)
+{
+	int reg;
+	struct xgbe_phy_data *phy_data = pdata->phy_data;
+	int temp_m, temp_c;
+	enum xgbe_mode cur_mode;
+
+	reg = xgbe_phy_get_comm_ownership(pdata);
+	if (reg){
+		printk("get ownership fail \n");
+		return ;
+	}
+
+	temp_c = phy_data->conn_type;
+	temp_m = phy_data->phydev_mode;
+
+	phy_data->phydev_mode = XGBE_MDIO_MODE_CL45;
+	phy_data->conn_type = XGBE_CONN_TYPE_MDIO;
+
+	/* Advertise PHY as 10G */
+	reg = xgbe_phy_mdio_mii_read(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_AN << 16) | 0x0020);
+	reg |= 0x1000;
+	xgbe_phy_mdio_mii_write(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_AN << 16) | 0x0020, reg);
+
+	/* Enable extended next pages */
+	reg = xgbe_phy_mdio_mii_read(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_AN << 16) | 0x0000);
+	reg |= 0x2000;
+	xgbe_phy_mdio_mii_write(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_AN << 16) | 0x0000, reg);
+
+	/* Extended next page capable */
+	reg = xgbe_phy_mdio_mii_read(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_AN << 16) | 0x0010);
+	reg |= 0x1000;
+	xgbe_phy_mdio_mii_write(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_AN << 16) | 0x0010, reg);
+
+	/* Speed Select 10 Gbps */
+	reg = xgbe_phy_mdio_mii_read(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_PMAPMD << 16) | 0x0000);
+	reg |= 0x2000;
+	xgbe_phy_mdio_mii_write(pdata, 0, MII_ADDR_C45 | (MDIO_MMD_PMAPMD << 16) | 0x0000, reg);
+
+	/* Reset by power cycling the PHY */
+	cur_mode = phy_data->cur_mode;
+	xgbe_phy_power_off(pdata);
+	xgbe_phy_set_mode(pdata, cur_mode);
+	phy_init_hw(phy_data->phydev);
+	
+	/* Disable auto-negotiation for now */
+	reg = XMDIO_READ(pdata, MDIO_MMD_AN, MDIO_CTRL1);
+	reg &= ~MDIO_AN_CTRL1_ENABLE;
+	XMDIO_WRITE(pdata, MDIO_MMD_AN, MDIO_CTRL1, reg);
+	
+	// Disable auto-negotiation interrupts
+	XMDIO_WRITE(pdata, MDIO_MMD_AN, MDIO_AN_INTMASK, 0);
+	pdata->an_start = 0;
+
+	/* Clear auto-negotiation interrupts */
+	XMDIO_WRITE(pdata, MDIO_MMD_AN, MDIO_AN_INT, 0);
+	
+	xgbe_phy_put_comm_ownership(pdata);
+
+	phy_data->phydev_mode = temp_m;
+	phy_data->conn_type = temp_c;
+}
+
+static void syno_xgbe_wol_enable(struct xgbe_prv_data *pdata)
+{
+	int ret;
+	struct xgbe_phy_data *phy_data = pdata->phy_data;
+
+	if (phy_data->phydev && phy_data->phydev->drv->set_wol) {
+		/* Pass MAC address to PHY */
+		memcpy(phy_data->phydev->attached_dev->dev_addr, pdata->netdev->dev_addr, pdata->netdev->addr_len);
+
+		ret = phy_ethtool_set_wol(phy_data->phydev, NULL);
+		if (ret) {
+			dev_err(pdata->dev, "WOL set failed\n");
+		}
+	}
+}
+#endif /* MY_DEF_HERE */
+
 void xgbe_init_function_ptrs_phy_v2(struct xgbe_phy_if *phy_if)
 {
 	struct xgbe_phy_impl_if *phy_impl = &phy_if->phy_impl;
@@ -3437,7 +3830,16 @@ void xgbe_init_function_ptrs_phy_v2(struct xgbe_phy_if *phy_if)
 
 	phy_impl->kr_training_pre	= xgbe_phy_kr_training_pre;
 	phy_impl->kr_training_post	= xgbe_phy_kr_training_post;
+	phy_impl->kr_training_cdroff	= xgbe_phy_kr_training_cdroff;
+	phy_impl->reset_cdr_delay	= xgbe_phy_reset_cdr_delay;
+	phy_impl->update_cdr_delay	= xgbe_phy_update_cdr_delay;
 
 	phy_impl->module_info		= xgbe_phy_module_info;
 	phy_impl->module_eeprom		= xgbe_phy_module_eeprom;
+#if defined(MY_DEF_HERE)
+	phy_impl->wol_enable		= syno_xgbe_wol_enable;
+	phy_impl->force_1g		= syno_force_1g;
+	phy_impl->resume_autoneg	= syno_resume_autoneg;
+	phy_impl->phy_led_test_mode	= syno_phy_led_test_mode;
+#endif /* MY_DEF_HERE */
 }

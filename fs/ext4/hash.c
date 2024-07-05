@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/ext4/hash.c
@@ -198,7 +201,12 @@ static void str2hashbuf_unsigned(const char *msg, int len, __u32 *buf, int num)
  * bits.  32 bit hashes will return 0 for the minor hash.
  */
 static int __ext4fs_dirhash(const char *name, int len,
-			    struct dx_hash_info *hinfo)
+			    struct dx_hash_info *hinfo
+#ifdef MY_ABC_HERE
+			    , const char *ori_name
+			    , const int ori_len
+#endif /* MY_ABC_HERE */
+			    )
 {
 	__u32	hash;
 	__u32	minor_hash = 0;
@@ -207,6 +215,9 @@ static int __ext4fs_dirhash(const char *name, int len,
 	__u32		in[8], buf[4];
 	void		(*str2hashbuf)(const char *, int, __u32 *, int) =
 				str2hashbuf_signed;
+#ifdef MY_ABC_HERE
+	const bool ori_minor_hash = !!ori_name;
+#endif /* MY_ABC_HERE */
 
 	/* Initialize the default seed for the hash checksum functions */
 	buf[0] = 0x67452301;
@@ -227,9 +238,17 @@ static int __ext4fs_dirhash(const char *name, int len,
 	switch (hinfo->hash_version) {
 	case DX_HASH_LEGACY_UNSIGNED:
 		hash = dx_hack_hash_unsigned(name, len);
+#ifdef MY_ABC_HERE
+		if (ori_minor_hash)
+			minor_hash = dx_hack_hash_unsigned(ori_name, ori_len);
+#endif /* MY_ABC_HERE */
 		break;
 	case DX_HASH_LEGACY:
 		hash = dx_hack_hash_signed(name, len);
+#ifdef MY_ABC_HERE
+		if (ori_minor_hash)
+			minor_hash = dx_hack_hash_signed(ori_name, ori_len);
+#endif /* MY_ABC_HERE */
 		break;
 	case DX_HASH_HALF_MD4_UNSIGNED:
 		str2hashbuf = str2hashbuf_unsigned;
@@ -242,8 +261,30 @@ static int __ext4fs_dirhash(const char *name, int len,
 			len -= 32;
 			p += 32;
 		}
+#ifdef MY_ABC_HERE
+		if (ori_minor_hash) {
+			hash = buf[1];
+			p = ori_name;
+			len = ori_len;
+			buf[0] = 0x67452301;
+			buf[1] = 0xefcdab89;
+			buf[2] = 0x98badcfe;
+			buf[3] = 0x10325476;
+			while (len > 0) {
+				(*str2hashbuf)(p, len, in, 8);
+				half_md4_transform(buf, in);
+				len -= 32;
+				p += 32;
+			}
+			minor_hash = buf[2];
+		} else {
+			minor_hash = buf[2];
+			hash = buf[1];
+		}
+#else /* MY_ABC_HERE */
 		minor_hash = buf[2];
 		hash = buf[1];
+#endif /* MY_ABC_HERE */
 		break;
 	case DX_HASH_TEA_UNSIGNED:
 		str2hashbuf = str2hashbuf_unsigned;
@@ -257,6 +298,22 @@ static int __ext4fs_dirhash(const char *name, int len,
 			p += 16;
 		}
 		hash = buf[0];
+#ifdef MY_ABC_HERE
+		if (ori_minor_hash) {
+			p = ori_name;
+			len = ori_len;
+			buf[0] = 0x67452301;
+			buf[1] = 0xefcdab89;
+			buf[2] = 0x98badcfe;
+			buf[3] = 0x10325476;
+			while (len > 0) {
+				(*str2hashbuf)(p, len, in, 4);
+				TEA_transform(buf, in);
+				len -= 16;
+				p += 16;
+			}
+		}
+#endif /* MY_ABC_HERE */
 		minor_hash = buf[1];
 		break;
 	default:
@@ -274,6 +331,17 @@ static int __ext4fs_dirhash(const char *name, int len,
 int ext4fs_dirhash(const struct inode *dir, const char *name, int len,
 		   struct dx_hash_info *hinfo)
 {
+#ifdef MY_ABC_HERE
+	/*
+	 * hash_buf need to add 1 byte for syno_utf8_toupper,
+	 * because it will append 0 to last byte.
+	 */
+	bool syno_caseless = is_syno_ext(dir->i_sb);
+	char hash_buf[EXT4_NAME_LEN + 1] = {'\0'};
+	const char *ori_name = NULL;
+	int ori_len = 0;
+#endif /* MY_ABC_HERE */
+
 #ifdef CONFIG_UNICODE
 	const struct unicode_map *um = dir->i_sb->s_encoding;
 	int r, dlen;
@@ -281,6 +349,9 @@ int ext4fs_dirhash(const struct inode *dir, const char *name, int len,
 	struct qstr qstr = {.name = name, .len = len };
 
 	if (len && IS_CASEFOLDED(dir) && um) {
+#ifdef MY_ABC_HERE
+		syno_caseless = false;
+#endif /* MY_ABC_HERE */
 		buff = kzalloc(sizeof(char) * PATH_MAX, GFP_KERNEL);
 		if (!buff)
 			return -ENOMEM;
@@ -291,12 +362,34 @@ int ext4fs_dirhash(const struct inode *dir, const char *name, int len,
 			goto opaque_seq;
 		}
 
+#ifdef MY_ABC_HERE
+		r = __ext4fs_dirhash(buff, dlen, hinfo, NULL, 0);
+#else /* MY_ABC_HERE */
 		r = __ext4fs_dirhash(buff, dlen, hinfo);
+#endif /* MY_ABC_HERE */
 
 		kfree(buff);
 		return r;
 	}
 opaque_seq:
 #endif
+
+#ifdef MY_ABC_HERE
+	if (syno_caseless && name && (len > 0)) {
+		ori_name = name;
+		ori_len = len;
+		if (len > EXT4_NAME_LEN) {
+			hinfo->hash = 0;
+			printk_ratelimited(KERN_ERR "SynoCaseless Stat name too long\n");
+			return -ENAMETOOLONG;
+		}
+		len = syno_utf8_toupper(hash_buf, name,
+					EXT4_NAME_LEN , len, NULL);
+		name = hash_buf;
+	}
+
+	return __ext4fs_dirhash(name, len, hinfo, ori_name, ori_len);
+#else /* MY_ABC_HERE */
 	return __ext4fs_dirhash(name, len, hinfo);
+#endif /* MY_ABC_HERE */
 }

@@ -165,7 +165,7 @@ config PSTORE_BLK
 	tristate "Log panic/oops to a block device"
 	depends on PSTORE
 	depends on BLOCK
-	depends on BROKEN
+	depends on BROKEN || SYNO_LSP_RTD1619B
 	select PSTORE_ZONE
 	default n
 	help

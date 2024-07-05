@@ -876,6 +876,16 @@ config ROCKCHIP_SARADC
 	  To compile this driver as a module, choose M here: the
 	  module will be called rockchip_saradc.
 
+if SYNO_LSP_RTD1619B
+config RTK_LSADC0
+	tristate "Realtek LSADC driver"
+	depends on ARCH_REALTEK
+	default n
+	help
+	  Say Y, if you want to enable LSADC feature on Realtek RTD129x,
+	  RTD139x, RTD16xx, RTD13xx, or RTD16xxb platform.
+endif # SYNO_LSP_RTD1619B
+
 config SC27XX_ADC
 	tristate "Spreadtrum SC27xx series PMICs ADC"
 	depends on MFD_SC27XX_PMIC || COMPILE_TEST

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/read_write.c
@@ -24,6 +27,10 @@
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
+#ifdef MY_ABC_HERE
+#include <linux/net.h>
+#include <linux/backing-dev.h>
+#endif /* MY_ABC_HERE */
 
 const struct file_operations generic_ro_fops = {
 	.llseek		= generic_file_llseek,
@@ -503,6 +510,9 @@ ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 	inc_syscr(current);
 	return ret;
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL_GPL(vfs_read);
+#endif /* MY_ABC_HERE */
 
 static ssize_t new_sync_write(struct file *filp, const char __user *buf, size_t len, loff_t *ppos)
 {
@@ -613,6 +623,9 @@ ssize_t vfs_write(struct file *file, const char __user *buf, size_t count, loff_
 	file_end_write(file);
 	return ret;
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL_GPL(vfs_write);
+#endif /* MY_ABC_HERE */
 
 /* file_ppos returns &file->f_pos or NULL if file is stream */
 static inline loff_t *file_ppos(struct file *file)
@@ -1358,6 +1371,197 @@ COMPAT_SYSCALL_DEFINE4(sendfile64, int, out_fd, int, in_fd,
 }
 #endif
 
+#ifdef MY_ABC_HERE
+#ifdef MY_ABC_HERE
+static ssize_t generic_write_init_and_checks(struct file* filp, loff_t pos, size_t count)
+{
+	struct iovec iov = { .iov_base = NULL, .iov_len = count};
+	struct kiocb kiocb;
+	struct iov_iter iter;
+
+	init_sync_kiocb(&kiocb, filp);
+	kiocb.ki_pos = pos;
+	iov_iter_init(&iter, WRITE, &iov, 1, count);
+
+	return generic_write_checks(&kiocb, &iter);
+}
+
+static ssize_t default_recvfile(struct file *file, struct socket *sock,
+		loff_t pos, size_t count, size_t *received, size_t *written)
+{
+	ssize_t ret;
+
+	ret = file_update_time(file);
+	if (ret)
+		return ret;
+
+	do {
+		size_t bytes_received = 0;
+		size_t bytes_written = 0;
+
+		ret = do_recvfile(file, sock, pos, (count > (MAX_RECVFILE_BUF - (pos & (PAGE_SIZE - 1)))) ?
+			   (MAX_RECVFILE_BUF - (pos & (PAGE_SIZE - 1))) : count, &bytes_received, &bytes_written);
+		*received += bytes_received;
+		*written += bytes_written;
+		if (ret <= 0)
+			break;
+		count -= bytes_written;
+		pos += bytes_written;
+	} while (count > 0);
+	return ret < 0 ? ret : *written;
+}
+
+ssize_t vfs_recvfile(int fd, struct file *file, struct socket *sock,
+		loff_t pos, size_t count, size_t *received, size_t *written)
+{
+	ssize_t ret;
+	struct inode *inode = file_inode(file);
+
+	if (!(file->f_mode & FMODE_WRITE))
+		return -EBADF;
+	if (!S_ISREG(inode->i_mode))
+		return -EINVAL;
+	ret = rw_verify_area(WRITE, file, &pos, count);
+	if (ret)
+		return ret;
+
+	file_start_write(file);
+	inode_lock(inode);
+	/*
+	 * We can write back this queue in page reclaim
+	 */
+	current->backing_dev_info = inode_to_bdi(inode);
+	ret = generic_write_init_and_checks(file, pos, count);
+	if (ret <= 0)
+		goto out;
+	ret = file_remove_privs(file);
+	if (ret)
+		goto out;
+
+	if (file->f_op->syno_recvfile)
+		ret = file->f_op->syno_recvfile(fd, file, sock, pos, count, received, written);
+	else
+		ret = default_recvfile(file, sock, pos, count, received, written);
+
+	if (ret > 0)
+		fsnotify_modify(file);
+out:
+	current->backing_dev_info = NULL;
+	inode_unlock(inode);
+	file_end_write(file);
+	return ret;
+}
+EXPORT_SYMBOL(vfs_recvfile);
+
+static int do_syno_recv_file(int fd, int s, loff_t * offset, size_t count, size_t * rwbytes)
+{
+	ssize_t ret;
+	int err;
+	loff_t pos;
+	size_t received = 0;
+	size_t written = 0;
+	struct file *file;
+	struct socket *sock;
+
+	if (!offset)
+		return -EINVAL;
+	if (!count)
+		return 0;
+	if (copy_from_user(&pos, offset, sizeof(loff_t)))
+		return -EFAULT;
+	file = fget(fd);
+	if (!file)
+		return -EBADF;
+
+	sock = sockfd_lookup(s, &err);
+	if (!sock) {
+		fput(file);
+		return err;
+	}
+	if (!sock->sk) {
+		/* not a socket */
+		ret = -EINVAL;
+		goto out;
+	}
+
+	ret = vfs_recvfile(fd, file, sock, pos, count, &received, &written);
+	if (ret < 0 && rwbytes) {
+		if (copy_to_user(&rwbytes[0], &received, sizeof(size_t))) {
+			ret = -EFAULT;
+			goto out;
+		}
+		if (copy_to_user(&rwbytes[1], &written, sizeof(size_t))) {
+			ret = -EFAULT;
+			goto out;
+		}
+	}
+	pos += written;
+	if (unlikely(put_user(pos, offset))) {
+		ret = -EFAULT;
+		goto out;
+	}
+
+out:
+	fput(file);
+	sockfd_put(sock);
+	return ret;
+}
+
+SYSCALL_DEFINE5(syno_recv_file, int, fd, int, s, loff_t *, offset, size_t, count, size_t *, rwbytes)
+{
+	return do_syno_recv_file(fd, s, offset, count, rwbytes);
+}
+
+SYSCALL_DEFINE1(syno_flush_aggregate, int, fd)
+{
+	return -EOPNOTSUPP;
+}
+#ifdef CONFIG_COMPAT
+COMPAT_SYSCALL_DEFINE5(syno_recv_file, int, fd, int, s, loff_t *, offset, compat_size_t, nbytes, compat_size_t __user *, rwbytes32)
+{
+	int err = 0;
+	ssize_t ret;
+	size_t rwbytes64[2];
+	if (unlikely(get_user(rwbytes64[0], &rwbytes32[0])))
+		return -EFAULT;
+	if (unlikely(get_user(rwbytes64[1], &rwbytes32[1])))
+		return -EFAULT;
+
+	ret = do_syno_recv_file(fd, s, offset, nbytes, rwbytes64);
+
+	/* truncating is ok because it's a user address */
+	err = put_user((u32) rwbytes64[0], &rwbytes32[0]);
+	if (err)
+		ret = err;
+	err = put_user((u32) rwbytes64[1], &rwbytes32[1]);
+	if (err)
+		ret = err;
+
+	return ret;
+}
+#endif /* CONFIG_COMPAT */
+
+#else /* MY_ABC_HERE */
+
+SYSCALL_DEFINE5(syno_recv_file, int, fd, int, s, loff_t *, offset, size_t, count, size_t *, rwbytes)
+{
+	return -EOPNOTSUPP;
+}
+
+SYSCALL_DEFINE1(syno_flush_aggregate, int, fd)
+{
+	return -EOPNOTSUPP;
+}
+#ifdef CONFIG_COMPAT
+COMPAT_SYSCALL_DEFINE5(syno_recv_file, int, fd, int, s, loff_t *, offset, compat_size_t, nbytes, compat_size_t __user *, rwbytes32)
+{
+	return -EOPNOTSUPP;
+}
+#endif /* CONFIG_COMPAT */
+
+#endif /* MY_ABC_HERE */
+#endif /* MY_ABC_HERE */
+
 /**
  * generic_copy_file_range - copy data between two files
  * @file_in:	file structure to read from
@@ -1648,6 +1852,20 @@ ssize_t generic_write_checks(struct kiocb *iocb, struct iov_iter *from)
 	/* FIXME: this is for backwards compatibility with 2.4 */
 	if (iocb->ki_flags & IOCB_APPEND)
 		iocb->ki_pos = i_size_read(inode);
+
+#ifdef MY_ABC_HERE
+	/*
+	 * for locker appendable, data is appended to the file in chunk. when data
+	 * is written to bytes n*CHUNK_SIZE+1 of the file, the previous chunk
+	 * becomes locked.
+	 */
+	if (syno_op_locker_is_appendable(inode) &&
+	    iocb->ki_pos < round_down(i_size_read(inode), LOCKER_CHUNK_SIZE)) {
+		pr_warn_ratelimited("locker: append data to %pD at offset 0x%llx before 0x%llx\n",
+				file, iocb->ki_pos, round_down(i_size_read(inode), LOCKER_CHUNK_SIZE));
+		return -EPERM;
+	}
+#endif /* MY_ABC_HERE */
 
 	if ((iocb->ki_flags & IOCB_NOWAIT) && !(iocb->ki_flags & IOCB_DIRECT))
 		return -EINVAL;

@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Filesystem access notification for Linux
@@ -158,6 +161,9 @@ struct fsnotify_ops {
 	void (*free_event)(struct fsnotify_event *event);
 	/* called on final put+free to free memory */
 	void (*free_mark)(struct fsnotify_mark *mark);
+#ifdef MY_ABC_HERE
+	int (*fetch_path)(struct fsnotify_event *event, struct fsnotify_group *group);
+#endif /* MY_ABC_HERE */
 };
 
 /*
@@ -191,6 +197,9 @@ struct fsnotify_group {
 
 	/* needed to send notification to userspace */
 	spinlock_t notification_lock;		/* protect the notification_list */
+#ifdef MY_ABC_HERE
+	struct mutex notification_mutex; /* protect per group path_buf */
+#endif /* MY_ABC_HERE */
 	struct list_head notification_list;	/* list of event_holder this group needs to send to userspace */
 	wait_queue_head_t notification_waitq;	/* read() on the notification file blocks on this waitq */
 	unsigned int q_len;			/* events on the queue */
@@ -232,6 +241,15 @@ struct fsnotify_group {
 			struct ucounts *ucounts;
 		} inotify_data;
 #endif
+#ifdef MY_ABC_HERE
+		struct synotify_group_private_data {
+			struct user_struct *user;
+			unsigned int max_watchers;
+			char *synotify_full_path_buf;
+			char *synotify_d_path_buf;
+			int event_version;
+		} synotify_data;
+#endif /* MY_ABC_HERE */
 #ifdef CONFIG_FANOTIFY
 		struct fanotify_group_private_data {
 			/* allows a group to block waiting for a userspace response */
@@ -251,6 +269,9 @@ enum fsnotify_data_type {
 	FSNOTIFY_EVENT_NONE,
 	FSNOTIFY_EVENT_PATH,
 	FSNOTIFY_EVENT_INODE,
+#ifdef MY_ABC_HERE
+	FSNOTIFY_EVENT_SYNO_MOVE,
+#endif /* MY_ABC_HERE */
 };
 
 static inline struct inode *fsnotify_data_inode(const void *data, int data_type)
@@ -281,6 +302,9 @@ enum fsnotify_obj_type {
 	FSNOTIFY_OBJ_TYPE_PARENT,
 	FSNOTIFY_OBJ_TYPE_VFSMOUNT,
 	FSNOTIFY_OBJ_TYPE_SB,
+#ifdef MY_ABC_HERE
+	FSNOTIFY_OBJ_TYPE_SYNO_VFSMOUNT,
+#endif /* MY_ABC_HERE */
 	FSNOTIFY_OBJ_TYPE_COUNT,
 	FSNOTIFY_OBJ_TYPE_DETACHED = FSNOTIFY_OBJ_TYPE_COUNT
 };
@@ -289,6 +313,9 @@ enum fsnotify_obj_type {
 #define FSNOTIFY_OBJ_TYPE_PARENT_FL	(1U << FSNOTIFY_OBJ_TYPE_PARENT)
 #define FSNOTIFY_OBJ_TYPE_VFSMOUNT_FL	(1U << FSNOTIFY_OBJ_TYPE_VFSMOUNT)
 #define FSNOTIFY_OBJ_TYPE_SB_FL		(1U << FSNOTIFY_OBJ_TYPE_SB)
+#ifdef MY_ABC_HERE
+#define FSNOTIFY_OBJ_TYPE_SYNO_VFSMOUNT_FL	(1U << FSNOTIFY_OBJ_TYPE_SYNO_VFSMOUNT)
+#endif /* MY_ABC_HERE */
 #define FSNOTIFY_OBJ_ALL_TYPES_MASK	((1U << FSNOTIFY_OBJ_TYPE_COUNT) - 1)
 
 static inline bool fsnotify_valid_obj_type(unsigned int type)
@@ -334,6 +361,9 @@ FSNOTIFY_ITER_FUNCS(inode, INODE)
 FSNOTIFY_ITER_FUNCS(parent, PARENT)
 FSNOTIFY_ITER_FUNCS(vfsmount, VFSMOUNT)
 FSNOTIFY_ITER_FUNCS(sb, SB)
+#ifdef MY_ABC_HERE
+FSNOTIFY_ITER_FUNCS(syno_vfsmount, SYNO_VFSMOUNT)
+#endif /* MY_ABC_HERE */
 
 #define fsnotify_foreach_obj_type(type) \
 	for (type = 0; type < FSNOTIFY_OBJ_TYPE_COUNT; type++)
@@ -421,6 +451,10 @@ extern void __fsnotify_inode_delete(struct inode *inode);
 extern void __fsnotify_vfsmount_delete(struct vfsmount *mnt);
 extern void fsnotify_sb_delete(struct super_block *sb);
 extern u32 fsnotify_get_cookie(void);
+#ifdef MY_ABC_HERE
+extern void __SYNONotify(__u32 mask, void *data, int data_type,
+	     const char *file_path, u32 cookie);
+#endif /* MY_ABC_HERE */
 
 static inline __u32 fsnotify_parent_needed_mask(__u32 mask)
 {

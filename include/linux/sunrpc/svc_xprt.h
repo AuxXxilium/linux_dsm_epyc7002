@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * linux/include/linux/sunrpc/svc_xprt.h
@@ -91,6 +94,9 @@ struct svc_xprt {
 	const struct cred	*xpt_cred;
 	struct rpc_xprt		*xpt_bc_xprt;	/* NFSv4.1 backchannel */
 	struct rpc_xprt_switch	*xpt_bc_xps;	/* NFSv4.1 backchannel */
+#ifdef MY_ABC_HERE
+	ktime_t			xpt_eqtime;	/* enqueue time */
+#endif /* MY_ABC_HERE */
 };
 
 static inline void unregister_xpt_user(struct svc_xprt *xpt, struct svc_xpt_user *u)

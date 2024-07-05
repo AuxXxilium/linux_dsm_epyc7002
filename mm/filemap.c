@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  *	linux/mm/filemap.c
@@ -53,6 +56,12 @@
 #include <linux/buffer_head.h> /* for try_to_free_buffers */
 
 #include <asm/mman.h>
+
+#ifdef MY_ABC_HERE
+#include <linux/net.h>
+#include <linux/socket.h>
+#include <net/sock.h>
+#endif /* MY_ABC_HERE */
 
 /*
  * Shared mappings implemented 30.11.1994. It's not fully working yet,
@@ -2913,7 +2922,11 @@ vm_fault_t filemap_page_mkwrite(struct vm_fault *vmf)
 	vm_fault_t ret = VM_FAULT_LOCKED;
 
 	sb_start_pagefault(inode->i_sb);
+#ifdef MY_ABC_HERE
+	vma_file_update_time(vmf->vma);
+#else
 	file_update_time(vmf->vma->vm_file);
+#endif /* MY_ABC_HERE */
 	lock_page(page);
 	if (page->mapping != inode->i_mapping) {
 		unlock_page(page);
@@ -3163,6 +3176,197 @@ int pagecache_write_end(struct file *file, struct address_space *mapping,
 	return aops->write_end(file, mapping, pos, len, copied, page, fsdata);
 }
 EXPORT_SYMBOL(pagecache_write_end);
+
+#ifdef MY_ABC_HERE
+static int sock2iov(struct socket *sock, struct kvec *iov,
+			int page_count, int start_page, size_t bytes_to_received, size_t *bytes_received)
+{
+	int             kmsg_ret = 0;
+	long            rcvtimeo = 0;
+	struct msghdr   msg = {0};
+
+	rcvtimeo = sock->sk->sk_rcvtimeo;
+	sock->sk->sk_rcvtimeo = 64 * HZ;
+
+	kmsg_ret = kernel_recvmsg(
+			sock, &msg, &iov[start_page], page_count, bytes_to_received,
+			MSG_WAITALL);
+
+	sock->sk->sk_rcvtimeo = rcvtimeo;
+	if (kmsg_ret >= 0) {
+		*bytes_received = (size_t) kmsg_ret;
+		if (kmsg_ret == bytes_to_received) {
+			/*
+			 * remains 0 here,
+			 * bytes_received is set and matches desired length.
+			 *
+			 */
+			kmsg_ret = 0;
+		} else {
+			kmsg_ret = -EPIPE;
+		}
+	}
+
+	return kmsg_ret;
+}
+
+static int __do_recvfile(struct file *file, struct socket *sock, loff_t pos,
+			size_t count, size_t * rbytes, size_t * wbytes)
+{
+	int                    err = 0;
+	int                    write_end_ret = 0;
+	int                    flags = AOP_FLAG_NOFS | AOP_FLAG_RECVFILE;
+	unsigned               bytes = 0;
+	pgoff_t                offset = (pos & (PAGE_SIZE - 1));
+	size_t                 bytes_total_received = 0, bytes_total_wrote = 0;
+	struct page           *page = NULL;
+	struct address_space  *mapping = file->f_mapping;
+
+	/* Check hook functions */
+	if (!mapping->a_ops->write_begin || !mapping->a_ops->write_end) {
+		printk("write_begin()/write_end() is not implemented\n");
+		err = -EOPNOTSUPP;
+		goto end;
+	}
+
+	do {
+		void *fsdata = NULL;
+		struct kvec iov;
+		size_t bytes_received;
+
+		bytes = min_t(unsigned int, PAGE_SIZE - offset, count);
+
+		err = mapping->a_ops->write_begin(
+					file, mapping, pos, bytes, flags,
+					&page, &fsdata);
+		if (unlikely(err))
+			break;
+
+		iov.iov_base = kmap(page) + offset;
+		iov.iov_len = bytes;
+		err = sock2iov(sock, &iov, 1, 0, bytes, &bytes_received);
+		kunmap(page);
+		bytes_total_received += bytes_received;
+
+		write_end_ret = mapping->a_ops->write_end(file, mapping, pos,
+							bytes, bytes, page, fsdata);
+		if (write_end_ret < 0 && !err)
+			err = write_end_ret;
+		if (err)
+			break;
+
+		bytes_total_wrote += bytes;
+		count -= bytes;
+		pos += bytes;
+		offset = 0;
+	} while (count);
+	balance_dirty_pages_ratelimited(mapping);
+
+end:
+	*rbytes = bytes_total_received;
+	*wbytes = bytes_total_wrote;
+	return err ? err : bytes_total_received;
+}
+
+#ifdef MY_ABC_HERE
+static int __do_recvfile_with_aggregate_write_end(struct file *file, struct socket *sock, loff_t pos,
+			size_t count, size_t * rbytes, size_t * wbytes)
+{
+	int                    err = 0;
+	int                    pages_allocated = 0;
+	int                    page_index = 0;
+	int                    flags = AOP_FLAG_NOFS | AOP_FLAG_RECVFILE;
+	int                    write_end_ret = 0;
+	loff_t                 first_page_pos = 0;
+	unsigned               bytes = 0;
+	pgoff_t                offset = (pos & (PAGE_SIZE - 1));
+	size_t                 bytes_received = 0, bytes_wrote = 0;
+	ssize_t                bytes_to_received = 0;
+	struct kvec            iov[MAX_PAGES_PER_RECVFILE + 1];
+	struct page           *page = NULL;
+	struct page           *page_list[MAX_PAGES_PER_RECVFILE + 1];
+	struct address_space  *mapping = file->f_mapping;
+
+	/* Check hook functions */
+	if (!mapping->a_ops->write_begin || !mapping->a_ops->aggregate_write_end) {
+		printk("write_begin()/aggregate_write_end() is not implemented\n");
+		err = -EOPNOTSUPP;
+		goto end;
+	}
+
+	do {
+		bytes = min_t(unsigned int, PAGE_SIZE - offset, count);
+
+		err = mapping->a_ops->write_begin(
+					file, mapping, pos, bytes, flags,
+					&page, 0);
+		if (err)
+			goto release_pages;
+
+		/* Bookkeep info about this allocated page */
+		page_list[pages_allocated] = page;
+		if (!pages_allocated)
+			first_page_pos = pos;
+		iov[pages_allocated].iov_base = kmap(page) + offset;
+		iov[pages_allocated].iov_len = bytes;
+		pages_allocated++;
+
+		BUG_ON(pages_allocated > MAX_PAGES_PER_RECVFILE + 1);
+
+		count -= bytes;
+		pos += bytes;
+		bytes_to_received += bytes;
+		offset = 0;
+		flags |= AOP_FLAG_RECVFILE_ECRYPTFS_NO_TRUNCATE;
+	} while (count);
+
+	err = sock2iov(sock, iov, pages_allocated, 0, bytes_to_received, &bytes_received);
+
+release_pages:
+	*rbytes = bytes_received;
+	bytes_wrote = bytes_received;
+
+	for (page_index = 0; page_index < pages_allocated; page_index++)
+		kunmap(page_list[page_index]);
+
+	write_end_ret = mapping->a_ops->aggregate_write_end(
+			file, mapping, first_page_pos,
+			bytes_to_received, bytes_to_received,
+			page_list, pages_allocated);
+
+	/* Keep error code if write_end() failed for some reason */
+	if (0 > write_end_ret) {
+		bytes_wrote = 0;
+		if (!err)
+			err = write_end_ret;
+	}
+	*wbytes = bytes_wrote;
+	balance_dirty_pages_ratelimited(mapping);
+
+end:
+	return err ? err : bytes_received;
+}
+#endif /* MY_ABC_HERE */
+
+int do_recvfile(struct file *file, struct socket *sock, loff_t pos,
+			size_t count, size_t * rbytes, size_t * wbytes)
+{
+	int ret;
+#ifdef MY_ABC_HERE
+	struct address_space  *mapping = file->f_mapping;
+
+	if (mapping->a_ops->aggregate_write_end)
+		ret = __do_recvfile_with_aggregate_write_end(file, sock, pos, count, rbytes, wbytes);
+	else
+		ret = __do_recvfile(file, sock, pos, count, rbytes, wbytes);
+#else /* MY_ABC_HERE */
+	ret = __do_recvfile(file, sock, pos, count, rbytes, wbytes);
+#endif /* MY_ABC_HERE */
+
+	return ret;
+}
+EXPORT_SYMBOL(do_recvfile);
+#endif /* MY_ABC_HERE */
 
 /*
  * Warn about a page cache invalidation failure during a direct I/O write.

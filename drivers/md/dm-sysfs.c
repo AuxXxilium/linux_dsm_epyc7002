@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  * Copyright (C) 2008 Red Hat, Inc. All rights reserved.
  *
@@ -97,12 +100,37 @@ static ssize_t dm_attr_use_blk_mq_show(struct mapped_device *md, char *buf)
 
 	return strlen(buf);
 }
+#ifdef MY_ABC_HERE
+static ssize_t dm_attr_syno_active_show(struct mapped_device *md, char *buf)
+{
+	sprintf(buf, "%d\n", dm_active_get(md));
+
+	return strlen(buf);
+}
+
+static ssize_t dm_attr_syno_active_store(
+	struct mapped_device *md, const char *buf, size_t count)
+{
+	unsigned long value;
+
+	if (kstrtoul(buf, 10, &value))
+		return -EINVAL;
+	value = !!value;
+
+	dm_active_set(md, value);
+
+	return strlen(buf);
+}
+#endif /* MY_ABC_HERE */
 
 static DM_ATTR_RO(name);
 static DM_ATTR_RO(uuid);
 static DM_ATTR_RO(suspended);
 static DM_ATTR_RO(use_blk_mq);
 static DM_ATTR_RW(rq_based_seq_io_merge_deadline);
+#ifdef MY_ABC_HERE
+static DM_ATTR_RW(syno_active);
+#endif /* MY_ABC_HERE */
 
 static struct attribute *dm_attrs[] = {
 	&dm_attr_name.attr,
@@ -110,6 +138,9 @@ static struct attribute *dm_attrs[] = {
 	&dm_attr_suspended.attr,
 	&dm_attr_use_blk_mq.attr,
 	&dm_attr_rq_based_seq_io_merge_deadline.attr,
+#ifdef MY_ABC_HERE
+	&dm_attr_syno_active.attr,
+#endif /* MY_ABC_HERE */
 	NULL,
 };
 

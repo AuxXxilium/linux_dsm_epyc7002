@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Written 1992,1993 by Werner Almesberger
@@ -11,7 +14,6 @@
 #include <linux/slab.h>
 #include <linux/buffer_head.h>
 
-#include "exfat_raw.h"
 #include "exfat_fs.h"
 
 /*
@@ -65,7 +67,11 @@ void exfat_msg(struct super_block *sb, const char *level, const char *fmt, ...)
 #define SECS_PER_MIN    (60)
 #define TIMEZONE_SEC(x)	((x) * 15 * SECS_PER_MIN)
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,9,0)
 static void exfat_adjust_tz(struct timespec64 *ts, u8 tz_off)
+#else
+static void exfat_adjust_tz(struct timespec *ts, u8 tz_off)
+#endif
 {
 	if (tz_off <= 0x3F)
 		ts->tv_sec -= TIMEZONE_SEC(tz_off);
@@ -73,14 +79,34 @@ static void exfat_adjust_tz(struct timespec64 *ts, u8 tz_off)
 		ts->tv_sec += TIMEZONE_SEC(0x80 - tz_off);
 }
 
+#ifdef MY_ABC_HERE
+static inline int exfat_tz_offset(struct exfat_sb_info *sbi)
+{
+	if (sbi->options.time_offset)
+		return sbi->options.time_offset;
+
+	// sys_tz is set by settimeofday(2) from userspace. if it isn't set,
+	// exfat will report incorrect timestamp.
+	return -sys_tz.tz_minuteswest;
+}
+#endif /* MY_ABC_HERE */
+
 /* Convert a EXFAT time/date pair to a UNIX date (seconds since 1 1 70). */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,9,0)
 void exfat_get_entry_time(struct exfat_sb_info *sbi, struct timespec64 *ts,
+#else
+void exfat_get_entry_time(struct exfat_sb_info *sbi, struct timespec *ts,
+#endif
 		u8 tz, __le16 time, __le16 date, u8 time_cs)
 {
 	u16 t = le16_to_cpu(time);
 	u16 d = le16_to_cpu(date);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,9,0)
 	ts->tv_sec = mktime64(1980 + (d >> 9), d >> 5 & 0x000F, d & 0x001F,
+#else
+	ts->tv_sec = mktime(1980 + (d >> 9), d >> 5 & 0x000F, d & 0x001F,
+#endif
 			      t >> 11, (t >> 5) & 0x003F, (t & 0x001F) << 1);
 
 
@@ -95,18 +121,30 @@ void exfat_get_entry_time(struct exfat_sb_info *sbi, struct timespec64 *ts,
 		/* Adjust timezone to UTC0. */
 		exfat_adjust_tz(ts, tz & ~EXFAT_TZ_VALID);
 	else
+#ifdef MY_ABC_HERE
+		ts->tv_sec -= exfat_tz_offset(sbi) * SECS_PER_MIN;
+#else
 		/* Convert from local time to UTC using time_offset. */
 		ts->tv_sec -= sbi->options.time_offset * SECS_PER_MIN;
+#endif
 }
 
 /* Convert linear UNIX date to a EXFAT time/date pair. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,9,0)
 void exfat_set_entry_time(struct exfat_sb_info *sbi, struct timespec64 *ts,
+#else
+void exfat_set_entry_time(struct exfat_sb_info *sbi, struct timespec *ts,
+#endif
 		u8 *tz, __le16 *time, __le16 *date, u8 *time_cs)
 {
 	struct tm tm;
 	u16 t, d;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,9,0)
 	time64_to_tm(ts->tv_sec, 0, &tm);
+#else
+	time_to_tm(ts->tv_sec, 0, &tm);
+#endif
 	t = (tm.tm_hour << 11) | (tm.tm_min << 5) | (tm.tm_sec >> 1);
 	d = ((tm.tm_year - 80) <<  9) | ((tm.tm_mon + 1) << 5) | tm.tm_mday;
 
@@ -130,7 +168,11 @@ void exfat_set_entry_time(struct exfat_sb_info *sbi, struct timespec64 *ts,
  * (There is no 10msIncrement field for access_time unlike create/modify_time)
  * atime also has only a 2-second resolution.
  */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,9,0)
 void exfat_truncate_atime(struct timespec64 *ts)
+#else
+void exfat_truncate_atime(struct timespec *ts)
+#endif
 {
 	ts->tv_sec = round_down(ts->tv_sec, 2);
 	ts->tv_nsec = 0;
@@ -180,7 +222,11 @@ int exfat_update_bhs(struct buffer_head **bhs, int nr_bhs, int sync)
 		set_buffer_uptodate(bhs[i]);
 		mark_buffer_dirty(bhs[i]);
 		if (sync)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,7,0)
 			write_dirty_buffer(bhs[i], 0);
+#else
+			write_dirty_buffer(bhs[i], WRITE_SYNC);
+#endif
 	}
 
 	for (i = 0; i < nr_bhs && sync; i++) {

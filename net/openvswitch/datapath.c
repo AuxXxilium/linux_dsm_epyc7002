@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2007-2014 Nicira, Inc.
@@ -47,6 +50,10 @@
 #include "vport-netdev.h"
 
 unsigned int ovs_net_id __read_mostly;
+
+#ifdef MY_ABC_HERE
+static DEFINE_MUTEX(syno_ovs_mutex);
+#endif /* MY_ABC_HERE */
 
 static struct genl_family dp_packet_genl_family;
 static struct genl_family dp_flow_genl_family;
@@ -2478,10 +2485,351 @@ error:
 	return err;
 }
 
+#ifdef MY_ABC_HERE
+bool syno_is_ovs_bond_name(const char *name)
+{
+	const char SYNO_OVS_BOND[] = "ovs_bond";
+
+	return 0 == strncmp(name, SYNO_OVS_BOND, sizeof(SYNO_OVS_BOND) - 1);
+}
+
+bool syno_is_ovs_eth_name(const char *name)
+{
+	const char SYNO_OVS_ETH[] = "ovs_eth";
+
+	return 0 == strncmp(name, SYNO_OVS_ETH, sizeof(SYNO_OVS_ETH) - 1);
+}
+
+bool syno_is_eth_name(const char *name)
+{
+	const char SYNO_ETH[] = "eth";
+
+	return 0 == strncmp(name, SYNO_ETH, sizeof(SYNO_ETH) - 1);
+}
+
+struct net_device *syno_ovs_eth_get_from_eth(struct net_device *netdev)
+{
+	if (syno_is_eth_name(netdev->name) && netdev->priv_flags & IFF_OVS_DATAPATH) {
+		char new_name[IFNAMSIZ];
+		int count;
+
+		count = snprintf(new_name, sizeof(new_name), "ovs_%s", netdev->name);
+
+		if (!(count > 0 && count < IFNAMSIZ))
+			return NULL;
+
+		return dev_get_by_name(dev_net(netdev), new_name);
+	}
+
+	return NULL;
+}
+
+struct net_device *syno_ovs_bond_get_from_eth(struct net_device *netdev)
+{
+	struct net *net = dev_net(netdev);
+	struct ovs_net *ovs_net = net_generic(net, ovs_net_id);
+	struct net_device *ovs_bond = NULL;
+	struct syno_ovs_bond_list *bondp;
+	struct syno_ovs_bond_slave_list *slavep;
+
+	mutex_lock(&syno_ovs_mutex);
+
+	list_for_each_entry(bondp, &ovs_net->bond_list, next) {
+		list_for_each_entry(slavep, &bondp->slaves, next) {
+			if (0 == strcmp(netdev->name, slavep->name)) {
+				ovs_bond = dev_get_by_name(net, bondp->name);
+				goto END;
+			}
+		}
+	}
+
+END:
+	mutex_unlock(&syno_ovs_mutex);
+
+	return ovs_bond;
+}
+
+struct net_device *syno_eth_get_from_ovs_eth(struct net_device *netdev)
+{
+	if (syno_is_ovs_eth_name(netdev->name) && ovs_is_internal_dev(netdev)) {
+		char new_name[IFNAMSIZ];
+		int count;
+		struct net_device *eth_dev;
+
+		count = sscanf(netdev->name, "ovs_%s", new_name);
+
+		if (count != 1)
+			return NULL;
+
+		eth_dev = dev_get_by_name(dev_net(netdev), new_name);
+
+		if (eth_dev) {
+			if (eth_dev->priv_flags & IFF_OVS_DATAPATH) {
+				return eth_dev;
+			} else {
+				dev_put(eth_dev);
+			}
+		}
+	}
+
+	return NULL;
+}
+
+void syno_ovs_bond_set_carrier(struct net_device *netdev)
+{
+	struct net *net = dev_net(netdev);
+	struct ovs_net *ovs_net = net_generic(net, ovs_net_id);
+	struct syno_ovs_bond_list *bondp;
+	struct syno_ovs_bond_slave_list *slavep;
+	int count_active_slaves = 0;
+
+	ASSERT_RTNL();
+
+	if (!(syno_is_ovs_bond_name(netdev->name) && ovs_is_internal_dev(netdev))) {
+		return;
+	}
+
+	mutex_lock(&syno_ovs_mutex);
+
+	list_for_each_entry(bondp, &ovs_net->bond_list, next) {
+		if (0 != strcmp(netdev->name, bondp->name)) {
+			continue;
+		}
+
+		list_for_each_entry(slavep, &bondp->slaves, next) {
+			struct net_device *slave_dev = dev_get_by_name(net, slavep->name);
+
+			if (slave_dev) {
+				if (netif_carrier_ok(slave_dev)) {
+					count_active_slaves++;
+				}
+
+				dev_put(slave_dev);
+			}
+		}
+
+		break;
+	}
+
+	if (count_active_slaves && !netif_carrier_ok(netdev)) {
+		netif_carrier_on(netdev);
+	} else if (0 == count_active_slaves && netif_carrier_ok(netdev)) {
+		netif_carrier_off(netdev);
+	}
+
+	mutex_unlock(&syno_ovs_mutex);
+}
+
+static ssize_t syno_ovs_show_bonds(struct class *cls,
+				   struct class_attribute *attr,
+				   char *buf)
+{
+	struct ovs_net *ovs_net =
+		container_of(attr, struct ovs_net, class_attr_syno_ovs_bonds);
+	int res = 0;
+	struct syno_ovs_bond_list *bondp;
+	struct syno_ovs_bond_slave_list *slavep;
+	bool full = false;
+
+	if (list_empty(&ovs_net->bond_list))
+		return 0;
+
+	mutex_lock(&syno_ovs_mutex);
+	list_for_each_entry(bondp, &ovs_net->bond_list, next) {
+		if ((PAGE_SIZE - IFNAMSIZ) < res) {
+			full = true;
+			break;
+		}
+
+		res += sprintf(buf + res, "%s ", bondp->name);
+
+		list_for_each_entry(slavep, &bondp->slaves, next) {
+			if ((PAGE_SIZE - IFNAMSIZ) < res) {
+				full = true;
+				break;
+			}
+
+			res += sprintf(buf + res, "%s ", slavep->name);
+		}
+		buf[res - 1] = '\n';
+	}
+	mutex_unlock(&syno_ovs_mutex);
+
+	if (full)
+		pr_warn("Not enough space for another interface name\n");
+
+	if (res)
+		buf[res - 1] = '\n'; /* eat the leftover space */
+	return res;
+}
+
+static struct syno_ovs_bond_list* syno_ovs_bond_master_lookup(
+							struct ovs_net *ovs_net,
+							char *ifname)
+{
+	struct syno_ovs_bond_list *bondp;
+
+	if (list_empty(&ovs_net->bond_list))
+		return NULL;
+
+	list_for_each_entry(bondp, &ovs_net->bond_list, next) {
+		if (0 == strcmp(bondp->name, ifname))
+			return bondp;
+	}
+
+	return NULL;
+}
+
+void syno_ovs_bond_slaves_clean(struct syno_ovs_bond_list *bondp)
+{
+	struct list_head *pos, *n;
+	struct syno_ovs_bond_slave_list *slave;
+
+	list_for_each_safe(pos, n, &bondp->slaves) {
+		slave = list_entry(pos, struct syno_ovs_bond_slave_list, next);
+		list_del(&slave->next);
+		kfree(slave->name);
+		kfree(slave);
+	}
+}
+
+static ssize_t syno_ovs_store_bonds(struct class *cls,
+				   struct class_attribute *attr,
+				   const char *buf, size_t count)
+{
+	struct syno_ovs_bond_list *bondp = NULL;
+	char *p, *temp, *orig_temp;
+	int res = count;
+	int i = 0;
+	struct ovs_net *ovs_net =
+			container_of(attr, struct ovs_net, class_attr_syno_ovs_bonds);
+
+	if (NULL != (p = strchr(buf, '\n')))
+		*p = '\0';
+
+	orig_temp = temp = kstrdup(buf, GFP_KERNEL);
+	if (temp == NULL)
+		return -ENOMEM;
+
+	mutex_lock(&syno_ovs_mutex);
+	while (NULL != (p = strsep(&temp, " "))) {
+		if (!dev_valid_name(p)) {
+			pr_err("%s: \"%s\" is not a valid name of net_device\n", __func__, p);
+		}
+
+		/* The first entry is a bonding master */
+		if (!bondp) {
+			bondp = syno_ovs_bond_master_lookup(ovs_net, p);
+
+			if (!bondp) {
+				bondp = kzalloc(sizeof(struct syno_ovs_bond_list), GFP_KERNEL);
+				if (bondp == NULL) {
+					res = -ENOMEM;
+					goto END;
+				}
+				bondp->name = kstrdup(p, GFP_KERNEL);
+				if (bondp->name == NULL) {
+					res = -ENOMEM;
+					goto END;
+				}
+				INIT_LIST_HEAD(&bondp->slaves);
+				list_add_tail(&bondp->next, &ovs_net->bond_list);
+			} else {
+				/* If the bonding master has existed, it's used to update/delete
+				 * the slave list of the bonding master. So we clean the list
+				 * for getting ready to add slaves from the input, if any.
+				 */
+				syno_ovs_bond_slaves_clean(bondp);
+			}
+		/* The other entries are bonding slaves */
+		} else {
+			struct syno_ovs_bond_slave_list *slavep;
+			slavep = kzalloc(sizeof(struct syno_ovs_bond_slave_list),
+							 GFP_KERNEL);
+			if (slavep == NULL) {
+				res = -ENOMEM;
+				goto END;
+			}
+			slavep->name = kstrdup(p, GFP_KERNEL);
+			if (slavep->name == NULL) {
+				res = -ENOMEM;
+				goto END;
+			}
+			list_add_tail(&slavep->next, &bondp->slaves);
+		}
+		i++;
+	}
+
+	/* If the input which contains only one interface, it's used to delete the
+	 * corresponding bonding master, if exists.
+	 */
+	if (i == 1) {
+		list_del(&bondp->next);
+		kfree(bondp->name);
+		kfree(bondp);
+	}
+
+END:
+	mutex_unlock(&syno_ovs_mutex);
+	if (orig_temp) {
+		kfree(orig_temp);
+	}
+
+	/* Update carrier of the OVS bond when slave changed. */
+	if (0 < res && 1 < i) {
+		struct net_device *ovs_bond =
+			dev_get_by_name(ovs_net->net, bondp->name);
+
+		if (ovs_bond) {
+			rtnl_lock();
+			syno_ovs_bond_set_carrier(ovs_bond);
+			rtnl_unlock();
+			dev_put(ovs_bond);
+		}
+	}
+
+	return res;
+}
+
+static struct class_attribute class_attr_syno_ovs_bonds = {
+	.attr = {
+		.name = "syno_ovs_bonds",
+		.mode = S_IWUSR | S_IRUGO,
+	},
+	.show = syno_ovs_show_bonds,
+	.store = syno_ovs_store_bonds,
+};
+
+static int syno_ovs_create_sysfs(struct ovs_net *ovs_net)
+{
+	int ret;
+
+	ovs_net->class_attr_syno_ovs_bonds = class_attr_syno_ovs_bonds;
+
+	sysfs_attr_init(&ovs_net->class_attr_syno_ovs_bonds.attr);
+
+	ret = netdev_class_create_file_ns(&ovs_net->class_attr_syno_ovs_bonds,
+								   ovs_net->net);
+
+	if (ret == -EEXIST) {
+		printk(KERN_ERR "ovs: %s %s already exists in sysfs\n", __func__,
+			   class_attr_syno_ovs_bonds.attr.name);
+		ret = 0;
+	}
+	return ret;
+}
+#endif /* MY_ABC_HERE */
+
 static int __net_init ovs_init_net(struct net *net)
 {
 	struct ovs_net *ovs_net = net_generic(net, ovs_net_id);
 	int err;
+
+#ifdef MY_ABC_HERE
+	ovs_net->net = net;
+	INIT_LIST_HEAD(&ovs_net->bond_list);
+	syno_ovs_create_sysfs(ovs_net);
+#endif /* MY_ABC_HERE */
 
 	INIT_LIST_HEAD(&ovs_net->dps);
 	INIT_WORK(&ovs_net->dp_notify_work, ovs_dp_notify_wq);
@@ -2519,13 +2867,40 @@ static void __net_exit list_vports_from_net(struct net *net, struct net *dnet,
 	}
 }
 
+#ifdef MY_ABC_HERE
+static void syno_ovs_destroy_sysfs(struct ovs_net *ovs_net)
+{
+	netdev_class_remove_file_ns(&ovs_net->class_attr_syno_ovs_bonds,
+			ovs_net->net);
+}
+#endif /* MY_ABC_HERE */
+
 static void __net_exit ovs_exit_net(struct net *dnet)
 {
 	struct datapath *dp, *dp_next;
 	struct ovs_net *ovs_net = net_generic(dnet, ovs_net_id);
 	struct vport *vport, *vport_next;
 	struct net *net;
+#ifdef MY_ABC_HERE
+	struct list_head *pos, *n;
+	struct syno_ovs_bond_list *bondp;
+#endif /* MY_ABC_HERE */
 	LIST_HEAD(head);
+
+#ifdef MY_ABC_HERE
+	syno_ovs_destroy_sysfs(ovs_net);
+	mutex_lock(&syno_ovs_mutex);
+	if (!list_empty(&ovs_net->bond_list)) {
+		list_for_each_safe(pos, n, &ovs_net->bond_list) {
+			bondp = list_entry(pos, struct syno_ovs_bond_list, next);
+			syno_ovs_bond_slaves_clean(bondp);
+			list_del(&bondp->next);
+			kfree(bondp->name);
+			kfree(bondp);
+		}
+	}
+	mutex_unlock(&syno_ovs_mutex);
+#endif /* MY_ABC_HERE */
 
 	ovs_lock();
 

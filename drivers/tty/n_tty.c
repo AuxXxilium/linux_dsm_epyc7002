@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-1.0+
 /*
  * n_tty.c --- implements the N_TTY line discipline.
@@ -49,6 +52,11 @@
 #include <linux/module.h>
 #include <linux/ratelimit.h>
 #include <linux/vmalloc.h>
+
+#ifdef MY_ABC_HERE
+#include <linux/synobios.h>
+extern int gSynoForbidConsole;
+#endif /* MY_ABC_HERE */
 
 /*
  * Until this number of characters is queued in the xmit buffer, select will
@@ -1696,6 +1704,19 @@ n_tty_receive_buf_common(struct tty_struct *tty, const unsigned char *cp,
 {
 	struct n_tty_data *ldata = tty->disc_data;
 	int room, n, rcvd = 0, overflow;
+#ifdef MY_ABC_HERE
+	static unsigned long last_jiffies = INITIAL_JIFFIES;
+
+	if (1 == gSynoForbidConsole && !strcmp(tty->name, "ttyS0")) {
+		if (time_after(jiffies, last_jiffies + msecs_to_jiffies(3000))) {
+			if (NULL != func_synobios_event_handler) {
+				func_synobios_event_handler(SYNO_EVENT_CONSOLE_PROHIBIT, 0);
+			}
+			last_jiffies = jiffies;
+		}
+		return count;
+	}
+#endif /* MY_ABC_HERE */
 
 	down_read(&tty->termios_rwsem);
 

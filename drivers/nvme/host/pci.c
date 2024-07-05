@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0
 /*
  * NVM Express device driver
@@ -29,6 +32,18 @@
 
 #include "trace.h"
 #include "nvme.h"
+#ifdef MY_ABC_HERE
+#include <linux/synolib.h>
+#include <linux/of.h>
+extern int syno_pciepath_dts_pattern_get(struct pci_dev *pdev, char *szPciePath,
+					 const int size);
+extern int syno_compare_dts_pciepath(const struct pci_dev *pdev,
+				     const struct device_node *pDeviceNode);
+#endif /* MY_ABC_HERE */
+#ifdef MY_DEF_HERE
+extern void syno_disk_not_ready_count_increase(void);
+extern void syno_disk_not_ready_count_decrease(void);
+#endif /* MY_DEF_HERE */
 
 #define SQ_SIZE(q)	((q)->q_depth << (q)->sqes)
 #define CQ_SIZE(q)	((q)->q_depth * sizeof(struct nvme_completion))
@@ -153,6 +168,12 @@ struct nvme_dev {
 	unsigned int nr_allocated_queues;
 	unsigned int nr_write_queues;
 	unsigned int nr_poll_queues;
+#ifdef MY_DEF_HERE
+	int syno_disk_index;
+#endif /* MY_DEF_HERE */
+#ifdef MY_ABC_HERE
+	struct work_struct syno_remap_work;
+#endif /* MY_ABC_HERE */
 };
 
 static int io_queue_depth_set(const char *val, const struct kernel_param *kp)
@@ -216,6 +237,21 @@ struct nvme_queue {
 	struct completion delete_done;
 };
 
+#ifdef MY_ABC_HERE
+#define SYNO_NVME_INDEX_OFFSET 1000
+int SynoNVMeGetDeviceIndex(struct gendisk *disk)
+{
+	struct nvme_ns *ns = NULL;
+
+	BUG_ON(NULL == disk);
+
+	ns = (struct nvme_ns *)disk->private_data;
+
+	return ns->ctrl->instance + SYNO_NVME_INDEX_OFFSET;
+}
+EXPORT_SYMBOL(SynoNVMeGetDeviceIndex);
+#endif /* MY_ABC_HERE */
+
 /*
  * The nvme_iod describes the data in an I/O.
  *
@@ -234,6 +270,13 @@ struct nvme_iod {
 	dma_addr_t meta_dma;
 	struct scatterlist *sg;
 };
+
+#ifdef MY_ABC_HERE
+struct syno_nvme_remap_req {
+	struct list_head list;
+	struct request *req;
+};
+#endif /* MY_ABC_HERE */
 
 static inline unsigned int nvme_dbbuf_size(struct nvme_dev *dev)
 {
@@ -931,6 +974,9 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	if (unlikely(!test_bit(NVMEQ_ENABLED, &nvmeq->flags)))
 		return BLK_STS_IOERR;
 
+	if (!nvme_check_ready(&dev->ctrl, req, true))
+		return nvme_fail_nonready_command(&dev->ctrl, req);
+
 	ret = nvme_setup_cmd(ns, req, &cmnd);
 	if (ret)
 		return ret;
@@ -974,6 +1020,15 @@ static void nvme_pci_complete_rq(struct request *req)
 static inline bool nvme_cqe_pending(struct nvme_queue *nvmeq)
 {
 	struct nvme_completion *hcqe = &nvmeq->cqes[nvmeq->cq_head];
+#ifdef MY_ABC_HERE
+	if (unlikely(nvmeq->dev->ctrl.syno_force_timeout)) {
+		/*
+		 * Not respond to any IRQ to simulate the NVMe device controller
+		 * was dead.
+		 */
+		return false;
+	}
+#endif /* MY_ABC_HERE */
 
 	return (le16_to_cpu(READ_ONCE(hcqe->status)) & 1) == nvmeq->cq_phase;
 }
@@ -1124,6 +1179,210 @@ static void nvme_pci_submit_async_event(struct nvme_ctrl *ctrl)
 	c.common.command_id = NVME_AQ_BLK_MQ_DEPTH;
 	nvme_submit_cmd(nvmeq, &c, true);
 }
+
+#ifdef MY_ABC_HERE
+static int get_req_error_log(struct request *req,
+		struct syno_nvme_error_log_page *log_pages, int entries,
+		struct syno_nvme_error_log_page **err_idx)
+{
+	struct syno_nvme_error_log_page *log_page = NULL;
+	int ret = -1;
+	int i;
+
+	for (i = 0; i < entries; i++) {
+		log_page = &log_pages[i];
+
+		if (req->tag == log_page->cmdid &&
+			nvme_req(req)->status == (log_page->status_field >> 1)) {
+			*err_idx = log_page;
+			ret = 1;
+			goto end;
+		}
+	}
+
+	/* corresponding error log not found */
+	ret = 0;
+end:
+	return ret;
+}
+
+extern unsigned char
+syno_is_sector_need_auto_remap(struct gendisk *disk, sector_t lba);
+#ifdef MY_ABC_HERE
+extern void syno_req_set_bio_auto_remap_flag(struct request *req, sector_t lba);
+#endif /* MY_ABC_HERE */
+
+static int process_req(struct nvme_ctrl *ctrl,
+		struct syno_nvme_remap_req *remap_req,
+		struct syno_nvme_error_log_page *err_log, int err_entries,
+		bool skip_req)
+{
+	struct request *req = NULL;
+	struct nvme_ns *ns = NULL;
+	struct syno_nvme_error_log_page *err_idx = NULL;
+	int ret = -1;
+	int status = -1;
+
+	req = remap_req->req;
+
+	if (!req) {
+		dev_warn(ctrl->device, "invalid request\n");
+		goto err;
+	}
+
+	if (skip_req) {
+		dev_warn(ctrl->device, "skip request tag: %u\n", req->tag);
+		goto end;
+	}
+
+	if (err_log == NULL) {
+		dev_warn(ctrl->device, "empty error log page\n");
+		goto err;
+	}
+
+	if (get_req_error_log(req, err_log, err_entries, &err_idx) != 1) {
+		dev_warn(ctrl->device, "failed to get corresponding error log of tag: %u\n",
+			 req->tag);
+		goto err;
+	}
+
+	status = nvme_req(req)->status & 0x7ff;
+        if (status == NVME_SC_SUCCESS)
+		status = 0;
+	else if (status == NVME_SC_CAP_EXCEEDED)
+		status = -ENOSPC;
+	else
+		status = -EIO;
+
+	ns = syno_nvme_find_get_ns(ctrl, err_idx->nsid);
+
+	if (ns == NULL) {
+		dev_warn(ctrl->device, "failed to find ns of nsid %u\n",
+				err_idx->nsid);
+		goto err;
+	}
+
+	dev_warn(ctrl->device, "%s read unc at %llu\n",
+			ns->disk->disk_name, err_idx->lba);
+
+	if (!syno_is_sector_need_auto_remap(ns->disk, err_idx->lba)) {
+		/* do not need to remap */
+		goto end;
+	}
+
+	if (syno_nvme_lba_write_pattern(ns, err_idx->lba) != 0) {
+		dev_warn(ctrl->device, "failed to remap lba at %llu\n",
+				err_idx->lba);
+		goto err;
+	}
+
+#ifdef MY_ABC_HERE
+	syno_req_set_bio_auto_remap_flag(req, err_idx->lba);
+#endif /* MY_ABC_HERE */
+
+end:
+	ret =  0;
+
+err:
+	if (ns) {
+		syno_nvme_put_ns(ns);
+		ns = NULL;
+	}
+
+	if (req) {
+		blk_mq_end_request(req, errno_to_blk_status(status));
+		req = NULL;
+	}
+	kfree(remap_req);
+	remap_req = NULL;
+
+	return ret;
+}
+
+static void process_all_reqs(struct nvme_ctrl *ctrl,
+		struct syno_nvme_error_log_page *err_log, int err_entries,
+		bool skip_req)
+{
+	struct syno_nvme_remap_req *remap_req = NULL;
+	unsigned long flags;
+
+	do {
+		spin_lock_irqsave(&ctrl->syno_remap_reqs_lock, flags);
+		if (list_empty(&ctrl->syno_remap_reqs)) {
+			/* no more request to be processed */
+			remap_req = NULL;
+		} else {
+			/* pop up the first unprocessed read failed request */
+			remap_req = list_first_entry(&ctrl->syno_remap_reqs,
+					struct syno_nvme_remap_req, list);
+			list_del(&remap_req->list);
+		}
+		spin_unlock_irqrestore(&ctrl->syno_remap_reqs_lock, flags);
+	} while (remap_req != NULL &&
+		 process_req(ctrl, remap_req, err_log, err_entries, skip_req) == 0);
+}
+
+static void release_all_reqs(struct nvme_ctrl *ctrl)
+{
+	process_all_reqs(ctrl, NULL, 0, true);
+}
+
+static void syno_nvme_remap_work(struct work_struct *work)
+{
+	struct nvme_dev *dev = container_of(work, struct nvme_dev, syno_remap_work);
+	struct nvme_ctrl *ctrl = &dev->ctrl;
+	struct syno_nvme_error_log_page *err_log = NULL;
+	int error = 0;
+	int entries = 0;
+
+	error = syno_nvme_get_error_log_page(ctrl, &err_log, &entries);
+	if (error) {
+		dev_warn(ctrl->device, "failed to get error page\n");
+		dev_warn(ctrl->device, "\tmodel: %s\n", ctrl->subsys->model);
+		dev_warn(ctrl->device, "\tfirmware rev: %s\n", ctrl->subsys->firmware_rev);
+		dev_warn(ctrl->device, "\terror log page entries: %u\n", ctrl->syno_elpe);
+		dev_warn(ctrl->device, "\terror: %d\n", error);
+		goto err;
+	}
+
+	process_all_reqs(ctrl, err_log, entries, false);
+
+err:
+	release_all_reqs(ctrl);
+	kfree(err_log);
+	err_log = NULL;
+}
+
+int syno_nvme_do_remap_req(struct request *req)
+{
+	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
+	struct nvme_dev *dev = iod->nvmeq->dev;
+	struct nvme_ctrl *ctrl = &dev->ctrl;
+	struct syno_nvme_remap_req *remap_req = NULL;
+	unsigned long flags;
+	int ret = -EPERM;
+
+	remap_req = kmalloc(sizeof(*remap_req), GFP_ATOMIC | __GFP_NOWARN);
+
+	if (!remap_req) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	remap_req->req = req;
+
+	spin_lock_irqsave(&ctrl->syno_remap_reqs_lock, flags);
+	list_add_tail(&remap_req->list, &ctrl->syno_remap_reqs);
+	spin_unlock_irqrestore(&ctrl->syno_remap_reqs_lock, flags);
+
+	queue_work(nvme_wq, &dev->syno_remap_work);
+
+	ret = 0;
+err:
+	return ret;
+}
+EXPORT_SYMBOL(syno_nvme_do_remap_req);
+#endif /* MY_ABC_HERE */
 
 static int adapter_delete_queue(struct nvme_dev *dev, u8 opcode, u16 id)
 {
@@ -2423,6 +2682,12 @@ static int nvme_pci_enable(struct nvme_dev *dev)
 		dev->q_depth = 64;
 		dev_err(dev->ctrl.device, "detected PM1725 NVMe controller, "
                         "set queue depth=%u\n", dev->q_depth);
+#ifdef MY_DEF_HERE
+	} else if (pdev->vendor == PCI_VENDOR_ID_SAMSUNG && pdev->device == 0xa808) {
+		dev->q_depth = 64;
+		dev_err(dev->ctrl.device, "detected samsung 970 EVO controller, "
+                        "set queue depth=%u\n", dev->q_depth);
+#endif /* MY_DEF_HERE */
 	}
 
 	/*
@@ -2475,6 +2740,11 @@ static void nvme_dev_disable(struct nvme_dev *dev, bool shutdown)
 	mutex_lock(&dev->shutdown_lock);
 	if (pci_is_enabled(pdev)) {
 		u32 csts = readl(dev->bar + NVME_REG_CSTS);
+#ifdef MY_ABC_HERE
+		if (unlikely(dev->ctrl.syno_force_timeout)) {
+			csts |= NVME_CSTS_CFS;
+		}
+#endif /* MY_ABC_HERE */
 
 		if (dev->ctrl.state == NVME_CTRL_LIVE ||
 		    dev->ctrl.state == NVME_CTRL_RESETTING) {
@@ -2725,6 +2995,7 @@ static void nvme_reset_work(struct work_struct *work)
 	if (result)
 		dev_warn(dev->ctrl.device,
 			 "Removing after probe failure status: %d\n", result);
+
 	nvme_remove_dead_ctrl(dev);
 }
 
@@ -2868,7 +3139,90 @@ static void nvme_async_probe(void *data, async_cookie_t cookie)
 	flush_work(&dev->ctrl.reset_work);
 	flush_work(&dev->ctrl.scan_work);
 	nvme_put_ctrl(&dev->ctrl);
+
+#ifdef MY_DEF_HERE
+	syno_disk_not_ready_count_decrease();
+#endif /* MY_DEF_HERE */
+
 }
+
+#ifdef MY_DEF_HERE
+#ifdef MY_ABC_HERE
+static int syno_nvme_index_get(const struct pci_dev *pdev)
+{
+	int iIndex = -1;
+	struct device_node *pDeviceNode = NULL;
+
+	if (NULL == pdev || NULL == of_root) {
+		goto END;
+	}
+
+	for_each_child_of_node(of_root, pDeviceNode) {
+		if (pDeviceNode->full_name &&
+		    0 == strncmp(pDeviceNode->full_name, DT_INTERNAL_SLOT,
+				 strlen(DT_INTERNAL_SLOT))) {
+			/* skip non-internal nvme device */
+			if (!of_find_property(pDeviceNode, DT_PCIE_ROOT,
+					      NULL)) {
+				continue;
+			}
+
+			if (0 == syno_compare_dts_pciepath(pdev, pDeviceNode)) {
+				/*
+				 * get index number of nvme_slot
+				 * e.g. internal_slot@4 --> 4
+				 */
+				sscanf(pDeviceNode->full_name,
+				       DT_INTERNAL_SLOT "@%d", &iIndex);
+				of_node_put(pDeviceNode);
+				break;
+			}
+		}
+	}
+END:
+	return iIndex;
+}
+#else /* MY_ABC_HERE */
+static int syno_nvme_index_get(const struct pci_dev *pdev)
+{
+	return 0;
+}
+#endif /* MY_ABC_HERE */
+
+#ifdef MY_ABC_HERE
+extern void syno_ledtrig_active_set(int iLedNum);
+extern int *gpGreenLedMap;
+
+void syno_nvme_sw_activity_by_lp3943(struct nvme_ctrl *ctrl)
+{
+	struct nvme_dev *dev = to_nvme_dev(ctrl);
+	if (NULL == gpGreenLedMap || 0 > dev->syno_disk_index) {
+		return;
+	}
+	syno_ledtrig_active_set(gpGreenLedMap[dev->syno_disk_index]);
+}
+EXPORT_SYMBOL(syno_nvme_sw_activity_by_lp3943);
+#endif /* MY_ABC_HERE */
+#endif /* MY_DEF_HERE */
+
+#ifdef MY_ABC_HERE
+/* copy from driver/scsi/sd.c */
+static void syno_pciepath_enum(struct device *dev, char *buf) {
+	struct pci_dev *pdev = NULL;
+	char sztemp[SYNO_DTS_PROPERTY_CONTENT_LENGTH] = {'\0'};
+
+	if (NULL == buf || NULL == dev) {
+		return;
+	}
+	pdev = to_pci_dev(dev);
+
+	if (-1 == syno_pciepath_dts_pattern_get(pdev, sztemp, sizeof(sztemp))) {
+		return;
+	}
+
+	snprintf(buf, BLOCK_INFO_SIZE, "%spciepath=%s\n", buf, sztemp);
+}
+#endif /* MY_ABC_HERE */
 
 static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
@@ -2902,6 +3256,9 @@ static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	INIT_WORK(&dev->ctrl.reset_work, nvme_reset_work);
 	INIT_WORK(&dev->remove_work, nvme_remove_dead_ctrl_work);
+#ifdef MY_ABC_HERE
+	INIT_WORK(&dev->syno_remap_work, syno_nvme_remap_work);
+#endif /* MY_ABC_HERE */
 	mutex_init(&dev->shutdown_lock);
 
 	result = nvme_setup_prp_pools(dev);
@@ -2941,7 +3298,18 @@ static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (result)
 		goto release_mempool;
 
+#ifdef MY_ABC_HERE
+	syno_pciepath_enum(&pdev->dev, dev->ctrl.syno_block_info);
+#endif /* MY_ABC_HERE */
+#ifdef MY_DEF_HERE
+	dev->syno_disk_index = syno_nvme_index_get(pdev) - 1;
+#endif /* MY_DEF_HERE */
+
 	dev_info(dev->ctrl.device, "pci function %s\n", dev_name(&pdev->dev));
+
+#ifdef MY_DEF_HERE
+	syno_disk_not_ready_count_increase();
+#endif /* MY_DEF_HERE */
 
 	nvme_reset_ctrl(&dev->ctrl);
 	async_schedule(nvme_async_probe, dev);
@@ -3007,6 +3375,9 @@ static void nvme_remove(struct pci_dev *pdev)
 		nvme_dev_disable(dev, true);
 	}
 
+#ifdef MY_ABC_HERE
+	flush_work(&dev->syno_remap_work);
+#endif /* MY_ABC_HERE */
 	flush_work(&dev->ctrl.reset_work);
 	nvme_stop_ctrl(&dev->ctrl);
 	nvme_remove_namespaces(&dev->ctrl);

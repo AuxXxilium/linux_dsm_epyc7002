@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  *  Copyright (C) 1995  Linus Torvalds
@@ -48,6 +51,9 @@
 #include <asm/unwind.h>
 #include <asm/vsyscall.h>
 #include <linux/vmalloc.h>
+#ifdef MY_ABC_HERE
+#include <linux/synolib.h>
+#endif /* MY_ABC_HERE */
 
 /*
  * max_low_pfn_mapped: highest directly mapped pfn < 4 GB
@@ -943,6 +949,10 @@ void __init setup_arch(char **cmdline_p)
 #endif
 
 	x86_report_nx();
+
+#ifdef CONFIG_SYNO_KEXEC_TEST
+	syno_kexec_test_init();
+#endif /* CONFIG_SYNO_KEXEC_TEST */
 
 	/* after early param, so could get panic from serial */
 	memblock_x86_reserve_range_setup_data();

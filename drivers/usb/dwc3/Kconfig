@@ -53,6 +53,40 @@ endchoice
 
 comment "Platform Glue Driver Support"
 
+if SYNO_LSP_RTD1619B
+config USB_DWC3_RTK
+	tristate "Realtek DWC3 Platform Driver"
+	default USB_DWC3
+	select RTK_USB2PHY
+	select RTK_USB3PHY
+	select USB_RTK_CTRL_MANAGER
+	help
+	  RTK SoCs with DesignWare Core USB3 IP inside,
+	  say 'Y' or 'M' if you have such device.
+
+config USB_DWC3_RTK_DUAL_ROLE
+	tristate "Realtek DWC3 Platform Dual Role Driver"
+	default USB_DWC3_RTK if (USB_DWC3_DUAL_ROLE)
+	depends on USB_DWC3_DUAL_ROLE
+	help
+	  RTK SoCs with DesignWare Core USB3 IP to suport drd mode,
+	  Support Realtek dwc3 drd mode to dynamical host/device switch.
+	  say 'Y' or 'M' if you have such device.
+
+config USB_DWC3_RTK_TYPE_C
+	bool "RTK DWC3 Type C Driver (dynamical host/device mode switch)"
+	default USB_DWC3_RTK if (USB_DWC3_DUAL_ROLE)
+	depends on USB_DWC3_DUAL_ROLE
+	help
+		Support Realtek dwc3 drd type c port
+
+config USB_TYPE_C_RTK_RTS5400
+	bool "RTK Type C Controller RTS5400"
+	depends on USB_RTK_DWC3_DRD_MODE
+	help
+		Support Realtek type c controller via RTS5400
+
+endif # SYNO_LSP_RTD1619B
 config USB_DWC3_OMAP
 	tristate "Texas Instruments OMAP5 and similar Platforms"
 	depends on ARCH_OMAP2PLUS || COMPILE_TEST

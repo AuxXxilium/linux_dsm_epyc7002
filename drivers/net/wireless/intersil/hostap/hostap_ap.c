@@ -3273,5 +3273,3 @@ EXPORT_SYMBOL(hostap_init_ap_proc);
 EXPORT_SYMBOL(hostap_free_data);
 EXPORT_SYMBOL(hostap_check_sta_fw_version);
 EXPORT_SYMBOL(hostap_handle_sta_tx_exc);
-#ifndef PRISM2_NO_KERNEL_IEEE80211_MGMT
-#endif /* PRISM2_NO_KERNEL_IEEE80211_MGMT */

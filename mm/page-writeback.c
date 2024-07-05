@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * mm/page-writeback.c
@@ -112,6 +115,9 @@ unsigned int dirty_expire_interval = 30 * 100; /* centiseconds */
  * Flag that makes the machine dump writes/reads and block dirtyings.
  */
 int block_dump;
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL(block_dump);
+#endif /* MY_ABC_HERE */
 
 /*
  * Flag that puts the machine in "laptop mode". Doubles as a timeout in jiffies:
@@ -465,6 +471,9 @@ void global_dirty_limits(unsigned long *pbackground, unsigned long *pdirty)
 	*pbackground = gdtc.bg_thresh;
 	*pdirty = gdtc.thresh;
 }
+#ifdef MY_ABC_HERE
+EXPORT_SYMBOL(global_dirty_limits);
+#endif /* MY_ABC_HERE */
 
 /**
  * node_dirty_limit - maximum number of dirty pages allowed in a node
@@ -2844,7 +2853,13 @@ EXPORT_SYMBOL_GPL(wait_on_page_writeback);
 void wait_for_stable_page(struct page *page)
 {
 	page = thp_head(page);
+#ifdef MY_ABC_HERE
+	if (page->mapping->host->i_sb->s_iflags & SB_I_STABLE_WRITES ||
+	    (sb_is_blkdev_sb(page->mapping->host->i_sb) &&
+	     blk_queue_stable_writes(I_BDEV(page->mapping->host)->bd_disk->queue)))
+#else /* MY_ABC_HERE */
 	if (page->mapping->host->i_sb->s_iflags & SB_I_STABLE_WRITES)
+#endif /* MY_ABC_HERE */
 		wait_on_page_writeback(page);
 }
 EXPORT_SYMBOL_GPL(wait_for_stable_page);

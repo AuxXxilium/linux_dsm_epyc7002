@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /**
  * eCryptfs: Linux filesystem encryption layer
@@ -336,6 +339,10 @@ struct ecryptfs_mount_crypt_stat {
 #define ECRYPTFS_GLOBAL_ENCFN_USE_MOUNT_FNEK   0x00000020
 #define ECRYPTFS_GLOBAL_ENCFN_USE_FEK          0x00000040
 #define ECRYPTFS_GLOBAL_MOUNT_AUTH_TOK_ONLY    0x00000080
+
+#ifdef MY_ABC_HERE
+#define ECRYPTFS_GLOBAL_FAST_LOOKUP_ENABLED    0x80000000
+#endif /* MY_ABC_HERE */
 	u32 flags;
 	struct list_head global_auth_tok_list;
 	struct mutex global_auth_tok_list_mutex;
@@ -352,6 +359,9 @@ struct ecryptfs_mount_crypt_stat {
 struct ecryptfs_sb_info {
 	struct super_block *wsi_sb;
 	struct ecryptfs_mount_crypt_stat mount_crypt_stat;
+#ifdef MY_ABC_HERE
+	struct dentry *dentry;
+#endif /* MY_ABC_HERE */
 };
 
 /* file private data. */
@@ -521,6 +531,14 @@ ecryptfs_dentry_to_lower_mnt(struct dentry *dentry)
 	return ((struct ecryptfs_dentry_info *)dentry->d_fsdata)->lower_path.mnt;
 }
 
+#ifdef MY_ABC_HERE
+static inline struct vfsmount *
+ecryptfs_superblock_to_lower_mnt(struct super_block *sb)
+{
+	return ecryptfs_dentry_to_lower_mnt(sb->s_root);
+}
+#endif /* MY_ABC_HERE */
+
 static inline struct path *
 ecryptfs_dentry_to_lower_path(struct dentry *dentry)
 {
@@ -540,6 +558,9 @@ extern const struct inode_operations ecryptfs_symlink_iops;
 extern const struct super_operations ecryptfs_sops;
 extern const struct dentry_operations ecryptfs_dops;
 extern const struct address_space_operations ecryptfs_aops;
+#ifdef MY_ABC_HERE
+extern const struct export_operations ecryptfs_export_ops;
+#endif /* MY_ABC_HERE */
 extern int ecryptfs_verbosity;
 extern unsigned int ecryptfs_message_buf_len;
 extern signed long ecryptfs_message_wait_timeout;
@@ -585,6 +606,10 @@ void ecryptfs_destroy_mount_crypt_stat(
 int ecryptfs_init_crypt_ctx(struct ecryptfs_crypt_stat *crypt_stat);
 int ecryptfs_write_inode_size_to_metadata(struct inode *ecryptfs_inode);
 int ecryptfs_encrypt_page(struct page *page);
+#ifdef MY_ABC_HERE
+int ecryptfs_encrypt_page_zero_copy(struct ecryptfs_crypt_stat *crypt_stat,
+		struct file *file, struct page **pages, int num_page);
+#endif /* MY_ABC_HERE */
 int ecryptfs_decrypt_page(struct page *page);
 int ecryptfs_write_metadata(struct dentry *ecryptfs_dentry,
 			    struct inode *ecryptfs_inode);
@@ -716,6 +741,10 @@ int ecryptfs_set_f_namelen(long *namelen, long lower_namelen,
 			   struct ecryptfs_mount_crypt_stat *mount_crypt_stat);
 int ecryptfs_derive_iv(char *iv, struct ecryptfs_crypt_stat *crypt_stat,
 		       loff_t offset);
+#if defined(MY_ABC_HERE) || defined(MY_ABC_HERE)
+loff_t upper_size_to_lower_size(struct ecryptfs_crypt_stat *crypt_stat,
+				loff_t upper_size);
+#endif /* MY_ABC_HERE || MY_ABC_HERE */
 
 extern const struct xattr_handler *ecryptfs_xattr_handlers[];
 

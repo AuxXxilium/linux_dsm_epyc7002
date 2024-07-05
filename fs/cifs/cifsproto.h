@@ -1,3 +1,6 @@
+#ifndef MY_ABC_HERE
+#define MY_ABC_HERE
+#endif
 /*
  *   fs/cifs/cifsproto.h
  *
@@ -635,6 +638,15 @@ int match_target_ip(struct TCP_Server_Info *server,
 		    const char *share, size_t share_len,
 		    bool *result);
 #endif
+#ifdef MY_ABC_HERE
+extern void set_operation(struct smb_version_operations *dst,
+		struct smb_version_operations *src);
+extern int SendReceiveSyno(const unsigned int xid, struct cifs_ses *ses,
+		struct smb_hdr *in_buf, struct kvec *out_buf,
+		const int flags);
+extern void init_syno_operations(struct TCP_Server_Info *server,
+		struct smb_vol *volume_info);
+#endif /* MY_ABC_HERE */
 
 static inline int cifs_create_options(struct cifs_sb_info *cifs_sb, int options)
 {
